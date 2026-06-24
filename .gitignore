@@ -1,0 +1,55 @@
+# Dependencias
+node_modules/
+package-lock.json
+
+# Salida de build (electron-builder) — se distribuyen como Releases en GitHub
+dist/
+out/
+build/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+
+# Env / secretos
+.env
+.env.local
+.env.*
+!.env.example
+config.json
+
+# Datos de runtime de Electron (sesiones, logins de Chunior/agentes)
+user-data-*/
+
+# Clones temporales de OTROS repos
+_portal_repo_tmp/
+_admi_repo_tmp/
+_admi_tmp.html
+
+# Archivos del PORTAL (viven en el repo portal-bet300)
+portal.html
+portal.zip
+sw.js
+manifest.json
+vercel.json
+api/
+importar-whaticket.js
+generate-icons.js
+generate-badge.js
+generar-iconos-bet300.html
+icons/
+
+# Viejos / backups / temporales
+*- copia.htm
+panel.html
+blq8_restore.txt
+extract_blq8.js
