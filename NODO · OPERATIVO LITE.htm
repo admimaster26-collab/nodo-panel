@@ -1415,6 +1415,8 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 // ── Push API (configurable por oficina via localStorage) ──────────────────
 window.PUSH_API_URL = localStorage.getItem("nodo_push_api_url") || "https://portal-bet300-a4xj.vercel.app/api/send-push";
 window.PUSH_SECRET  = localStorage.getItem("nodo_push_secret")  || "nodo-bet300-push-2026";
+// ── Secreto de datos del panel (Fase 2: RPC con secreto; el portal público NO lo tiene) ──
+window.PANEL_DATA_SECRET = localStorage.getItem("nodo_panel_data_secret") || "nodo-panel-data-2026";
 
 let operador=null, pcOperativa=null;
 let solicitudes=[], billeteras=[], chats=[], chatMensajes=[];
@@ -4496,7 +4498,7 @@ async function ajustarSaldoBilletera(id, delta){
   const b = billeteras.find(x=>x.ID_BILLETERA===id);
   const saldoActual = b ? Number(b.SALDO||0) : 0;
   const nuevoSaldo  = Math.max(0, saldoActual + delta);
-  await supabaseClient.from("billeteras").update({saldo: nuevoSaldo}).eq("id", id);
+  await supabaseClient.rpc("panel_billetera_update",{p_secret:window.PANEL_DATA_SECRET,p_id:Number(id),p_patch:{saldo:nuevoSaldo}});
   if(b) b.SALDO = nuevoSaldo;
 }
 
@@ -4540,12 +4542,12 @@ function abrirEditarBilletera(id){
     <label>Saldo actual (ajuste manual)</label>
     <input id="ebSaldo" type="number" value="${b.SALDO||0}">
   `,async()=>{
-    const {error}=await supabaseClient.from("billeteras").update({
+    const {error}=await supabaseClient.rpc("panel_billetera_update",{p_secret:window.PANEL_DATA_SECRET,p_id:Number(id),p_patch:{
       nombre_visible:val("ebNombre"),
       cbu_alias:val("ebCbu"),
       titular:val("ebNombre"),
       saldo:Number(val("ebSaldo")||0)
-    }).eq("id",id);
+    }});
     if(error){alert(error.message);return}
     cerrarModal();
     toast("Billetera actualizada","green");
@@ -4564,7 +4566,7 @@ function abrirNuevaBilletera(){
   `,async()=>{
     const nombre=val("nbNombre");
     if(!nombre){alert("El nombre es obligatorio.");return}
-    const {error}=await supabaseClient.from("billeteras").insert({
+    const {error}=await supabaseClient.rpc("panel_billetera_insert",{p_secret:window.PANEL_DATA_SECRET,p_patch:{
       nombre_visible:nombre,
       cbu_alias:val("nbCbu"),
       titular:nombre,
@@ -4572,7 +4574,7 @@ function abrirNuevaBilletera(){
       pc_codigo:pcOperativa,
       activa:true,
       seleccionada_manual:false
-    });
+    }});
     if(error){alert(error.message);return}
     cerrarModal();
     toast("Billetera creada","green");
@@ -4907,7 +4909,7 @@ async function seleccionarBilletera(id){
 }
 
 async function cambiarEstadoBilletera(id,estado){
-  const {error}=await supabaseClient.from("billeteras").update({activa:estado==="SI"}).eq("id",id);
+  const {error}=await supabaseClient.rpc("panel_billetera_update",{p_secret:window.PANEL_DATA_SECRET,p_id:Number(id),p_patch:{activa:estado==="SI"}});
   if(error){alert(error.message||"Error");return}
   await cargarBilleteras();
 }
@@ -7392,8 +7394,9 @@ function cambiarBilleteraMovimiento(movId, historialId, currentBilId){
 }
 
 async function _crearBilleterasNuevasChunior(nuevas){
-  const inserts = nuevas.map(function(w){
-    return {
+  let _err=null;
+  for(const w of nuevas){
+    const { error } = await supabaseClient.rpc('panel_billetera_insert',{p_secret:window.PANEL_DATA_SECRET,p_patch:{
       nombre_visible: w.nombre,
       chunior_uid: String(w.uid),
       saldo: w.saldo,
@@ -7402,11 +7405,11 @@ async function _crearBilleterasNuevasChunior(nuevas){
       cbu_alias: '',
       titular: '',
       tipo: ''
-    };
-  });
-  const { error } = await supabaseClient.from('billeteras').insert(inserts);
-  if(error){
-    toast('Error al crear billeteras: '+error.message, 'red');
+    }});
+    if(error) _err=error;
+  }
+  if(_err){
+    toast('Error al crear billeteras: '+_err.message, 'red');
     return;
   }
   toast('🆕 '+nuevas.length+' billetera(s) agregada(s). Completá CBU, titular y alias en Administrar billeteras.', 'blue');
@@ -8178,9 +8181,7 @@ async function cargarSolicitudesPortal(silencioso=false){
     if(!id) return;
     try{
       const operador = (window.operador?.usuario || window.operador?.nombre || 'panel');
-      const { error } = await supabaseClient.from('usuarios_portal_vinculos')
-        .update({ estado_vinculo:'VINCULADO', verificado_por:operador, updated_at:new Date().toISOString() })
-        .eq('id', Number(id));
+      const { error } = await supabaseClient.rpc('panel_vinculo_confirmar',{p_secret:window.PANEL_DATA_SECRET,p_id:Number(id),p_operador:operador});
       if(error) throw error;
       if(typeof toast==='function') toast('Vínculo confirmado','green');
       portalRenderVinculo(el.dataset.usuario || '');
