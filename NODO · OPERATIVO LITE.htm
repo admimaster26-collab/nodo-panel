@@ -5918,7 +5918,7 @@ async function notificarUsuarioEnChat(usuarioNombre, mensaje){
   if(!chatId){
     try{
       const r = await supabaseClient.rpc('panel_core_get_chat_sesiones_json', {
-        p_pc_codigo: 'XGENERALENUSO'
+        p_pc_codigo: (pcOperativa || window.pcOperativa || '')
       });
       if(!r.error){
         let rows = r.data;
@@ -5954,7 +5954,7 @@ async function notificarUsuarioEnChat(usuarioNombre, mensaje){
       usuario: usuarioNombre,
       nombre_completo: usrData?.nombre || "",
       telefono: usrData?.telefono || "",
-      pc_codigo: pcOperativa || 'XGENERALENUSO',
+      pc_codigo: pcOperativa || window.pcOperativa || '',
       sin_leer: 0
     }).select().single();
     chatId = nuevo?.id;
@@ -5969,7 +5969,7 @@ async function notificarUsuarioEnChat(usuarioNombre, mensaje){
     p_mensaje: mensaje,
     p_imagen_url: '',
     p_emisor: 'Sistema',
-    p_pc_codigo: 'XGENERALENUSO'
+    p_pc_codigo: (pcOperativa || window.pcOperativa || '')
   });
   if(!rpc1.error){ enviado = true; }
 
@@ -5989,7 +5989,7 @@ async function notificarUsuarioEnChat(usuarioNombre, mensaje){
       mensaje,
       tipo_emisor: "OPERADOR",
       emisor: "Sistema",
-      pc_codigo: pcOperativa || 'XGENERALENUSO',
+      pc_codigo: pcOperativa || window.pcOperativa || '',
       leido: false
     });
     await supabaseClient.from("chats").update({
@@ -9210,8 +9210,8 @@ async function ejecutarSolicitudPortalSimple(ctx){
 // - Chat: NO usa panel_core_*. Usa solo panel_nodo_list_* existentes.
 // ============================================================
 (function(){
-  const SCOPE_PC = 'XGENERALENUSO';
-  const COMPAT_PC = 'P1';
+  const SCOPE_PC  = () => String(window.pcOperativa || 'XGENERALENUSO').trim().toUpperCase();
+  const COMPAT_PC = () => String(window.pcOperativa || 'P1').trim().toUpperCase();
 
   function _safeEsc(v){
     try{ if(typeof escapeHtml === 'function') return escapeHtml(v); }catch(_e){}
@@ -9287,7 +9287,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       const realId = await _resolveBilleteraRealId(ref);
 
       // Update mínimo con columnas viejas/estables. No usar oficina_id, estado, updated_at ni RPC nueva.
-      const clear = await supabaseClient.from('billeteras').update({seleccionada_manual:false}).eq('pc_codigo', COMPAT_PC);
+      const clear = await supabaseClient.from('billeteras').update({seleccionada_manual:false}).eq('pc_codigo', COMPAT_PC());
       if(clear.error) console.warn('No pude limpiar selección previa:', clear.error.message || clear.error);
 
       const set = await supabaseClient.from('billeteras').update({seleccionada_manual:true}).eq('id', realId);
