@@ -4508,8 +4508,10 @@ async function ajustarSaldoBilletera(id, delta){
 }
 
 function renderBilleteras(){
-  let html=`<div style="margin-bottom:14px"><button class="mini-btn blue" onclick="abrirNuevaBilletera()">+ Nueva billetera</button></div>`;
-  if(!billeteras.length){html+=`<div class="alert-box">No hay billeteras configuradas para esta PC.</div>`;setBox("walletsGrid",html);renderEstadoLanding();return}
+  // Crear/editar billeteras (CBU/alias/titular/tipo) se hace SOLO en el admi (encargados).
+  // El operativo solo ve, transfiere, elige "en portal" y pausa.
+  let html=``;
+  if(!billeteras.length){html+=`<div class="alert-box">No hay billeteras configuradas para esta oficina. Se crean al sincronizar con Chunior; los datos los completa el encargado en el panel administrativo.</div>`;setBox("walletsGrid",html);renderEstadoLanding();return}
   billeteras.forEach(b=>{
     const activa=normalizar(b.ACTIVA)==="SI";
     const seleccionada=normalizar(b.SELECCIONADA_MANUAL)==="SI";
@@ -4525,7 +4527,6 @@ function renderBilleteras(){
       </div>
       <div class="wallet-actions">
         <button class="mini-btn blue" onclick="seleccionarBilleteraSeguro('${b.ID_BILLETERA}','${b.CHUNIOR_UID||''}')">En portal</button>
-        <button class="mini-btn" style="background:#2e3444" onclick="abrirEditarBilletera('${b.ID_BILLETERA}')">✏️ Editar</button>
         ${activa
           ?`<button class="mini-btn red" onclick="cambiarEstadoBilletera('${b.ID_BILLETERA}','NO')">Pausar</button>`
           :`<button class="mini-btn green" onclick="cambiarEstadoBilletera('${b.ID_BILLETERA}','SI')">Activar</button>`}
