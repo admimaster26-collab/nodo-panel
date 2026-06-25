@@ -3687,6 +3687,22 @@ async function cargarHistorial(){
   filtrarHistorial();
   // Refrescar la vista unificada de solicitudes si ya tiene datos cargados
   try{ if(solicitudes.length || _historialData.length) renderHistorialUnificado(); }catch(_e){}
+  // Cargar operaciones de agente (CSV) en paralelo → alimentan el CRM/segmentación
+  try{ cargarOperacionesAgente(); }catch(_e){}
+}
+
+// Operaciones de agentes importadas por CSV (admi) → solo alimentan el CRM, no el historial operativo.
+async function cargarOperacionesAgente(){
+  try{
+    const { data, error } = await supabaseClient
+      .from("agente_operaciones_importadas")
+      .select("fecha,cantidad,tipo_normalizado,tipo,alias,alias_norm,estado")
+      .in("pc_codigo", (typeof pcAliasesHist==="function" ? pcAliasesHist() : [String(pcOperativa||"")]))
+      .order("fecha",{ascending:false})
+      .limit(5000);
+    window._agenteOpsData = error ? (window._agenteOpsData||[]) : (data||[]);
+  }catch(_e){ window._agenteOpsData = window._agenteOpsData||[]; }
+  return window._agenteOpsData;
 }
 
 function filtrarHistorial(){
@@ -12023,6 +12039,13 @@ async function ejecutarSolicitudPortalSimple(ctx){
         lista=construirHistorialUnificado().map(it=>({usuario:it.usuario,tipo:it.tipo,monto:it.monto,estado:it.estado,origen:it.fuente==="SOLICITUD"?"PORTAL":(it._raw?.origen||"PANEL"),billetera_nombre:it.billetera_nombre,created_at:it.fecha,saldo_post:it.saldo_post,operador:it.operador||it._raw?.operador||"",_raw:it._raw||it}));
       }else if(Array.isArray(window._historialData)) lista=window._historialData.slice();
     }catch(e){console.warn("CRM historial",e);lista=Array.isArray(window._historialData)?window._historialData.slice():[]}
+    // Operaciones de agentes importadas por CSV → suman al CRM como cargas/retiros del jugador
+    try{
+      (window._agenteOpsData||[]).forEach(function(a){
+        const tipoN=U(a.tipo_normalizado||a.tipo||"");
+        lista.push({usuario:a.alias||a.alias_norm||"",tipo:tipoN.includes("RETIR")?"RETIRO":"CARGA",monto:Number(a.cantidad||0),estado:a.estado||"DONE",origen:"AGENTE",billetera_nombre:"",created_at:a.fecha,saldo_post:null,operador:"",_raw:a});
+      });
+    }catch(_e){}
     return lista.filter(x=>S(x.usuario).trim() && !["SOPORTE","CHAT"].includes(U(x.tipo)));
   }
   function buildCRM(){
@@ -12158,8 +12181,8 @@ async function ejecutarSolicitudPortalSimple(ctx){
     if(campo)campo.value=txt;
   };
 
-  window.cargarJugadores=function(){renderCRM()};
-  const oldMostrarVista=window.mostrarVista;if(typeof oldMostrarVista==="function"){window.mostrarVista=function(v){oldMostrarVista(v);if(v==="jugadores")setTimeout(renderCRM,80)}}
+  window.cargarJugadores=async function(){ try{ if(typeof cargarOperacionesAgente==="function") await cargarOperacionesAgente(); }catch(_e){} renderCRM(); };
+  const oldMostrarVista=window.mostrarVista;if(typeof oldMostrarVista==="function"){window.mostrarVista=function(v){oldMostrarVista(v);if(v==="jugadores"){ (typeof cargarOperacionesAgente==="function"?cargarOperacionesAgente():Promise.resolve()).finally(function(){ setTimeout(renderCRM,80); }); }}}
   setTimeout(()=>{const v=document.getElementById("viewJugadores");if(v&&!v.classList.contains("hidden"))renderCRM()},1000);
 })();
 </script>
