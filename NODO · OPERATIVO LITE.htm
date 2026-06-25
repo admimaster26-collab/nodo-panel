@@ -6852,6 +6852,21 @@ async function sincronizarBilleterasChunior(silencioso){
   }
 
   await cargarBilleteras(false);
+
+  // Crear en Supabase las billeteras de Chunior que todavía no existen (por UID).
+  // Sin esto, una oficina nueva solo mostraría las billeteras ya cargadas.
+  try{
+    const _existUids = new Set((billeteras||[]).map(function(b){ return String(b.CHUNIOR_UID||''); }).filter(Boolean));
+    const _nuevas = walletsChunior.filter(function(w){
+      const uid = String(w.chunior_uid||w.uid||'').trim();
+      return uid && !_existUids.has(uid);
+    });
+    if(_nuevas.length){
+      await _crearBilleterasNuevasChunior(_nuevas);
+      await cargarBilleteras(false);
+    }
+  }catch(e){ console.warn('crear billeteras nuevas de Chunior falló:', e); }
+
   renderInicio();
   try{ renderBilleteras(); }catch(_e){}
 
