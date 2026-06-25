@@ -2441,6 +2441,9 @@ function normalizarPcCodigo(textPuesto){
 // Busca / crea la oficina en Supabase. Devuelve {pc_codigo, nombre, chunior_pt_id, esNueva}.
 async function _asegurarOficina(pcCodigo, nombre, chuniorPtId){
   if(!pcCodigo) return { pc_codigo:'', nombre:'', esNueva:false };
+  // La tabla 'oficinas' no existe en el Supabase unificado; los datos de oficina
+  // viven en nodo_oficina_aliases. Devolvemos sin tocar Supabase (evita 404).
+  return { pc_codigo:pcCodigo, nombre, chunior_pt_id:String(chuniorPtId||''), esNueva:false };
   try {
     const { data: existing } = await supabaseClient
       .from('oficinas')
@@ -6683,8 +6686,16 @@ async function _chuniorConfirmarPuesto(value, text){
     );
     toast('Chunior: puesto '+text+' seleccionado', 'green');
 
-    // 2. Normalizar el nombre del puesto → pc_codigo de la oficina
-    const pcCodigoNuevo = normalizarPcCodigo(text);
+    // 2. Resolver el puesto → pc_codigo + oficina_id vía nodo_oficina_aliases (sin hardcode)
+    let pcCodigoNuevo = normalizarPcCodigo(text);
+    let oficinaIdNueva = pcCodigoNuevo;
+    try{
+      const rr = await supabaseClient.rpc('panel_resolver_puesto', { p_nombre: text });
+      const row = rr && rr.data && rr.data[0];
+      if(row && row.pc_codigo){ pcCodigoNuevo = row.pc_codigo; oficinaIdNueva = row.oficina_id || row.pc_codigo; }
+    }catch(_e){ console.warn('resolver puesto falló, uso normalizado:', _e); }
+    window.oficinaId = oficinaIdNueva;
+    try{ localStorage.setItem('nodo_oficina_id', oficinaIdNueva); }catch(_e){}
     if(!pcCodigoNuevo){
       toast('No pude derivar pc_codigo del puesto "'+text+'"', 'red');
       return;
@@ -6701,6 +6712,8 @@ async function _chuniorConfirmarPuesto(value, text){
     // 4. Asegurar la oficina en Supabase (crear si es nueva)
     const oficina = await _asegurarOficina(pcCodigoNuevo, text, value);
     pcOperativa = pcCodigoNuevo;
+    window.pcOperativa = pcCodigoNuevo;          // espejo para los overrides que leen window
+    window.oficinaId   = oficinaIdNueva;
 
     // El historial pudo haberse cargado antes de resolver el puesto (pcOperativa vacío) →
     // recargarlo ahora que la oficina está resuelta, así aparecen las operaciones manuales.
@@ -6808,18 +6821,18 @@ async function sincronizarBilleterasChunior(silencioso){
   window.__nodoChuniorWalletUids = uidsDetectados;
   window.__nodoChuniorWalletSaldoByUid = saldoMap;
   window.__nodoChuniorWalletNombreByUid = nombreMap;
-  window.__nodoOficinaDetectada = 'XPLATA';
-  window.__nodoPuestoDetectado = 'XGENERALENUSO';
+  window.__nodoOficinaDetectada = (window.oficinaId || '');
+  window.__nodoPuestoDetectado  = (window.pcOperativa || pcOperativa || '');
   try{ localStorage.setItem('nodo_chunior_wallet_uids', JSON.stringify(uidsDetectados)); }catch(_e){}
   try{ localStorage.setItem('nodo_chunior_wallet_nombres', JSON.stringify(nombreMap)); }catch(_e){}
-  try{ localStorage.setItem('nodo_oficina_id', 'XPLATA'); }catch(_e){}
-  try{ localStorage.setItem('nodo_puesto_chunior', 'XGENERALENUSO'); }catch(_e){}
+  try{ localStorage.setItem('nodo_oficina_id', (window.oficinaId || '')); }catch(_e){}
+  try{ localStorage.setItem('nodo_puesto_chunior', (window.pcOperativa || pcOperativa || '')); }catch(_e){}
 
   // Persistir en Supabase via RPC (panel_nodo_sync_chunior_wallets hace upsert correcto con RLS).
   // Fallback: si la RPC falla, intentamos update directo por uid para no perder los saldos.
   try{
     const { error: rpcErr } = await supabaseClient.rpc('panel_nodo_sync_chunior_wallets', {
-      p_pc_codigo: pcOperativa || 'XGENERALENUSO',
+      p_pc_codigo: (pcOperativa || window.pcOperativa || ''),
       p_wallets: walletsChunior
     });
     if(rpcErr) throw rpcErr;
@@ -8872,8 +8885,8 @@ async function ejecutarSolicitudPortalSimple(ctx){
       NOMBRE_CHUNIOR: nombreChunior || b.nombre_chunior || b.nombre || b.NOMBRE_CHUNIOR || b.nombre_visible || b.NOMBRE_VISIBLE || '',
       TIPO: b.tipo || b.banco || b.TIPO || b.BANCO || (uid ? 'Chunior' : ''),
       BANCO: b.banco || b.BANCO || '',
-      PC: b.pc_codigo || b.PC || 'P1',
-      OFICINA_ID: b.oficina_id || b.OFICINA_ID || 'XPLATA',
+      PC: b.pc_codigo || b.PC || window.pcOperativa || '',
+      OFICINA_ID: b.oficina_id || b.OFICINA_ID || window.oficinaId || '',
       ACTIVA: 'SI',
       SELECCIONADA_MANUAL: (b.seleccionada_manual === true || _n(b.seleccionada_manual || b.SELECCIONADA_MANUAL) === 'SI' || _n(b.seleccionada_manual || b.SELECCIONADA_MANUAL) === 'TRUE') ? 'SI' : 'NO',
       SALDO: saldo,
@@ -8897,9 +8910,11 @@ async function ejecutarSolicitudPortalSimple(ctx){
     // PC estricta: solo billeteras de esta oficina/PC
     const _pc = String(
       window.pcOperativa ||
+      (typeof pcOperativa !== 'undefined' ? pcOperativa : '') ||
       window.landingPcCodigo ||
+      localStorage.getItem('nodo_pc_operativa_lite') ||
       localStorage.getItem('panel_pc_operativa') ||
-      'XGENERALENUSO'
+      ''
     ).trim().toUpperCase();
 
     // 1) RPC con PC correcto
@@ -8966,8 +8981,8 @@ async function ejecutarSolicitudPortalSimple(ctx){
         activa: true,
         estado: 'ACTIVA',
         seleccionada_manual: false,
-        oficina_id: 'XPLATA',
-        pc_codigo: 'P1',
+        oficina_id: (window.oficinaId || _pc || ''),
+        pc_codigo: (_pc || ''),
         banco: 'Chunior'
       }));
     }
