@@ -12073,7 +12073,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       j.origenHabitual=Object.entries(j.origenes).sort((a,b)=>b[1]-a[1])[0]?.[0]||"-";
       j.operadorHabitual=Object.entries(j.operadores).sort((a,b)=>b[1]-a[1])[0]?.[0]||"-";
       let score=0;score+=Math.min(j.cargas*8,40);score+=Math.min(j.montoCargas/10000,35);score+=j.diasUltCarga<=3?15:j.diasUltCarga<=7?10:j.diasUltCarga<=30?4:0;score+=j.neto>0?8:0;score-=Math.min(j.errores*3,10);j.score=Math.max(0,Math.round(score));
-      if(j.cargas>=8||j.montoCargas>=100000||j.score>=70)j.segmento="VIP";else if(j.diasUltCarga<=7)j.segmento="ACTIVO";else if(j.diasUltCarga<=30)j.segmento="TIBIO";else if(j.cargas<=1)j.segmento="NUEVO";else j.segmento="FRIO";
+      if(j.cargas>=8||j.montoCargas>=100000||j.score>=70)j.segmento="VIP";else if(j.cargas<=1)j.segmento="NUEVO";else if(j.diasUltCarga<=7)j.segmento="ACTIVO";else if(j.diasUltCarga<=30)j.segmento="TIBIO";else j.segmento="FRIO";
       j.accion=j.segmento==="VIP"?"Cuidar / promo personalizada":j.segmento==="ACTIVO"?"Mantener activo":j.segmento==="TIBIO"?"Reactivar con bono":j.segmento==="FRIO"?"Recuperación fuerte":"Bienvenida / seguimiento";
       return j;
     });
