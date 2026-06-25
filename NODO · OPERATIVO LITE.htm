@@ -1410,7 +1410,9 @@ const API_URL = "https://script.google.com/macros/s/AKfycbwvZGRAOxBLNIQ52mlED6Zl
 //   SUPABASE_KEY = "sb_publishable_UlAN1ifdqpTj9pDIwFU0vg_S7AIU5Sg"
 const SUPABASE_URL = "https://pjvvyvfcwjoocjqvdror.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NYqRoKptTgcL90VAVF2kqA_Gl06mEUF";
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+  global: { headers: { "x-panel-secret": (localStorage.getItem("nodo_panel_data_secret") || "nodo-panel-data-2026") } }
+});
 
 // ── Push API (configurable por oficina via localStorage) ──────────────────
 window.PUSH_API_URL = localStorage.getItem("nodo_push_api_url") || "https://portal-bet300-a4xj.vercel.app/api/send-push";
@@ -4539,6 +4541,8 @@ function abrirEditarBilletera(id){
     <input id="ebNombre" value="${escapeHtml(b.NOMBRE_VISIBLE||"")}" placeholder="Ej: Juan García">
     <label>CBU / CVU / Alias</label>
     <input id="ebCbu" value="${escapeHtml(b.CBU_ALIAS||"")}" placeholder="Ej: 0000003100...">
+    <label>Tipo (MP, Ualá, NJX, PP, transferencia…)</label>
+    <input id="ebTipo" value="${escapeHtml((b.BANCO&&!/chunior|^p\d|general/i.test(b.BANCO))?b.BANCO:(typeof detectarTipoBilletera==='function'?detectarTipoBilletera(b):''))}" placeholder="Ej: MercadoPago">
     <label>Saldo actual (ajuste manual)</label>
     <input id="ebSaldo" type="number" value="${b.SALDO||0}">
   `,async()=>{
@@ -4546,6 +4550,7 @@ function abrirEditarBilletera(id){
       nombre_visible:val("ebNombre"),
       cbu_alias:val("ebCbu"),
       titular:val("ebNombre"),
+      banco:val("ebTipo"),
       saldo:Number(val("ebSaldo")||0)
     }});
     if(error){alert(error.message);return}
@@ -4561,6 +4566,8 @@ function abrirNuevaBilletera(){
     <input id="nbNombre" placeholder="Ej: Juan García">
     <label>CBU / CVU / Alias</label>
     <input id="nbCbu" placeholder="Ej: 0000003100...">
+    <label>Tipo (MP, Ualá, NJX, PP, transferencia…)</label>
+    <input id="nbTipo" placeholder="Ej: MercadoPago">
     <label>Saldo inicial</label>
     <input id="nbSaldo" type="number" value="0">
   `,async()=>{
@@ -4570,6 +4577,7 @@ function abrirNuevaBilletera(){
       nombre_visible:nombre,
       cbu_alias:val("nbCbu"),
       titular:nombre,
+      banco:val("nbTipo"),
       saldo:Number(val("nbSaldo")||0),
       pc_codigo:pcOperativa,
       activa:true,
@@ -11678,6 +11686,20 @@ async function ejecutarSolicitudPortalSimple(ctx){
     input.dispatchEvent(new Event("input",{bubbles:true}));
   }
 
+  function detectarTipoBilletera(b){
+    if(!b) return "";
+    // 1) Si el operador definió un tipo real (no "Chunior/Px/General"), respetarlo.
+    const exp = S(b.banco || b.tipo || b.BANCO || b.TIPO || "").trim();
+    if(exp && !/chunior|^p\d|general/i.test(exp)) return exp;
+    // 2) Autodetección por nombre/alias/cbu.
+    const s = (S(b.nombre_visible||b.nombre||b.NOMBRE_VISIBLE||"")+" "+S(b.alias||b.ALIAS||b.cbu_alias||b.CBU_ALIAS||"")+" "+S(b.cbu||b.CBU||"")).toLowerCase();
+    if(/\.mp\b|mercado\s?pago|\bmp\b/.test(s))   return "MercadoPago";
+    if(/ual[aá]/.test(s))                         return "Ualá";
+    if(/njx|naranja/.test(s))                     return "Naranja X";
+    if(/\bpp\b|prex/.test(s))                     return "PP";
+    if(/brubank/.test(s))                         return "Brubank";
+    return ""; // sin señal: mejor no poner tipo que poner "Chunior"
+  }
   function getWalletPortalText(){
     // Preferencia 1: lo que muestra Inicio.
     const nombre = S(document.getElementById("statBilletera")?.textContent || "").trim();
@@ -11696,7 +11718,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
     const alias = S(b?.alias || "").trim();
     const cbu = S(b?.cbu || b?.cvu || "").trim();
     const titular = S(b?.titular || "").trim();
-    const t = S(b?.banco || b?.tipo || tipo || "").trim();
+    const t = detectarTipoBilletera(b) || (/chunior|^p\d|general/i.test(S(tipo)) ? "" : S(tipo).trim());
 
     let msg = "Te paso los datos para transferir:";
     if(n && n !== "-" && n !== "—") msg += "\nBilletera: " + n;
