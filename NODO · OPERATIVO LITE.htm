@@ -3692,17 +3692,16 @@ async function cargarHistorial(){
 }
 
 // Operaciones de agentes importadas por CSV (admi) → solo alimentan el CRM, no el historial operativo.
+// Agregamos del lado del servidor (cargas/montos/última carga por jugador) para no traer
+// decenas de miles de filas ni sesgar por las más recientes.
 async function cargarOperacionesAgente(){
   try{
-    const { data, error } = await supabaseClient
-      .from("agente_operaciones_importadas")
-      .select("fecha,cantidad,tipo_normalizado,tipo,alias,alias_norm,estado")
-      .in("pc_codigo", (typeof pcAliasesHist==="function" ? pcAliasesHist() : [String(pcOperativa||"")]))
-      .order("fecha",{ascending:false})
-      .limit(5000);
-    window._agenteOpsData = error ? (window._agenteOpsData||[]) : (data||[]);
-  }catch(_e){ window._agenteOpsData = window._agenteOpsData||[]; }
-  return window._agenteOpsData;
+    const { data, error } = await supabaseClient.rpc("panel_crm_agente_resumen", {
+      p_pc_codigos: (typeof pcAliasesHist==="function" ? pcAliasesHist() : [String(pcOperativa||"")])
+    });
+    window._agenteResumen = error ? (window._agenteResumen||[]) : (data||[]);
+  }catch(_e){ window._agenteResumen = window._agenteResumen||[]; }
+  return window._agenteResumen;
 }
 
 function filtrarHistorial(){
@@ -12039,13 +12038,6 @@ async function ejecutarSolicitudPortalSimple(ctx){
         lista=construirHistorialUnificado().map(it=>({usuario:it.usuario,tipo:it.tipo,monto:it.monto,estado:it.estado,origen:it.fuente==="SOLICITUD"?"PORTAL":(it._raw?.origen||"PANEL"),billetera_nombre:it.billetera_nombre,created_at:it.fecha,saldo_post:it.saldo_post,operador:it.operador||it._raw?.operador||"",_raw:it._raw||it}));
       }else if(Array.isArray(window._historialData)) lista=window._historialData.slice();
     }catch(e){console.warn("CRM historial",e);lista=Array.isArray(window._historialData)?window._historialData.slice():[]}
-    // Operaciones de agentes importadas por CSV → suman al CRM como cargas/retiros del jugador
-    try{
-      (window._agenteOpsData||[]).forEach(function(a){
-        const tipoN=U(a.tipo_normalizado||a.tipo||"");
-        lista.push({usuario:a.alias||a.alias_norm||"",tipo:tipoN.includes("RETIR")?"RETIRO":"CARGA",monto:Number(a.cantidad||0),estado:a.estado||"DONE",origen:"AGENTE",billetera_nombre:"",created_at:a.fecha,saldo_post:null,operador:"",_raw:a});
-      });
-    }catch(_e){}
     return lista.filter(x=>S(x.usuario).trim() && !["SOPORTE","CHAT"].includes(U(x.tipo)));
   }
   function buildCRM(){
@@ -12065,6 +12057,17 @@ async function ejecutarSolicitudPortalSimple(ctx){
       if(tipo==="CARGA"){j.cargas++;if(ok)j.montoCargas+=montoAbs;if(fecha&&(!j.ultimaCarga||toDate(fecha)>toDate(j.ultimaCarga)))j.ultimaCarga=fecha}
       if(tipo==="RETIRO"){j.retiros++;if(ok)j.montoRetiros+=montoAbs;if(fecha&&(!j.ultimaRetiro||toDate(fecha)>toDate(j.ultimaRetiro)))j.ultimaRetiro=fecha}
       if(tipo==="CONSULTA")j.consultas++;
+    });
+    // Merge de agregados de operaciones de agentes (CSV) por jugador
+    (window._agenteResumen||[]).forEach(function(a){
+      const usuario=S(a.usuario).trim(), key=U(usuario); if(!key)return;
+      if(!map.has(key))map.set(key,{usuario,totalOps:0,cargas:0,retiros:0,consultas:0,montoCargas:0,montoRetiros:0,neto:0,ultimaOperacion:null,ultimaCarga:null,ultimaRetiro:null,turnos:{TM:0,TT:0,TN:0},billeteras:{},origenes:{},operadores:{},saldoPost:null,errores:0});
+      const j=map.get(key), c=Number(a.cargas||0), r=Number(a.retiros||0);
+      j.cargas+=c; j.retiros+=r; j.totalOps+=c+r;
+      j.montoCargas+=Number(a.monto_cargas||0); j.montoRetiros+=Number(a.monto_retiros||0);
+      if(a.ultima_carga&&(!j.ultimaCarga||toDate(a.ultima_carga)>toDate(j.ultimaCarga)))j.ultimaCarga=a.ultima_carga;
+      if(a.ultima_op&&(!j.ultimaOperacion||toDate(a.ultima_op)>toDate(j.ultimaOperacion)))j.ultimaOperacion=a.ultima_op;
+      if(c+r>0)j.origenes["AGENTE"]=(j.origenes["AGENTE"]||0)+c+r;
     });
     const arr=Array.from(map.values()).map(j=>{
       j.neto=j.montoCargas-j.montoRetiros;j.diasUltCarga=diasDesde(j.ultimaCarga||j.ultimaOperacion);
