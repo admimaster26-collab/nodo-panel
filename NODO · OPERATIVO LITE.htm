@@ -1420,6 +1420,22 @@ window.PUSH_SECRET  = localStorage.getItem("nodo_push_secret")  || "nodo-bet300-
 // ── Secreto de datos del panel (Fase 2: RPC con secreto; el portal público NO lo tiene) ──
 window.PANEL_DATA_SECRET = localStorage.getItem("nodo_panel_data_secret") || "nodo-panel-data-2026";
 
+// ── Latido de actividad del panel → el admi muestra "Paneles por oficina" (online/offline) ──
+async function _latidoPanel(){
+  try{
+    const pc = (typeof pcOperativa!=='undefined'?pcOperativa:'') || window.pcOperativa || '';
+    if(!pc) return; // todavía sin oficina resuelta
+    const op = (window.operador && (window.operador.usuario||window.operador.nombre)) ||
+               (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || '';
+    await supabaseClient.rpc('panel_registrar_actividad',{
+      p_secret:window.PANEL_DATA_SECRET, p_pc_codigo:pc,
+      p_oficina_id:(window.oficinaId||''), p_operador:op, p_version:'V18'
+    });
+  }catch(_e){}
+}
+setInterval(_latidoPanel, 45000);
+setTimeout(_latidoPanel, 6000);
+
 let operador=null, pcOperativa=null;
 let solicitudes=[], billeteras=[], chats=[], chatMensajes=[];
 let retiros24hCSV = []; // {alias, fecha, monto} — retiros detectados en últimas 24h desde CSV
