@@ -8168,6 +8168,7 @@ async function cargarSolicitudesPortal(silencioso=false){
           <div style="color:#64748b;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;margin-bottom:7px">Lo que declaró el usuario</div>
           <div id="portalJobRef" style="display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;color:#cbd5e1"></div>
           <div id="portalJobVinculo" style="margin-top:8px;padding-top:8px;border-top:1px solid #243049;font-size:13px"></div>
+          <div id="portalJobPromo" style="margin-top:8px"></div>
         </div>
 
         <!-- Acción del operador -->
@@ -8225,6 +8226,30 @@ async function cargarSolicitudesPortal(silencioso=false){
       inp.style.borderColor = '#22c55e';
     }
   };
+  async function portalRenderPromo(usuario){
+    const el = document.getElementById('portalJobPromo');
+    if(!el) return;
+    el.innerHTML=''; el.dataset.bonoPct='0'; el.dataset.promoBilleteraId=''; el.dataset.promoBilleteraNombre='';
+    const u = String(usuario||'').trim();
+    if(!u) return;
+    try{
+      const r = await supabaseClient.rpc('panel_promo_primer_ingreso',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:(pcOperativa||window.pcOperativa||''),p_usuario:u});
+      const d = (r && r.data) || {};
+      if(!d.primer_ingreso || !d.promo_activa || !(Number(d.bono_pct)>0)) return; // no aplica
+      el.dataset.bonoPct=String(d.bono_pct);
+      el.dataset.promoBilleteraId=String(d.promo_billetera_id||'');
+      el.dataset.promoBilleteraNombre=String(d.promo_billetera_nombre||'');
+      const reqs = '🔔 Push '+(d.push?'✅':'❌')+' &nbsp;·&nbsp; 📱 App '+(d.app?'✅':'❌');
+      el.innerHTML = `<div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:9px 11px">
+        <div style="font-weight:900;color:#22c55e">🎁 PRIMER INGRESO — bono ${d.bono_pct}%</div>
+        <div style="font-size:12px;color:#cbd5e1;margin-top:3px">${reqs}</div>
+        <label style="display:flex;align-items:center;gap:7px;margin-top:7px;font-size:13px;font-weight:700;cursor:pointer">
+          <input type="checkbox" id="portalJobBonoChk" checked> Cargar con bono (+${d.bono_pct}% en billetera ${esc(d.promo_billetera_nombre||'PROMO')})
+        </label>
+        ${(!d.promo_billetera_id)?'<div style="font-size:11px;color:#fca5a5;margin-top:4px">⚠ No encontré la billetera PROMO de esta oficina (revisá que exista una con \"PROMO\" en el nombre).</div>':''}
+      </div>`;
+    }catch(e){ console.warn('[promo]',e); }
+  }
   async function portalRenderVinculo(usuario){
     const el = document.getElementById('portalJobVinculo');
     if(!el) return;
@@ -8285,6 +8310,7 @@ async function cargarSolicitudesPortal(silencioso=false){
     document.getElementById('portalJobObs').value = '';
     try{ portalCheckDiscrepancia(); }catch(_e){}
     try{ portalRenderVinculo(s.USUARIO); }catch(_e){}
+    try{ portalRenderPromo(s.USUARIO); }catch(_e){}
     const res = document.getElementById('portalJobResultado');
     if(res) res.innerHTML = '';
     portalPoblarBilleteras(document.getElementById('portalJobBilletera'), s);
@@ -8306,6 +8332,12 @@ async function cargarSolicitudesPortal(silencioso=false){
     const destino = s.DESTINO || s.BILLETERA_NOMBRE || '';
     const cbu = s.CBU || s.CVU || s.CBU_ALIAS || '';
     const obs = portalInputVal('portalJobObs');
+    // Bono de primer ingreso (lo leemos antes de ocultar el modal)
+    const _promoEl = document.getElementById('portalJobPromo');
+    const _bonoChk = document.getElementById('portalJobBonoChk');
+    const _bonoPct = Number((_promoEl && _promoEl.dataset.bonoPct) || 0);
+    const bonoAplicar = !!(_bonoChk && _bonoChk.checked && _bonoPct>0 && tipo==='CARGA');
+    const promoBilleteraId = (_promoEl && _promoEl.dataset.promoBilleteraId) || '';
     if(!usuario) return toast('Falta usuario', 'red');
     if(!montoAprobado || montoAprobado <= 0) return toast('Monto aprobado inválido', 'red');
     if(!bilId) return toast('Seleccioná una billetera', 'red');
@@ -8314,7 +8346,7 @@ async function cargarSolicitudesPortal(silencioso=false){
     toast('Portal: operación enviada. Podés seguir usando el panel.', 'blue');
     // No dejamos el modal bloqueando la pantalla: el flujo continúa en segundo plano
     // y al terminar actualiza Solicitudes/Historial como LANDING.
-    ejecutarSolicitudPortalSimple({id, solicitud:s, usuario, tipo, montoAprobado, bilId, titular, destino, cbu, obs})
+    ejecutarSolicitudPortalSimple({id, solicitud:s, usuario, tipo, montoAprobado, bilId, titular, destino, cbu, obs, bonoAplicar, bonoPct:_bonoPct, promoBilleteraId})
       .catch(function(e){ console.error('portal job error:', e); toast('Portal con error: '+(e.message||''), 'red'); });
   };
 
@@ -8538,6 +8570,47 @@ async function ejecutarSolicitudPortalSimple(ctx){
               toast('⚠️ '+tipo+' OK en Agentes pero falló Chunior: '+rChu.error, 'red');
             }
           }).catch(function(e){ toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red'); });
+        }
+        // ── Bono de primer ingreso: 2da carga en la billetera PROMO (Chunior la audita aparte) ──
+        if(tipo === 'CARGA' && ctx.bonoAplicar && Number(ctx.bonoPct)>0){
+          try{
+            const bonoMonto = Math.round(montoAbs * Number(ctx.bonoPct) / 100);
+            const bilPromo = (billeteras||[]).find(b => String(b.ID_BILLETERA) === String(ctx.promoBilleteraId))
+                           || (billeteras||[]).find(b => /promo/i.test(String(b.NOMBRE_VISIBLE||'')));
+            if(bonoMonto>0 && bilPromo){
+              toast('🎁 Cargando bono '+ctx.bonoPct+'% ('+money(bonoMonto)+') en '+(bilPromo.NOMBRE_VISIBLE||'PROMO')+'...', 'blue');
+              _wdLock();
+              let rb;
+              try{
+                await callDrex('buscarUsuario', usuario, { skipBalance: true });   // re-seleccionar al jugador
+                rb = await callDrex('cargarSaldo', bonoMonto);
+              }catch(eb){ rb = {ok:false, message:eb.message}; }
+              finally{ _wdUnlock(); }
+              const okBono = rb && rb.ok !== false;
+              const filaBono = await registrarEnHistorial({
+                usuario, tipo:'CARGA', monto:bonoMonto,
+                billetera_id: bilPromo.ID_BILLETERA, billetera_nombre: bilPromo.NOMBRE_VISIBLE||'PROMO',
+                origen:'PROMO_BONO', estado: okBono?'OK':'ERROR',
+                notas:'Bono primer ingreso '+ctx.bonoPct+'% sobre '+money(montoAbs)+' · solicitud #'+id,
+                solicitud_id:id
+              });
+              if(okBono){
+                try{ await ajustarSaldoBilletera(bilPromo.ID_BILLETERA, bonoMonto); }catch(_e){}
+                toast('🎁 Bono '+ctx.bonoPct+'% acreditado: '+money(bonoMonto), 'green');
+                if(bilPromo.CHUNIOR_UID){
+                  registrarCargaEnChunior(bilPromo.CHUNIOR_UID, bonoMonto, usuario).then(async function(rChu){
+                    if(rChu && rChu.ok && rChu.movimientoId && filaBono && filaBono.id){
+                      try{ await supabaseClient.from('historial_ops').update({chunior_movimiento_id:rChu.movimientoId}).eq('id', filaBono.id); }catch(_e){}
+                    }
+                  }).catch(function(){});
+                }
+              } else {
+                toast('⚠️ El bono no se cargó en Agentes: '+((rb&&rb.message)||'sin detalle')+' — cargalo a mano.', 'red');
+              }
+            } else if(!bilPromo){
+              toast('⚠️ No encontré la billetera PROMO — el bono no se cargó.', 'red');
+            }
+          }catch(eb){ console.warn('[bono]', eb); toast('⚠️ Error con el bono: '+(eb.message||''), 'red'); }
         }
         if(tipo === 'CARGA' && busqueda?.user){ try{ _autoregistrarUsuarioSiFalta(busqueda.user); }catch(_e){} }
         setTimeout(()=>{ cerrarPortalJobModal(); }, 450);
