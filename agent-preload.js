@@ -875,14 +875,28 @@ async function crearUsuario(alias, password, options = {}) {
 
   // Camino b): modal de confirmación → clickear "Guardar"
   const guardarBtn = buscarGuardar() || findActionButton(/^guardar$/i);
-  if (guardarBtn) {
-    clickElement(guardarBtn);
-    await delay(900); // esperar la pantalla final de confirmación
-  } else {
+  if (!guardarBtn) {
+    // No apareció ni el error duplicado ni el modal de confirmación → NO afirmar éxito en falso.
     console.warn('[crearUsuario] botón Guardar no encontrado tras Registrar');
+    return { ok: false, alias, error: 'sin_confirmacion', message: 'No apareció la confirmación de creación. Verificá manualmente en el casino antes de cargar.' };
   }
+  clickElement(guardarBtn);
 
-  return { ok: true, alias, password, message: 'Usuario creado correctamente.' };
+  // Tras Guardar hay que ESPERAR la confirmación REAL de éxito ("registrado correctamente"),
+  // o un error/duplicado tardío. Antes devolvíamos ok:true a ciegas → éxito en falso.
+  const esExito = function(){
+    return /registrad[oa] correctamente|cread[oa] correctamente|usuario creado|creaci[oó]n exitosa|success/i.test(document.body.textContent || '');
+  };
+  await waitFor(() => esExito() || esDuplicado(), TIMEOUT).catch(()=>{});
+  await delay(250);
+
+  if (esDuplicado())
+    return { ok: false, alias, error: 'duplicado', message: 'El alias ya existe.' };
+  if (esExito())
+    return { ok: true, alias, password, message: 'Usuario creado correctamente.' };
+
+  // Ni éxito ni duplicado confirmados → NO decir que se creó (evita el "no encontrado" posterior).
+  return { ok: false, alias, error: 'sin_confirmacion', message: 'No se pudo confirmar la creación del usuario. Verificá en el casino antes de cargar.' };
 }
 
 // Devuelve el saldo del AGENTE (operador) sin tocar nada del usuario
