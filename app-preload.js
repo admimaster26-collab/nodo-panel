@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('ctrlElectron', {
     }
     return ipcRenderer.invoke('drex:automation', { method, args });
   },
+  // Auto-login del agente con credenciales blindadas (la clave se resuelve en main, no acá).
+  drexAutoLogin: (pcCodigo) => ipcRenderer.invoke('drex:auto-login', { pcCodigo }),
   verifyUser: (usuario) => ipcRenderer.invoke('drex:verify-user', { usuario })
 });
 

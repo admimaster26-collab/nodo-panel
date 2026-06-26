@@ -5731,8 +5731,18 @@ async function _autoregistrarUsuarioSiFalta(aliasCasino){
 let _drexLoginResolve = null;
 
 function _mostrarModalLoginDrex() {
-  return new Promise(function(resolve) {
+  return new Promise(async function(resolve) {
     _drexLoginResolve = resolve;
+    // Auto-login BLINDADO primero: si la oficina tiene credenciales guardadas, la clave se
+    // resuelve en el proceso main (nunca en el renderer) y logueamos sin pedirle nada al operador.
+    try{
+      if(window.ctrlElectron && window.ctrlElectron.drexAutoLogin){
+        try{ toast('Conectando al backoffice…','blue'); }catch(_t){}
+        const _pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
+        const _r=await window.ctrlElectron.drexAutoLogin(_pc);
+        if(_r && _r.ok){ _drexLoginResolve=null; try{ toast('Backoffice conectado','green'); }catch(_t){} return resolve(true); }
+      }
+    }catch(_e){ console.warn('[drex] auto-login falló, pido credenciales manual:', _e); }
     abrirModal(
       '🔐 Login — Casinodrex Agentes',
       '<div style="margin-bottom:10px;color:#c0cad8;font-size:13px">La sesión del backoffice expiró o no está abierta.<br>Ingresá tus credenciales de agente para continuar.</div>' +

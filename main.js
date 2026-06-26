@@ -626,6 +626,29 @@ ipcMain.handle('drex:automation', async (_event, { method, args = [] } = {}) => 
   return sendAutomation(method, ...args);
 });
 
+// Auto-login del agente con credenciales BLINDADAS: la clave se trae acá (proceso main)
+// vía RPC con el secreto del panel y se inyecta en el backoffice. NUNCA pasa por el renderer.
+ipcMain.handle('drex:auto-login', async (_event, { pcCodigo } = {}) => {
+  try {
+    const url = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
+    const anon = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '';
+    const secret = process.env.PANEL_DATA_SECRET || 'nodo-panel-data-2026';
+    const pc = String(pcCodigo || process.env.PC_CODIGO || '').trim();
+    if (!url || !anon || !pc) return { ok: false, reason: 'config' };
+    const resp = await fetch(`${url}/rest/v1/rpc/panel_get_agente_credenciales`, {
+      method: 'POST',
+      headers: { apikey: anon, Authorization: 'Bearer ' + anon, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_secret: secret, p_pc_codigo: pc })
+    });
+    const data = await resp.json().catch(() => null);
+    if (!data || data.ok !== true || !data.usuario || !data.clave) return { ok: false, reason: 'no-creds' };
+    const r = await sendAutomation('iniciarSesion', data.usuario, data.clave);
+    return (r && r.ok !== false) ? { ok: true } : { ok: false, reason: 'login-fail', detail: r };
+  } catch (e) {
+    return { ok: false, reason: (e && e.message) || String(e) };
+  }
+});
+
 // Recibe el resultado de la automatización desde agent-preload.js
 ipcMain.on('drex:automation:result', (_event, response = {}) => {
   const pending = pendingAutomation.get(response.requestId);
