@@ -6763,6 +6763,9 @@ async function _chuniorConfirmarPuesto(value, text){
     window.pcOperativa = pcCodigoNuevo;          // espejo para los overrides que leen window
     window.oficinaId   = oficinaIdNueva;
 
+    // Aplicar el proxy de esta oficina (la config/clave se resuelve en el main, blindada).
+    try{ if(window.ctrlElectron && ctrlElectron.proxyApply) ctrlElectron.proxyApply(pcCodigoNuevo); }catch(_e){}
+
     // El historial pudo haberse cargado antes de resolver el puesto (pcOperativa vacío) →
     // recargarlo ahora que la oficina está resuelta, así aparecen las operaciones manuales.
     try{ if(typeof cargarHistorial==="function") setTimeout(function(){ cargarHistorial(); }, 500); }catch(_e){}

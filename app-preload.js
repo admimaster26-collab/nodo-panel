@@ -24,7 +24,9 @@ contextBridge.exposeInMainWorld('ctrlElectron', {
   },
   // Auto-login del agente con credenciales blindadas (la clave se resuelve en main, no acá).
   drexAutoLogin: (pcCodigo) => ipcRenderer.invoke('drex:auto-login', { pcCodigo }),
-  verifyUser: (usuario) => ipcRenderer.invoke('drex:verify-user', { usuario })
+  verifyUser: (usuario) => ipcRenderer.invoke('drex:verify-user', { usuario }),
+  // Aplica el proxy de la oficina (la config/clave se resuelve en main, no acá).
+  proxyApply: (pcCodigo) => ipcRenderer.invoke('proxy:apply', { pcCodigo })
 });
 
 // Acceso a la ventana separada de Chunior (visible, backoffice secundario)

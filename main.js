@@ -108,8 +108,46 @@ async function configurarProxyElectronV15() {
   return { ok: true, enabled: true, proxyRules };
 }
 
+// Proxy aplicado en RUNTIME: config por oficina, traída del admi tras el login en Chunior.
+let _runtimeProxyAuth = null; // {username, password} para el evento "login" del proxy
+async function aplicarProxyRuntime(cfg) {
+  try {
+    cfg = cfg || {};
+    if (!cfg.enabled || !cfg.host || !cfg.port) {
+      _runtimeProxyAuth = null;
+      await session.defaultSession.setProxy({ mode: "direct" });
+      try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
+      console.log("[proxy] runtime: directo (oficina sin proxy)");
+      return { ok: true, enabled: false };
+    }
+    const protocol = String(cfg.protocol || "http").toLowerCase();
+    const rules = protocol.startsWith("socks")
+      ? `socks=${cfg.host}:${cfg.port}`
+      : `http=${cfg.host}:${cfg.port};https=${cfg.host}:${cfg.port}`;
+    await session.defaultSession.setProxy({
+      mode: "fixed_servers",
+      proxyRules: rules,
+      proxyBypassRules: cfg.bypass || "<local>"
+    });
+    try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
+    _runtimeProxyAuth = cfg.username ? { username: String(cfg.username), password: String(cfg.password || "") } : null;
+    console.log("[proxy] runtime ACTIVADO:", rules);
+    return { ok: true, enabled: true, proxyRules: rules };
+  } catch (e) {
+    console.warn("[proxy] runtime error:", e.message);
+    return { ok: false, error: e.message };
+  }
+}
+
 app.on("login", (event, webContents, request, authInfo, callback) => {
-  if (authInfo?.isProxy && envBoolV15(process.env.PROXY_ENABLED, false) && process.env.PROXY_USERNAME) {
+  if (!authInfo?.isProxy) return;
+  // Prioridad: creds de runtime (por oficina, traídas del admi). Fallback: .env.
+  if (_runtimeProxyAuth && _runtimeProxyAuth.username) {
+    event.preventDefault();
+    callback(_runtimeProxyAuth.username, _runtimeProxyAuth.password || "");
+    return;
+  }
+  if (envBoolV15(process.env.PROXY_ENABLED, false) && process.env.PROXY_USERNAME) {
     event.preventDefault();
     callback(String(process.env.PROXY_USERNAME || ""), String(process.env.PROXY_PASSWORD || ""));
   }
@@ -651,6 +689,32 @@ ipcMain.handle('drex:auto-login', async (_event, { pcCodigo } = {}) => {
     if (!data || data.ok !== true || !data.usuario || !data.clave) return { ok: false, reason: 'no-creds' };
     const r = await sendAutomation('iniciarSesion', data.usuario, data.clave);
     return (r && r.ok !== false) ? { ok: true } : { ok: false, reason: 'login-fail', detail: r };
+  } catch (e) {
+    return { ok: false, reason: (e && e.message) || String(e) };
+  }
+});
+
+// Aplica el proxy de la oficina. La config (incluida la clave) se trae acá, en el main,
+// vía RPC con el secret del panel. NUNCA pasa por el renderer.
+ipcMain.handle('proxy:apply', async (_event, { pcCodigo } = {}) => {
+  try {
+    const url = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
+    const anon = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '';
+    const secret = process.env.PANEL_DATA_SECRET || 'nodo-panel-data-2026';
+    const pc = String(pcCodigo || process.env.PC_CODIGO || '').trim();
+    if (!url || !anon || !pc) return { ok: false, reason: 'config' };
+    const resp = await fetch(`${url}/rest/v1/rpc/panel_get_proxy`, {
+      method: 'POST',
+      headers: { apikey: anon, Authorization: 'Bearer ' + anon, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_secret: secret, p_pc_codigo: pc })
+    });
+    const data = await resp.json().catch(() => null);
+    if (!data || data.ok !== true) return await aplicarProxyRuntime(null); // sin config → salida directa
+    return await aplicarProxyRuntime({
+      enabled: data.enabled === true,
+      protocol: data.protocol, host: data.host, port: data.port,
+      username: data.username, password: data.password, bypass: data.bypass
+    });
   } catch (e) {
     return { ok: false, reason: (e && e.message) || String(e) };
   }
