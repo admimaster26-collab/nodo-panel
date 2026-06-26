@@ -28,6 +28,7 @@ function buildConfig(env) {
   return {
     supabaseUrl: env.SUPABASE_URL || env.NEXT_PUBLIC_SUPABASE_URL || "",
     supabaseAnonKey: env.SUPABASE_ANON_KEY || env.SUPABASE_KEY || env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+    panelDataSecret: env.PANEL_DATA_SECRET || "nodo-panel-data-2026",
     pcCodigo: env.PC_CODIGO || env.LANDING_PC_CODIGO || "P1",
     operador: env.OPERADOR || env.PC_CODIGO || "",
     workerOperativoId: env.WORKER_OPERATIVO_ID || "operativo-01",
