@@ -593,8 +593,8 @@ ipcMain.handle('panel:ping' , async () => ({
 
 ipcMain.handle('panel:get-context', async () => ({
   ok: true,
-  pc_codigo:     process.env.PC_CODIGO || process.env.LANDING_PC_CODIGO || "P1",
-  landing_pc:    process.env.LANDING_PC_CODIGO || process.env.PC_CODIGO || "P1",
+  pc_codigo:     process.env.PC_CODIGO || process.env.LANDING_PC_CODIGO || "",
+  landing_pc:    process.env.LANDING_PC_CODIGO || process.env.PC_CODIGO || "",
   session_id:    Number(process.env.PANEL_SESSION_ID || 0),
   chunior_pt_id: process.env.CHUNIOR_PT_ID || null,
   operador_usuario: process.env.OPERADOR_USUARIO || "",

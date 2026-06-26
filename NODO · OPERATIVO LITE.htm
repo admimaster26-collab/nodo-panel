@@ -7813,13 +7813,17 @@ if(window.ctrlElectron){
   }
 
   async function getCanal(){
+    // MULTI-OFICINA: la oficina la MANDA pcOperativa (resuelto del login de Chunior).
+    // El ctx viene del .env y trae default "P1" fijo, así que NO debe pisar a la oficina dinámica.
     try{
-      const ctx = await window.panelAPI?.getContext?.();
-      const pc = String(ctx?.landing_pc || ctx?.LANDING_PC_CODIGO || window.landingPcCodigo || window.pcOperativa || "P1").toUpperCase();
-      V154P.pcActual = pc;
-      return pc;
+      let pc = String(window.pcOperativa || window.landingPcCodigo || "").toUpperCase();
+      if(!pc){
+        const ctx = await window.panelAPI?.getContext?.();
+        pc = String(ctx?.landing_pc || ctx?.LANDING_PC_CODIGO || localStorage.getItem("panel_v154_landing_pc") || "").toUpperCase();
+      }
+      if(pc){ V154P.pcActual = pc; return pc; }
     }catch(e){}
-    const pc = String(window.landingPcCodigo || window.pcOperativa || localStorage.getItem("panel_v154_landing_pc") || "P1").toUpperCase();
+    const pc = String(window.pcOperativa || window.landingPcCodigo || localStorage.getItem("panel_v154_landing_pc") || "P1").toUpperCase();
     V154P.pcActual = pc;
     return pc;
   }
