@@ -37,6 +37,13 @@ function cargarEnvLocalV15() {
 }
 cargarEnvLocalV15();
 
+// Defaults de Supabase (anon key PÚBLICA, igual que en el .htm) para que la app
+// EMPAQUETADA ande sin .env. La oficina sale del login de Chunior; el .env solo
+// se necesita para overrides (proxy, etc.).
+if (!process.env.SUPABASE_URL)      process.env.SUPABASE_URL = "https://pjvvyvfcwjoocjqvdror.supabase.co";
+if (!process.env.SUPABASE_ANON_KEY) process.env.SUPABASE_ANON_KEY = "sb_publishable_NYqRoKptTgcL90VAVF2kqA_Gl06mEUF";
+if (!process.env.PANEL_DATA_SECRET) process.env.PANEL_DATA_SECRET = "nodo-panel-data-2026";
+
 // Sesiones/datos separados por oficina SOLO cuando se lanza con NODO_ENV (ej. P4).
 // Sin NODO_ENV (P1 por defecto) NO se toca el userData → P1 queda igual que siempre.
 if (process.env.NODO_ENV && process.env.USER_DATA_DIR) {
