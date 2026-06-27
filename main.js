@@ -606,6 +606,21 @@ async function panelRpcRestFetchV154Plus(fn, params = {}) {
   }
 }
 
+// Whitelist de RPC que el HTML puede invocar por panelAPI.rpc (lectura de Portal/Chat).
+// Igual que ALLOWED_AUTOMATION_METHODS: evita que un bug/XSS en el renderer llame RPCs no previstas.
+const PANEL_RPC_ALLOW = new Set([
+  'landing_crear_chat_v2',
+  'panel_nodo_send_chat_message',
+  'panel_v15_5_listar_solicitudes_portal',
+  'panel_v15_5_actualizar_solicitud_portal',
+  'panel_core_get_chat_sesiones_json',
+  'panel_v154_plus_listar_chat_sesiones',
+  'panel_core_get_chat_mensajes_json',
+  'panel_v154_plus_get_chat_mensajes',
+  'panel_core_enviar_chat_json',
+  'panel_v154_plus_enviar_chat'
+]);
+
 ipcMain.handle('panel:rpc', async (_event, arg1, arg2 = {}) => {
   let fn = arg1;
   let params = arg2 || {};
@@ -617,6 +632,11 @@ ipcMain.handle('panel:rpc', async (_event, arg1, arg2 = {}) => {
 
   if (!fn || typeof fn !== "string") {
     return { data: null, error: { message: "RPC_INVALID_FN", details: { received: arg1 } } };
+  }
+
+  if (!PANEL_RPC_ALLOW.has(fn)) {
+    console.warn('[panel:rpc] RPC no permitida:', fn);
+    return { data: null, error: { message: "RPC_NO_PERMITIDA: " + fn } };
   }
 
   return await panelRpcRestFetchV154Plus(fn, params || {});
