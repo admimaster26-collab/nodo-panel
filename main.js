@@ -121,14 +121,20 @@ async function configurarProxyElectronV15() {
 
 // Proxy aplicado en RUNTIME: config por oficina, traída del admi tras el login en Chunior.
 let _runtimeProxyAuth = null; // {username, password} para el evento "login" del proxy
+let _proxyApplied = false;    // si hay un proxy fixed_servers activo
 async function aplicarProxyRuntime(cfg) {
   try {
     cfg = cfg || {};
     if (!cfg.enabled || !cfg.host || !cfg.port) {
       _runtimeProxyAuth = null;
-      await session.defaultSession.setProxy({ mode: "direct" });
-      try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
-      console.log("[proxy] runtime: directo (oficina sin proxy)");
+      // Sin proxy: SOLO limpiamos si antes había uno activo. Si ya estaba en directo, NO tocamos
+      // la sesión (el closeAllConnections inútil cortaba Chunior en el arranque → bucle de re-login).
+      if (_proxyApplied) {
+        await session.defaultSession.setProxy({ mode: "direct" });
+        try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
+        _proxyApplied = false;
+        console.log("[proxy] runtime: limpiado (salida directa)");
+      }
       return { ok: true, enabled: false };
     }
     const protocol = String(cfg.protocol || "http").toLowerCase();
@@ -141,6 +147,7 @@ async function aplicarProxyRuntime(cfg) {
       proxyBypassRules: cfg.bypass || "<local>"
     });
     try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
+    _proxyApplied = true;
     _runtimeProxyAuth = cfg.username ? { username: String(cfg.username), password: String(cfg.password || "") } : null;
     console.log("[proxy] runtime ACTIVADO:", rules);
     return { ok: true, enabled: true, proxyRules: rules };
@@ -780,8 +787,9 @@ ipcMain.on('drex:verify:result', (_event, response = {}) => {
 // PRODUCCIÓN: en prod (NODE_ENV=production o NODO_PROD=1) queda BLOQUEADO salvo CHUNIOR_EXEC_ENABLED=1.
 // Por defecto la app empaquetada NO setea NODE_ENV/NODO_PROD, así que el flujo Chunior sigue igual.
 ipcMain.handle('chunior:exec', async (_event, script) => {
-  const prod = process.env.NODE_ENV === 'production' || process.env.NODO_PROD === '1';
-  if (prod && process.env.CHUNIOR_EXEC_ENABLED !== '1') {
+  // Gate SOLO por opt-in explícito NODO_PROD=1 (NO por NODE_ENV, que en la app empaquetada
+  // puede venir 'production' y bloquearía el flujo Chunior). Por defecto: habilitado.
+  if (process.env.NODO_PROD === '1' && process.env.CHUNIOR_EXEC_ENABLED !== '1') {
     return { ok: false, reason: 'chunior_exec_disabled' };
   }
   const win = getChuniorWindow();
