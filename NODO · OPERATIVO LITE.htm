@@ -1120,6 +1120,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
                 <button class="mini-btn green" onclick="chatAccionCargar()" title="Cargar saldo al usuario del chat">⚡ Cargar</button>
                 <button class="mini-btn red" onclick="chatAccionRetirar()" title="Retirar saldo al usuario del chat">🏧 Retirar</button>
                 <button class="mini-btn yellow" onclick="chatAccionResetClave()" title="Resetear clave a 12345a">🔑 Reset</button>
+                <button class="mini-btn blue" onclick="chatAccionVincular()" title="Validar el usuario en Agentes y agregarlo a la base (vínculo usuario/teléfono)">🔗 Vincular</button>
               </div>
               <span id="chatEstado" class="badge badge-muted">-</span>
             </div>
@@ -5652,6 +5653,34 @@ async function chatAccionResetClave(){
   if(!usuario){ toast("Sin chat activo","red"); return; }
   if(!confirm(`Resetear clave de "${usuario}" a 12345a?`)) return;
   await resetClaveRapido(usuario, "12345a");
+}
+
+// Valida al usuario en Agentes (casino) y lo agrega a la base de la oficina (vínculo usuario↔tel).
+// Para onboardear usuarios nuevos legítimos de oficinas con base que el cotejo dejó en SOPORTE.
+async function chatAccionVincular(){
+  const c = (chats||[]).find(x=>String(x.ID_CHAT)===String(chatActualId));
+  const usuario = String((c&&c.USUARIO)||"").trim();
+  let telefono = String((c&&c.TELEFONO)||"").trim();
+  if(!usuario){ toast("Sin chat activo","red"); return; }
+  if(!telefono){ telefono = String((prompt("Teléfono del usuario (no figura en el chat):","")||"")).trim(); }
+  if(!telefono){ toast("Falta el teléfono para vincular","red"); return; }
+  // 1) Verificar que exista de verdad en Agentes (no vincular usuarios falsos)
+  toast("Verificando "+usuario+" en Agentes...","blue");
+  if(!await ensureDrexSession()){ toast("Abrí la sesión de Agentes para validar","red"); return; }
+  let b=null;
+  try{ if(typeof _wdLock==='function')_wdLock(); }catch(_e){}
+  try{ b = await callDrex('buscarUsuario', usuario, {skipBalance:true}); }
+  catch(e){ b=null; }
+  finally{ try{ if(typeof _wdUnlock==='function')_wdUnlock(); }catch(_e){} }
+  if(!b || !b.exists){ toast("⚠️ '"+usuario+"' no existe en Agentes. No se vinculó.","red"); return; }
+  if(!confirm("✅ '"+usuario+"' existe en Agentes.\n\n¿Vincular con el teléfono "+telefono+"? Quedará habilitado para operar en el portal.")) return;
+  // 2) Agregar a la base (crea el vínculo VINCULADO)
+  try{
+    const r = await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:(pcOperativa||window.pcOperativa||''),p_usuario:usuario,p_telefono:telefono});
+    const d = (r && r.data) || {};
+    if(r.error || !d.ok){ toast("No se pudo vincular: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return; }
+    toast("✅ "+usuario+" vinculado. Ya puede ingresar al portal.","green");
+  }catch(e){ toast("Error al vincular: "+(e.message||e),"red"); }
 }
 
 // Normaliza un alias para mandarlo al casino (sin acentos, sin puntos, espacios, signos).
