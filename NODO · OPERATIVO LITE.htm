@@ -9709,41 +9709,33 @@ async function ejecutarSolicitudPortalSimple(ctx){
     }
 
     try{
-      // Primero update directo: evita depender del schema cache de PostgREST/RPC.
-      const direct = await _marcarDirecto();
-      if(direct.ok){
-        toast('Billetera marcada para portal', 'green');
-        await cargarBilleteras(false);
-        try{ renderBilleteras(); }catch(_e){}
-        try{ renderBillerasInicio(); }catch(_e){}
-        try{ poblarManualBilletera(); }catch(_e){}
-        try{ renderEstadoLanding(); }catch(_e){}
-        try{ renderInicio(); }catch(_e){}
-        return;
-      }
-
-      // Fallback RPC si el update directo no pudo.
-      const r = await supabaseClient.rpc('nodo_seleccionar_billetera_portal', {
-        p_billetera_ref: billeteraRef,
-        p_codigo_origen: (pcOperativa || 'P1')
+      // Resolver el id real de la billetera elegida (desde el array local).
+      const _uid = String(uidArg || '').trim();
+      const b = (billeteras||[]).find(function(w){
+        return String(w.ID_BILLETERA||'') === billeteraRef
+          || String(w.CHUNIOR_UID||'') === billeteraRef
+          || (_uid && String(w.CHUNIOR_UID||'') === _uid)
+          || String(w.NOMBRE_VISIBLE||'').trim().toLowerCase() === billeteraRef.toLowerCase()
+          || String(w.CBU_ALIAS||'') === billeteraRef
+          || String(w.CBU||'') === billeteraRef
+          || String(w.ALIAS||'') === billeteraRef;
       });
+      if(!b || !b.ID_BILLETERA){ alert('No encontré la billetera en NODO. Sincronizá y probá de nuevo.'); return; }
 
-      if(r.error){
-        const msg = r.error.message || '';
-        if(msg.includes('nodo_seleccionar_billetera_portal') || msg.includes('schema cache')){
-          alert('No se pudo marcar desde el panel porque Supabase todavía no reconoce la RPC y el update directo no pasó RLS. Ejecutá el SQL incluido y esperá el reload schema.');
-          return;
-        }
-        alert(msg || 'Error seleccionando billetera para portal');
-        return;
-      }
-
+      // Escritura BLINDADA por RPC. El UPDATE directo lo filtra la RLS a 0 filas SIN error
+      // (por eso antes decía "marcada" pero no aplicaba). Va SIEMPRE por la RPC, nunca directo.
+      const r = await supabaseClient.rpc('nodo_seleccionar_billetera_portal', {
+        p_secret: window.PANEL_DATA_SECRET,
+        p_id: Number(b.ID_BILLETERA),
+        p_pc_codigo: (pcOperativa || window.pcOperativa || b.PC || '')
+      });
+      if(r.error) throw new Error(r.error.message || 'No se pudo marcar la billetera para portal.');
       let data = r.data;
       try{ if(typeof data === 'string') data = JSON.parse(data); }catch(_e){}
-      if(data && data.ok === false){ alert(data.error || data.mensaje || 'No se pudo marcar la billetera.'); return; }
+      if(data && data.ok === false){ alert(data.mensaje || data.error || 'No se pudo marcar la billetera.'); return; }
 
       try{ toast('Billetera marcada para portal', 'green'); }catch(_e){}
-      await new Promise(r=>setTimeout(r,650));
+      await new Promise(res=>setTimeout(res,400));
       try{ await cargarBilleteras(false); }catch(_e){}
       try{ renderBilleteras(); }catch(_e){}
       try{ renderBillerasInicio(); }catch(_e){}
