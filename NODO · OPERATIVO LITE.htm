@@ -2865,6 +2865,18 @@ async function cargarBilleteras(render=true){
       };
     });
 
+  // Dedup por CHUNIOR_UID: la misma wallet puede venir repetida (multi-oficina / sync).
+  // Conserva la primera ocurrencia (la EN PORTAL queda primera por el orden de la query).
+  (function(){
+    const seen=new Set(); const out=[];
+    for(const b of billeteras){
+      const k=String(b.CHUNIOR_UID||'').trim();
+      if(k){ if(seen.has(k)) continue; seen.add(k); }
+      out.push(b);
+    }
+    billeteras=out;
+  })();
+
   if(render)renderBilleteras();
   renderInicio();
 }
@@ -9463,12 +9475,16 @@ async function ejecutarSolicitudPortalSimple(ctx){
     try{
       const realId = await _resolveBilleteraRealId(ref);
 
-      // Update mínimo con columnas viejas/estables. No usar oficina_id, estado, updated_at ni RPC nueva.
-      const clear = await supabaseClient.from('billeteras').update({seleccionada_manual:false}).eq('pc_codigo', COMPAT_PC());
-      if(clear.error) console.warn('No pude limpiar selección previa:', clear.error.message || clear.error);
-
-      const set = await supabaseClient.from('billeteras').update({seleccionada_manual:true}).eq('id', realId);
-      if(set.error) throw new Error(set.error.message || 'No se pudo marcar la billetera para portal.');
+      // Escritura BLINDADA: la RLS no deja UPDATE directo a billeteras (filtraba a 0 filas sin error).
+      // Va por RPC SECURITY DEFINER que limpia la selección de la oficina y marca la elegida.
+      const r = await supabaseClient.rpc('nodo_seleccionar_billetera_portal',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_id: Number(realId),
+        p_pc_codigo: (pcOperativa || window.pcOperativa || (typeof COMPAT_PC==='function'?COMPAT_PC():'') || '')
+      });
+      if(r.error) throw new Error(r.error.message || 'No se pudo marcar la billetera para portal.');
+      const d = (r && r.data) || {};
+      if(d.ok===false) throw new Error(d.mensaje || 'No se pudo marcar la billetera para portal.');
 
       try{ toast('Billetera marcada para portal', 'green'); }catch(_e){}
       try{ await cargarBilleteras(false); }catch(_e){}
