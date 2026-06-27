@@ -5659,10 +5659,15 @@ async function chatAccionResetClave(){
 // Para onboardear usuarios nuevos legítimos de oficinas con base que el cotejo dejó en SOPORTE.
 async function chatAccionVincular(){
   const c = (chats||[]).find(x=>String(x.ID_CHAT)===String(chatActualId));
-  const usuario = String((c&&c.USUARIO)||"").trim();
+  let usuario = String((c&&c.USUARIO)||"").trim();
   let telefono = String((c&&c.TELEFONO)||"").trim();
-  if(!usuario){ toast("Sin chat activo","red"); return; }
-  if(!telefono){ telefono = String((prompt("Teléfono del usuario (no figura en el chat):","")||"")).trim(); }
+  if(!usuario && !telefono && !c){ toast("Sin chat activo","red"); return; }
+  // Si vino por "pedir alta" (usuario placeholder alta-<tel>) o está vacío → pedir el usuario REAL (el de Agentes)
+  if(/^alta-/i.test(usuario) || !usuario){
+    usuario = String((prompt("Usuario de plataforma a vincular (el que tiene/creaste en Agentes):", /^alta-/i.test(usuario)?"":usuario)||"")).trim();
+  }
+  if(!usuario){ toast("Falta el usuario a vincular","red"); return; }
+  if(!telefono){ telefono = String((prompt("Teléfono del usuario:","")||"")).trim(); }
   if(!telefono){ toast("Falta el teléfono para vincular","red"); return; }
   // 1) Verificar que exista de verdad en Agentes (no vincular usuarios falsos)
   toast("Verificando "+usuario+" en Agentes...","blue");
