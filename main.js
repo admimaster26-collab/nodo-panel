@@ -42,7 +42,9 @@ cargarEnvLocalV15();
 // se necesita para overrides (proxy, etc.).
 if (!process.env.SUPABASE_URL)      process.env.SUPABASE_URL = "https://pjvvyvfcwjoocjqvdror.supabase.co";
 if (!process.env.SUPABASE_ANON_KEY) process.env.SUPABASE_ANON_KEY = "sb_publishable_NYqRoKptTgcL90VAVF2kqA_Gl06mEUF";
-if (!process.env.PANEL_DATA_SECRET) process.env.PANEL_DATA_SECRET = "nodo-panel-data-2026";
+// PRODUCCIÓN: PANEL_DATA_SECRET NO tiene default. Va por .env. Sin él, auto-login de agente
+// y proxy devuelven {ok:false, reason:'missing-secret'} (el resto del panel sigue andando:
+// el renderer usa su propio secret para los RPC blindados de lectura).
 
 // Sesiones/datos separados por oficina SOLO cuando se lanza con NODO_ENV (ej. P4).
 // Sin NODO_ENV (P1 por defecto) NO se toca el userData → P1 queda igual que siempre.
@@ -657,9 +659,8 @@ ipcMain.handle('panel:get-context', async () => ({
   chunior_pt_id: process.env.CHUNIOR_PT_ID || null,
   operador_usuario: process.env.OPERADOR_USUARIO || "",
   operador_nombre:  process.env.OPERADOR_NOMBRE  || "",
-  // Exponer credenciales Supabase para el cliente directo del panel (fallback)
-  supabase_url:  process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "",
-  supabase_key:  process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || "",
+  // PRODUCCIÓN: ya NO se exponen supabase_url/supabase_key acá (el renderer no los usa; tiene su
+  // propio cliente con la anon key PÚBLICA). Lo ideal es migrar más lecturas a panelAPI.rpc.
 }));
 
 // Abre/enfoca la ventana del backoffice
@@ -697,7 +698,8 @@ ipcMain.handle('drex:auto-login', async (_event, { pcCodigo } = {}) => {
   try {
     const url = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
     const anon = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '';
-    const secret = process.env.PANEL_DATA_SECRET || 'nodo-panel-data-2026';
+    const secret = process.env.PANEL_DATA_SECRET;
+    if (!secret) return { ok: false, reason: 'missing-secret' };
     const pc = String(pcCodigo || process.env.PC_CODIGO || '').trim();
     if (!url || !anon || !pc) return { ok: false, reason: 'config' };
     const resp = await fetch(`${url}/rest/v1/rpc/panel_get_agente_credenciales`, {
@@ -720,7 +722,8 @@ ipcMain.handle('proxy:apply', async (_event, { pcCodigo } = {}) => {
   try {
     const url = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
     const anon = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '';
-    const secret = process.env.PANEL_DATA_SECRET || 'nodo-panel-data-2026';
+    const secret = process.env.PANEL_DATA_SECRET;
+    if (!secret) { await aplicarProxyRuntime(null); return { ok: false, reason: 'missing-secret' }; } // sin secret → salida directa
     const pc = String(pcCodigo || process.env.PC_CODIGO || '').trim();
     if (!url || !anon || !pc) return { ok: false, reason: 'config' };
     const resp = await fetch(`${url}/rest/v1/rpc/panel_get_proxy`, {
@@ -764,8 +767,14 @@ ipcMain.on('drex:verify:result', (_event, response = {}) => {
 });
 
 // ── IPC handlers para Chunior (ventana visible separada) ─────────────────────
-// Ejecuta JS arbitrario en la ventana de Chunior
+// Ejecuta JS arbitrario en la ventana de Chunior.
+// PRODUCCIÓN: en prod (NODE_ENV=production o NODO_PROD=1) queda BLOQUEADO salvo CHUNIOR_EXEC_ENABLED=1.
+// Por defecto la app empaquetada NO setea NODE_ENV/NODO_PROD, así que el flujo Chunior sigue igual.
 ipcMain.handle('chunior:exec', async (_event, script) => {
+  const prod = process.env.NODE_ENV === 'production' || process.env.NODO_PROD === '1';
+  if (prod && process.env.CHUNIOR_EXEC_ENABLED !== '1') {
+    return { ok: false, reason: 'chunior_exec_disabled' };
+  }
   const win = getChuniorWindow();
   if (win.webContents.isLoading()) await whenChuniorReady(win);
   return win.webContents.executeJavaScript(script, true);
