@@ -13,12 +13,21 @@ const { createClient } = require('@supabase/supabase-js');
 // ============================================================
 function cargarEnvLocalV15() {
   try {
-    // NODO_ENV=p4 → lee .env.p4 ; sin NODO_ENV → lee .env (P1 por defecto).
+    // NODO_ENV=p4 → lee .env.p4 ; sin NODO_ENV → lee .env.
     const envName = process.env.NODO_ENV ? (".env." + String(process.env.NODO_ENV).toLowerCase()) : ".env";
-    let envPath = path.join(__dirname, envName);
-    if (!fs.existsSync(envPath)) envPath = path.join(__dirname, ".env");
-    if (!fs.existsSync(envPath)) return;
-    console.log("[env] usando", path.basename(envPath));
+    // PRODUCCIÓN: en la app empaquetada __dirname está dentro del .asar (no se puede dejar un .env ahí).
+    // Buscamos el .env PRIMERO junto al ejecutable instalado (process.execPath) y después en __dirname (dev).
+    const dirs = [];
+    try { dirs.push(path.dirname(process.execPath)); } catch (_e) {}
+    dirs.push(__dirname);
+    let envPath = "";
+    for (const d of dirs) {
+      const p1 = path.join(d, envName), p2 = path.join(d, ".env");
+      if (fs.existsSync(p1)) { envPath = p1; break; }
+      if (fs.existsSync(p2)) { envPath = p2; break; }
+    }
+    if (!envPath) return;
+    console.log("[env] usando", envPath);
     const raw = fs.readFileSync(envPath, "utf8");
     raw.split(/\r?\n/).forEach(line => {
       const clean = String(line || "").trim();
