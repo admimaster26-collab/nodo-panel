@@ -8646,14 +8646,19 @@ async function ejecutarSolicitudPortalSimple(ctx){
               }catch(eb){ rb = {ok:false, message:eb.message}; }
               finally{ _wdUnlock(); }
               const okBono = rb && rb.ok !== false;
+              const _bonoPre = (typeof rb?.previousBalance?.value === 'number') ? rb.previousBalance.value : null;
+              const _bonoPost = (typeof rb?.newBalance?.value === 'number' && !rb?.newBalance?.unchanged)
+                ? rb.newBalance.value
+                : (okBono && _bonoPre!==null ? _bonoPre + bonoMonto : null);
               const filaBono = await registrarEnHistorial({
                 usuario, tipo:'CARGA', monto:bonoMonto,
                 billetera_id: bilPromo.ID_BILLETERA, billetera_nombre: bilPromo.NOMBRE_VISIBLE||'PROMO',
                 origen:'PROMO_BONO', estado: okBono?'OK':'ERROR',
                 notas:'Bono primer ingreso '+ctx.bonoPct+'% sobre '+money(montoAbs)+' · solicitud #'+id,
-                solicitud_id:id
+                solicitud_id:id, saldo_pre:_bonoPre, saldo_post:_bonoPost
               });
               if(okBono){
+                if(filaBono && filaBono.id){ try{ await supabaseClient.from('historial_ops').update({saldo_pre:_bonoPre, saldo_post:_bonoPost}).eq('id', filaBono.id); }catch(_e){} }
                 try{ await ajustarSaldoBilletera(bilPromo.ID_BILLETERA, bonoMonto); }catch(_e){}
                 toast('🎁 Bono '+ctx.bonoPct+'% acreditado: '+money(bonoMonto), 'green');
                 if(bilPromo.CHUNIOR_UID){
@@ -9181,7 +9186,11 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
   window.cargarBilleteras = cargarBilleteras = async function(render=true){
     const mapped = await _readWalletsForced();
-    billeteras = mapped;
+    // Dedup por CHUNIOR_UID: la misma wallet puede venir repetida (filas duplicadas en billeteras).
+    // Conserva la primera (la EN PORTAL queda primera por el orden seleccionada_manual desc).
+    const _seen=new Set(); const _ded=[];
+    for(const _b of (mapped||[])){ const _k=String(_b.CHUNIOR_UID||'').trim(); if(_k){ if(_seen.has(_k)) continue; _seen.add(_k); } _ded.push(_b); }
+    billeteras = _ded;
     try{ window.billeteras = billeteras; }catch(_e){}
     if(render){ try{ renderBilleteras(); }catch(e){ console.warn('renderBilleteras',e); } }
     try{ renderBillerasInicio(); }catch(e){ console.warn('renderBillerasInicio',e); }
