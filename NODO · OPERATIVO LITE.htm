@@ -5669,17 +5669,10 @@ async function chatAccionResetClave(){
 
 // Valida al usuario en Agentes (casino) y lo agrega a la base de la oficina (vínculo usuario↔tel).
 // Para onboardear usuarios nuevos legítimos de oficinas con base que el cotejo dejó en SOPORTE.
-async function chatAccionVincular(usuarioArg, telefonoArg){
-  const c = (chats||[]).find(x=>String(x.ID_CHAT)===String(chatActualId));
-  let usuario = String((usuarioArg!==undefined ? usuarioArg : (c&&c.USUARIO))||"").trim();
-  let telefono = String((telefonoArg!==undefined ? telefonoArg : (c&&c.TELEFONO))||"").trim();
-  if(!usuario && !telefono){ toast("Sin chat/consulta activo","red"); return; }
-  // Si vino por "pedir alta" (usuario placeholder alta-<tel>) o está vacío → pedir el usuario REAL (el de Agentes)
-  if(/^alta-/i.test(usuario) || !usuario){
-    usuario = String((prompt("Usuario de plataforma a vincular (el que tiene/creaste en Agentes):", /^alta-/i.test(usuario)?"":usuario)||"")).trim();
-  }
+// NÚCLEO: verifica en Agentes y crea el vínculo. Sin prompt() (Electron no lo soporta) — los datos vienen del modal.
+async function ejecutarVincular(usuario, telefono){
+  usuario=String(usuario||"").trim(); telefono=String(telefono||"").trim();
   if(!usuario){ toast("Falta el usuario a vincular","red"); return; }
-  if(!telefono){ telefono = String((prompt("Teléfono del usuario:","")||"")).trim(); }
   if(!telefono){ toast("Falta el teléfono para vincular","red"); return; }
   // 1) Verificar que exista de verdad en Agentes (no vincular usuarios falsos)
   toast("Verificando "+usuario+" en Agentes...","blue");
@@ -5689,20 +5682,45 @@ async function chatAccionVincular(usuarioArg, telefonoArg){
   try{ b = await callDrex('buscarUsuario', usuario, {skipBalance:true}); }
   catch(e){ b=null; }
   finally{ try{ if(typeof _wdUnlock==='function')_wdUnlock(); }catch(_e){} }
-  if(!b || !b.exists){ toast("⚠️ '"+usuario+"' no existe en Agentes. No se vinculó.","red"); return; }
-  if(!confirm("✅ '"+usuario+"' existe en Agentes.\n\n¿Vincular con el teléfono "+telefono+"? Quedará habilitado para operar en el portal.")) return;
+  if(!b || !b.exists){ toast("⚠️ '"+usuario+"' no existe en Agentes. Creá la cuenta con ese usuario y reintentá.","red"); return; }
   // 2) Agregar a la base (crea el vínculo VINCULADO)
   try{
     const r = await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:(pcOperativa||window.pcOperativa||''),p_usuario:usuario,p_telefono:telefono});
     const d = (r && r.data) || {};
     if(r.error || !d.ok){ toast("No se pudo vincular: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return; }
-    toast("✅ "+usuario+" vinculado. Ya puede ingresar al portal.","green");
+    toast("✅ "+usuario+" vinculado. Avisale por el chat que ingrese al portal con el usuario "+usuario+".","green");
   }catch(e){ toast("Error al vincular: "+(e.message||e),"red"); }
 }
-// Mismo vincular pero desde la vista de CONSULTA/bandeja (usa el ticket abierto).
+// MODAL de vinculación (inputs HTML reales → anda en Electron). Permite ajustar el usuario si en el casino quedó con otro nombre.
+function abrirModalVincular(usuario, telefono){
+  usuario=String(usuario||"").replace(/^alta-/i,"").trim(); telefono=String(telefono||"").trim();
+  if(typeof abrirModal!=="function"){ return ejecutarVincular(usuario, telefono); }
+  abrirModal("🔗 Validar y vincular usuario",
+    `<div style="font-size:12px;line-height:1.6;margin-bottom:8px">El usuario pidió alta. <b>1)</b> Creá la cuenta en Agentes (idealmente con el mismo usuario). <b>2)</b> Si quedó con otro nombre, ajustalo acá. <b>3)</b> Confirmá: se verifica en Agentes y se vincula a su teléfono.</div>
+     <label>Usuario en Agentes</label>
+     <input id="vincUsuarioInp" type="text" value="${E(usuario)}" placeholder="usuario del casino" autocomplete="off">
+     <label style="margin-top:6px">Teléfono (el que ingresó en el portal)</label>
+     <input id="vincTelInp" type="text" value="${E(telefono)}" placeholder="con código de área" autocomplete="off">`,
+    async function(){
+      const u=String((document.getElementById("vincUsuarioInp")||{}).value||"").trim();
+      const tel=String((document.getElementById("vincTelInp")||{}).value||"").trim();
+      if(!u){ toast("Completá el usuario","red"); return; }
+      if(!tel){ toast("Completá el teléfono","red"); return; }
+      cerrarModal();
+      await ejecutarVincular(u, tel);
+    }, "Verificar y vincular");
+}
+// Botón Vincular del chat normal (chatAccionesRapidas).
+async function chatAccionVincular(usuarioArg, telefonoArg){
+  const c = (chats||[]).find(x=>String(x.ID_CHAT)===String(chatActualId));
+  const usuario = String((usuarioArg!==undefined ? usuarioArg : (c&&c.USUARIO))||"").trim();
+  const telefono = String((telefonoArg!==undefined ? telefonoArg : (c&&c.TELEFONO))||"").trim();
+  abrirModalVincular(usuario, telefono);
+}
+// Botón Vincular de la vista de CONSULTA/bandeja (usa el ticket abierto; el ticket ya trae el teléfono real).
 window.vincularDesdeConsulta=function(){
   const t=window.__nodoChatCurrentTicket||{};
-  return chatAccionVincular(t.usuario, t.telefono||t.TELEFONO);
+  abrirModalVincular(String(t.usuario||"").trim(), String(t.telefono||t.TELEFONO||"").trim());
 };
 
 // Normaliza un alias para mandarlo al casino (sin acentos, sin puntos, espacios, signos).
@@ -10961,6 +10979,9 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
     try{
       await persistirChatStep5(fresh,"RESPONDIDO_PANEL",msgObj);
+      // Entrega GARANTIZADA al portal por el sistema de chats (lo lee landing_leer_chat_v2, el mismo camino que los rechazos).
+      // El dedup central del portal evita duplicar si también llega por el chat_thread de la solicitud. Fire-and-forget para no demorar la UI.
+      try{ if(msg && typeof notificarUsuarioEnChat==="function") notificarUsuarioEnChat(fresh.usuario, msg).catch(()=>{}); }catch(_e){}
       try{if(typeof toast==="function")toast("Respuesta guardada para portal","green")}catch(_e){}
       // Push al usuario en el portal
       try{
