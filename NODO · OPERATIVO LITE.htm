@@ -9534,7 +9534,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       return;
     }
 
-    window.chatMensajes = _rows(r.data).map(function(m){
+    let _nuevos = _rows(r.data).map(function(m){
       return {
         ID: m.id || m.ID || '',
         MENSAJE: m.mensaje || m.MENSAJE || '',
@@ -9544,6 +9544,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
         FECHA: m.created_at || m.FECHA || ''
       };
     });
+    // Dedup por contenido+fecha: el mismo mensaje puede venir de 2 fuentes con IDs distintos → no duplicar.
+    (function(){ const seen=new Set(), out=[]; for(const m of _nuevos){ const k=(String(m.MENSAJE||'').trim())+'|'+(m.TIPO_EMISOR||'')+'|'+(m.IMAGEN_URL||'')+'|'+String(m.FECHA||'').slice(0,19); if(seen.has(k)) continue; seen.add(k); out.push(m); } _nuevos=out; })();
+    // No borrar el chat si el fetch vino vacío pero ya teníamos mensajes del MISMO chat (evita "vacío" transitorio).
+    if(_nuevos.length===0 && window._chatMsgsForId===chatId && Array.isArray(window.chatMensajes) && window.chatMensajes.length>0){
+      try{ renderChatMensajes(); }catch(_e){}
+      return;
+    }
+    window.chatMensajes = _nuevos;
+    window._chatMsgsForId = chatId;
     try{ chatMensajes = window.chatMensajes.slice(); }catch(_e){}
     try{ V154P.chatMensajes = window.chatMensajes.slice(); }catch(_e){}
 
