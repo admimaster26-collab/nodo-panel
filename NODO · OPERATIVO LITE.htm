@@ -2678,12 +2678,10 @@ function iniciarRealtimeSolicitudes(){
 
 
 function mostrarVista(vista){
-  if(vista==="chat" && window.matchMedia && window.matchMedia("(min-width:1101px)").matches){
-    document.querySelectorAll(".nav-btn").forEach(x=>x.classList.remove("active"));
-    document.getElementById("navChat")?.classList.add("active");
-    cargarChats(true);
-    return;
-  }
+  // RESCATE: el chat vuelve a ser una vista normal. Antes en desktop hacía return temprano
+  // y quedaba SIEMPRE visible (panel fijo) tapando/empujando la operación manual.
+  // Limpiamos el overlay expandido para que no persista al cambiar de vista.
+  try{ document.body.classList.remove('chat-expanded'); }catch(_e){}
   ["Inicio","Solicitudes","Billeteras","Chat","Jugadores","Auto"].forEach(v=>{
     document.getElementById("view"+v)?.classList.add("hidden");
     document.getElementById("nav"+v)?.classList.remove("active");
@@ -12611,6 +12609,27 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
 }
 @media(max-width:1000px){
   .val-toolbar{grid-template-columns:1fr 1fr}
+}
+</style>
+
+<style id="nodoRescateLayout">
+/* ============================================================
+   RESCATE (estabilización) · layout estable para prueba manual real
+   Neutraliza los experimentos en conflicto: "V16 shell", "V16 clean pass",
+   "SAFE FIX" (.layout 3-col 405/520) y el overlay "chat-expanded".
+   Resultado: sidebar angosta + main principal; el chat es una VISTA normal
+   (oculta hasta tocar Chat) y NUNCA tapa la operación manual.
+   ============================================================ */
+@media(min-width:1101px){
+  /* Layout de 2 columnas: sidebar + main (sin columna fija de chat) */
+  .layout{ grid-template-columns:66px minmax(0,1fr)!important; padding:9px!important; gap:9px!important; }
+  .main{ grid-column:2!important; }
+  /* Chat = vista normal dentro de .main: respeta .hidden, ocupa el área cuando está activa */
+  #viewChat{ position:static!important; width:auto!important; min-width:0!important; grid-column:auto!important; z-index:auto!important; box-shadow:none!important; inset:auto!important; }
+  #viewChat.hidden{ display:none!important; }
+  #viewChat:not(.hidden){ display:flex!important; height:calc(100vh - 18px)!important; }
+  /* Neutralizar el overlay flotante "chat-expanded" (queda en flujo, no tapa nada) */
+  body.chat-expanded #viewChat{ position:static!important; inset:auto!important; left:auto!important; right:auto!important; top:auto!important; bottom:auto!important; width:auto!important; height:calc(100vh - 18px)!important; z-index:auto!important; box-shadow:none!important; }
 }
 </style>
 

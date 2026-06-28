@@ -54,6 +54,11 @@ if (!process.env.SUPABASE_ANON_KEY) process.env.SUPABASE_ANON_KEY = "sb_publisha
 // PRODUCCIÓN: PANEL_DATA_SECRET NO tiene default. Va por .env. Sin él, auto-login de agente
 // y proxy devuelven {ok:false, reason:'missing-secret'} (el resto del panel sigue andando:
 // el renderer usa su propio secret para los RPC blindados de lectura).
+if (!process.env.PANEL_DATA_SECRET) {
+  console.warn("[panel] Falta PANEL_DATA_SECRET en .env → auto-login de agente y proxy quedan DESHABILITADOS. El resto del panel (carga/retiro/validación/chat manual) opera normal.");
+} else {
+  console.log("[panel] PANEL_DATA_SECRET cargado desde .env (auto-login y proxy habilitados).");
+}
 
 // Sesiones/datos separados por oficina SOLO cuando se lanza con NODO_ENV (ej. P4).
 // Sin NODO_ENV (P1 por defecto) NO se toca el userData → P1 queda igual que siempre.
@@ -715,7 +720,7 @@ ipcMain.handle('drex:auto-login', async (_event, { pcCodigo } = {}) => {
     const url = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
     const anon = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '';
     const secret = process.env.PANEL_DATA_SECRET;
-    if (!secret) return { ok: false, reason: 'missing-secret' };
+    if (!secret) { console.warn("[panel] Auto-login no disponible por missing-secret (falta PANEL_DATA_SECRET en .env). El panel sigue operativo para uso manual."); return { ok: false, reason: 'missing-secret' }; }
     const pc = String(pcCodigo || process.env.PC_CODIGO || '').trim();
     if (!url || !anon || !pc) return { ok: false, reason: 'config' };
     const resp = await fetch(`${url}/rest/v1/rpc/panel_get_agente_credenciales`, {
@@ -739,7 +744,7 @@ ipcMain.handle('proxy:apply', async (_event, { pcCodigo } = {}) => {
     const url = String(process.env.SUPABASE_URL || '').replace(/\/$/, '');
     const anon = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY || '';
     const secret = process.env.PANEL_DATA_SECRET;
-    if (!secret) { await aplicarProxyRuntime(null); return { ok: false, reason: 'missing-secret' }; } // sin secret → salida directa
+    if (!secret) { console.warn("[panel] Proxy no aplicado por missing-secret (falta PANEL_DATA_SECRET en .env). Salida directa; el panel sigue operativo."); await aplicarProxyRuntime(null); return { ok: false, reason: 'missing-secret' }; } // sin secret → salida directa
     const pc = String(pcCodigo || process.env.PC_CODIGO || '').trim();
     if (!url || !anon || !pc) return { ok: false, reason: 'config' };
     const resp = await fetch(`${url}/rest/v1/rpc/panel_get_proxy`, {
