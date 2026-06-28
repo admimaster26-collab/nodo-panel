@@ -1097,7 +1097,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
             <h1 style="font-size:26px">Chat interno</h1>
             <div class="small">Consultas desde landing. Podés pegar texto o imágenes con Ctrl + V.</div>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="mini-btn gray chat-full-back" onclick="cerrarChatExpandido()">← Bandeja / Esc</button><button class="mini-btn blue" onclick="cargarChats(true)">🔄 Actualizar chats</button></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="mini-btn gray chat-full-back" onclick="cerrarChatExpandido()">← Bandeja / Esc</button><button class="mini-btn blue" onclick="cargarChats(true)">🔄 Actualizar chats</button><button class="mini-btn gray" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button></div>
         </div>
 
         <div class="chat-layout">
@@ -11151,6 +11151,18 @@ async function ejecutarSolicitudPortalSimple(ctx){
   window.nodoChatMarkReadCurrent=function(){
     const t=window.__nodoChatCurrentTicket;
     if(t) markRead(t);
+  };
+  // Marcar TODAS las conversaciones como leídas (local, mismo mecanismo que markRead por ticket).
+  window.nodoChatMarkAllRead=function(){
+    try{
+      const tickets=allTickets().filter(t=>t.accepted);
+      const marks=getJson(readKey(),{});
+      tickets.forEach(t=>{ marks[chatKey(t)] = lastUserMsgTime(t) || nowIso(); });
+      setJson(readKey(),marks);
+      updateChatUnreadBadges();
+      if(typeof renderChatListStep2Final==="function") renderChatListStep2Final();
+      try{ if(typeof toast==="function") toast("✓ Todas marcadas como leídas","green"); }catch(_e){}
+    }catch(_e){ console.warn("markAllRead",_e); }
   };
 
   function notifyNewMessages(){
