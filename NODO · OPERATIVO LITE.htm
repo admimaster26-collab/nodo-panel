@@ -5669,11 +5669,11 @@ async function chatAccionResetClave(){
 
 // Valida al usuario en Agentes (casino) y lo agrega a la base de la oficina (vínculo usuario↔tel).
 // Para onboardear usuarios nuevos legítimos de oficinas con base que el cotejo dejó en SOPORTE.
-async function chatAccionVincular(){
+async function chatAccionVincular(usuarioArg, telefonoArg){
   const c = (chats||[]).find(x=>String(x.ID_CHAT)===String(chatActualId));
-  let usuario = String((c&&c.USUARIO)||"").trim();
-  let telefono = String((c&&c.TELEFONO)||"").trim();
-  if(!usuario && !telefono && !c){ toast("Sin chat activo","red"); return; }
+  let usuario = String((usuarioArg!==undefined ? usuarioArg : (c&&c.USUARIO))||"").trim();
+  let telefono = String((telefonoArg!==undefined ? telefonoArg : (c&&c.TELEFONO))||"").trim();
+  if(!usuario && !telefono){ toast("Sin chat/consulta activo","red"); return; }
   // Si vino por "pedir alta" (usuario placeholder alta-<tel>) o está vacío → pedir el usuario REAL (el de Agentes)
   if(/^alta-/i.test(usuario) || !usuario){
     usuario = String((prompt("Usuario de plataforma a vincular (el que tiene/creaste en Agentes):", /^alta-/i.test(usuario)?"":usuario)||"")).trim();
@@ -5699,6 +5699,11 @@ async function chatAccionVincular(){
     toast("✅ "+usuario+" vinculado. Ya puede ingresar al portal.","green");
   }catch(e){ toast("Error al vincular: "+(e.message||e),"red"); }
 }
+// Mismo vincular pero desde la vista de CONSULTA/bandeja (usa el ticket abierto).
+window.vincularDesdeConsulta=function(){
+  const t=window.__nodoChatCurrentTicket||{};
+  return chatAccionVincular(t.usuario, t.telefono||t.TELEFONO);
+};
 
 // Normaliza un alias para mandarlo al casino (sin acentos, sin puntos, espacios, signos).
 // El casino registra a los usuarios sin acentos ni separadores, así que normalizamos
@@ -10005,7 +10010,8 @@ async function ejecutarSolicitudPortalSimple(ctx){
     if(titulo) titulo.textContent=ticket.usuario||"Usuario";
     if(subtitulo){
       subtitulo.innerHTML=(ticket.solicitudId?"Sol. "+ticket.solicitudId+" · ":"")+"Consulta portal"
-        +` <button onclick="cerrarConsultaWq2()" style="margin-left:10px;background:#7f1d1d;color:#fca5a5;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">✕ Cerrar consulta</button>`;
+        +` <button onclick="vincularDesdeConsulta()" style="margin-left:8px;background:#1e3a5f;color:#7cc4ff;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">🔗 Validar y vincular</button>`
+        +` <button onclick="cerrarConsultaWq2()" style="margin-left:6px;background:#7f1d1d;color:#fca5a5;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">✕ Cerrar consulta</button>`;
     }
 
     // Mensajes de Supabase tienen prioridad; localStorage es fallback
@@ -10854,7 +10860,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
     const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(ticket.usuario))||ticket;
     window.__nodoChatCurrentTicket=fresh;
     if(titulo)titulo.textContent=fresh.usuario;
-    if(sub)sub.innerHTML=`Sol. ${E(fresh.masterId||fresh.solicitudId||"")} · Consulta portal <button onclick="cerrarConsultaWq2()" style="margin-left:10px;background:#7f1d1d;color:#fca5a5;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">✕ Cerrar consulta</button>`;
+    if(sub)sub.innerHTML=`Sol. ${E(fresh.masterId||fresh.solicitudId||"")} · Consulta portal <button onclick="vincularDesdeConsulta()" style="margin-left:8px;background:#1e3a5f;color:#7cc4ff;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">🔗 Validar y vincular</button> <button onclick="cerrarConsultaWq2()" style="margin-left:6px;background:#7f1d1d;color:#fca5a5;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">✕ Cerrar consulta</button>`;
 
     const msgs=uniqThread(fresh.thread);
     // Parchear imagen_url desde window.chatMensajes cuando el RPC no lo incluye en chat_thread.
