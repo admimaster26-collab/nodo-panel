@@ -6835,7 +6835,16 @@ async function _chuniorConfirmarPuesto(value, text){
     window.oficinaId   = oficinaIdNueva;
 
     // Aplicar el proxy de esta oficina (la config/clave se resuelve en el main, blindada).
-    try{ if(window.ctrlElectron && ctrlElectron.proxyApply) ctrlElectron.proxyApply(pcCodigoNuevo); }catch(_e){}
+    // Mostramos el resultado para diagnóstico (antes se ignoraba → no se sabía si aplicó).
+    try{
+      if(window.ctrlElectron && ctrlElectron.proxyApply){
+        Promise.resolve(ctrlElectron.proxyApply(pcCodigoNuevo)).then(function(r){
+          if(r && r.ok && r.enabled) toast("🌐 Proxy de oficina aplicado (Agentes saldrá por proxy)","green");
+          else if(r && r.reason==="missing-secret") toast("⚠️ Falta PANEL_DATA_SECRET en el .env → proxy NO aplicado. Agentes puede fallar.","red");
+          else if(r && r.enabled===false) toast("🌐 Esta oficina no tiene proxy en el admi → salida directa.","blue");
+        }).catch(function(){});
+      }
+    }catch(_e){}
 
     // El historial pudo haberse cargado antes de resolver el puesto (pcOperativa vacío) →
     // recargarlo ahora que la oficina está resuelta, así aparecen las operaciones manuales.
