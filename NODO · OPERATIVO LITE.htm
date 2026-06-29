@@ -5828,16 +5828,25 @@ function _mostrarModalLoginDrex() {
     _drexLoginResolve = resolve;
     // Auto-login BLINDADO primero: si la oficina tiene credenciales guardadas, la clave se
     // resuelve en el proceso main (nunca en el renderer) y logueamos sin pedirle nada al operador.
+    let _autoReason='';
     try{
       if(window.ctrlElectron && window.ctrlElectron.drexAutoLogin){
         try{ toast('Conectando al backoffice…','blue'); }catch(_t){}
         const _pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
         const _r=await window.ctrlElectron.drexAutoLogin(_pc);
         if(_r && _r.ok){ _drexLoginResolve=null; try{ toast('Backoffice conectado','green'); }catch(_t){} return resolve(true); }
-      }
-    }catch(_e){ console.warn('[drex] auto-login falló, pido credenciales manual:', _e); }
+        _autoReason=(_r && _r.reason) ? String(_r.reason) : 'desconocido';
+      } else { _autoReason='sin-puente'; }
+    }catch(_e){ _autoReason='excepcion'; console.warn('[drex] auto-login falló, pido credenciales manual:', _e); }
+    // Diagnóstico visible: por qué no entró solo (credenciales en admi vs. login fallido vs. falta secret).
+    const _autoMsg = _autoReason==='no-creds' ? '⚠️ Auto-login: no hay credenciales de agente cargadas en el admi para esta oficina (cargalas en Oficinas → Guardar agente).'
+      : _autoReason==='login-fail' ? '⚠️ Auto-login: las credenciales del admi no pudieron loguear (revisá usuario/clave en el admi).'
+      : _autoReason==='missing-secret' ? '⚠️ Auto-login: falta PANEL_DATA_SECRET en el .env.'
+      : _autoReason==='config' ? '⚠️ Auto-login: config incompleta (oficina/URL).'
+      : (_autoReason && _autoReason!=='sin-puente' && _autoReason!=='desconocido') ? ('⚠️ Auto-login no disponible ('+_autoReason+').') : '';
     abrirModal(
       '🔐 Login — Casinodrex Agentes',
+      (_autoMsg?('<div style="margin-bottom:8px;color:#fbbf24;font-size:12px;background:rgba(120,90,10,.22);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:7px 9px">'+_autoMsg+'</div>'):'') +
       '<div style="margin-bottom:10px;color:#c0cad8;font-size:13px">La sesión del backoffice expiró o no está abierta.<br>Ingresá tus credenciales de agente para continuar.</div>' +
       '<label style="color:#c0cad8;font-size:12px;font-weight:700">USUARIO</label>' +
       '<input id="drexLUser" type="text" autocomplete="off" placeholder="(tu usuario de agente)" style="margin-bottom:12px" value="">' +
