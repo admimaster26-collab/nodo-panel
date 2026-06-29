@@ -3186,8 +3186,6 @@ async function ejecutarOperacionManual(){
     }
 
     const ok    = resultado && resultado.ok !== false;
-    const est2  = ok ? "OK" : "ERROR";
-    const notas = ok ? (resultado?.previousBalance?.raw || busqueda.balance?.raw || null) : (resultado?.message||"error");
 
     // Saldo PRE: lo leemos siempre (ya sea del casino o de la búsqueda inicial).
     // Saldo POST: SIEMPRE lo calculamos (pre + monto). Es lo más confiable.
@@ -3203,6 +3201,20 @@ async function ejecutarOperacionManual(){
         saldoPost = tipo === "CARGA" ? ultimoSaldo + montoAbs : ultimoSaldo - montoAbs;
       }
     }
+
+    // ── CONFIRMACIÓN de que la carga REALMENTE se hizo en Agentes ──
+    // Fuente fuerte: el modal "Resultado de la operación" dijo "Operación correcta" (resultado.exito).
+    // Fuente alternativa: el saldo del casino se movió EXACTO el monto (post - pre == ±monto).
+    // Si NO se puede confirmar (timeout / página lenta / no se leyó el modal) NO anotamos en Chunior
+    // (evita el movimiento FANTASMA) y marcamos la operación para verificar a mano en el casino.
+    const _deltaEsperado = tipo === "CARGA" ? montoAbs : -montoAbs;
+    const _deltaConfirma = (saldoPreCasino !== null && saldoPostCasino !== null) && Math.abs((saldoPostCasino - saldoPreCasino) - _deltaEsperado) < 1;
+    const cargaConfirmada = ok && ((resultado && resultado.exito === true) || _deltaConfirma);
+    const sinConfirmar = ok && !cargaConfirmada;
+    const est2  = !ok ? "ERROR" : (cargaConfirmada ? "OK" : "VERIFICAR");
+    const notas = !ok ? ((resultado && resultado.message) || "error")
+                : cargaConfirmada ? (resultado?.previousBalance?.raw || busqueda.balance?.raw || null)
+                : "Sin confirmar en Agentes (timeout/lento) · verificar en casino · NO anotado en Chunior";
 
     // Detección de duplicado SOLO si la lectura post fue 100% confiable (no fallback)
     // y muestra un múltiplo claro del monto (2x-4x). Si la lectura no funcionó, no
@@ -3221,8 +3233,8 @@ async function ejecutarOperacionManual(){
     // después cuando Chunior responda en background).
     const filaHist = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:est2, notas, chunior_movimiento_id:null, saldo_post:saldoPost, saldo_pre:saldoPre});
 
-    // ── Chunior EN BACKGROUND ── (solo si Drex confirmó OK)
-    const debeChunior = ok && !!(bil && bil.CHUNIOR_UID);
+    // ── Chunior EN BACKGROUND ── SOLO si la carga quedó CONFIRMADA en Agentes (no escritura ciega)
+    const debeChunior = cargaConfirmada && !!(bil && bil.CHUNIOR_UID);
     if(debeChunior){
       const chuPromise = tipo === "CARGA"
         ? registrarCargaEnChunior (bil.CHUNIOR_UID, montoAbs, usuario)
@@ -3257,10 +3269,15 @@ async function ejecutarOperacionManual(){
     if(ok){
       if(bil && bil.ID_BILLETERA) await ajustarSaldoBilletera(bil.ID_BILLETERA, tipo==="CARGA" ? montoAbs : -montoAbs);
       if(res){
-        // El N° de Chunior se actualiza después si llega — por ahora mostramos OK directo
-        res.innerHTML = '<div class="ok-box">✅ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b> completada'+(resultado?.timeoutVerificar?' <br><span class="small">⚠️ El worker cortó por timeout, pero no se marcó como error ciego. Verificado/registrado para control.</span>':'')+'</div>';
+        if(sinConfirmar){
+          // No pudimos confirmar la carga en Agentes → NO se anotó en Chunior. Verificación manual.
+          res.innerHTML = '<div class="alert-box">⚠️ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b>: <b>no se pudo confirmar</b> en Agentes (lento/timeout).<br><span class="small">NO se anotó en Chunior (para evitar duplicado). <b>Verificá en el casino:</b> si NO se hizo, reintentá; si SÍ, anotala a mano.</span></div>';
+        } else {
+          // El N° de Chunior se actualiza después si llega — por ahora mostramos OK directo
+          res.innerHTML = '<div class="ok-box">✅ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b> completada</div>';
+        }
       }
-      toast(tipo+" completada: "+usuario+" · "+money(montoAbs), "green");
+      toast(sinConfirmar ? ('⚠️ '+tipo+' sin confirmar · verificá en el casino') : (tipo+" completada: "+usuario+" · "+money(montoAbs)), sinConfirmar ? "yellow" : "green");
       // Auto-registrar al usuario en NODO si vino de una CARGA y no existe en la base (segundo plano)
       if(tipo === "CARGA" && busqueda?.user){
         _autoregistrarUsuarioSiFalta(busqueda.user);
