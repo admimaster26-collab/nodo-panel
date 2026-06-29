@@ -7860,35 +7860,6 @@ if(window.ctrlElectron){
 @media(max-width:1100px){.v154p-card{grid-template-columns:1fr}.v154p-actions{justify-content:flex-start}}
 
 
-/* ============================================================
-   SAFE PATCH · Inicio fichas + solicitudes + chat expandido
-   ============================================================ */
-.fichas-card{background:linear-gradient(135deg,rgba(18,24,35,.98),rgba(22,29,43,.95));border:1px solid rgba(255,255,255,.09)}
-.fichas-card.ok{border-color:rgba(18,183,106,.45);box-shadow:0 0 0 1px rgba(18,183,106,.12)}
-.fichas-card.alerta{border-color:rgba(240,68,56,.55);box-shadow:0 0 0 1px rgba(240,68,56,.16)}
-.fichas-line{display:flex;justify-content:space-between;gap:6px;font-size:11px;line-height:1.3}.fichas-line span{color:var(--muted)}.fichas-line b{font-size:12px}.fichas-diff.ok{color:#7ee07e}.fichas-diff.alerta{color:#ff9b9b}.fichas-note{font-size:10px;color:var(--muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.chat-full-back{display:none}
-@media(min-width:1101px){
-  .top-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important}
-  body.chat-expanded #viewChat{
-    position:fixed!important;top:9px!important;right:9px!important;bottom:9px!important;left:75px!important;width:auto!important;height:auto!important;z-index:80!important;box-shadow:0 18px 60px rgba(0,0,0,.55);border-color:rgba(89,107,255,.42)!important;
-  }
-  body.chat-expanded .chat-layout{grid-template-columns:340px minmax(0,1fr)!important}
-  body.chat-expanded .chat-list-head{padding:14px!important}.chat-full-back{display:inline-flex}
-  body.chat-expanded .chat-item{padding:13px 12px!important}
-  body.chat-expanded .chat-item-title{font-size:14px!important}
-  body.chat-expanded .chat-head{padding:14px 16px!important;min-height:62px!important}
-  body.chat-expanded #chatTitulo{font-size:17px!important}
-  body.chat-expanded #chatSubtitulo{font-size:12px!important}
-  body.chat-expanded #chatEstado{display:inline-flex!important}
-  body.chat-expanded #chatAccionesRapidas{width:auto!important;margin-top:0!important}
-  body.chat-expanded .chat-body{padding:18px!important;background:radial-gradient(circle at top right,rgba(61,90,254,.08),transparent 35%),#0d1117!important}
-  body.chat-expanded .chat-bubble{font-size:14px!important;padding:11px 13px!important}
-  body.chat-expanded .chat-msg{max-width:74%!important}
-  body.chat-expanded .chat-row{grid-template-columns:42px 42px 1fr 46px!important}
-  body.chat-expanded .chat-row > button:nth-child(1),body.chat-expanded .chat-row > button:nth-child(2){display:block!important}
-}
-
 </style>
 
 <script>
