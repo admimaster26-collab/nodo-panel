@@ -115,7 +115,8 @@ async function configurarProxyElectronV15() {
   await session.defaultSession.setProxy({
     mode: "fixed_servers",
     proxyRules,
-    proxyBypassRules: process.env.PROXY_BYPASS_RULES || "<local>"
+    // SOLO el casino (Agentes/casinodrex) debe salir por el proxy. Chunior y Supabase van DIRECTO.
+    proxyBypassRules: (process.env.PROXY_BYPASS_RULES ? process.env.PROXY_BYPASS_RULES + "," : "") + "<local>,bo.chunior.com,*.chunior.com,*.supabase.co"
   });
 
   try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
@@ -149,7 +150,9 @@ async function aplicarProxyRuntime(cfg) {
     await session.defaultSession.setProxy({
       mode: "fixed_servers",
       proxyRules: rules,
-      proxyBypassRules: cfg.bypass || "<local>"
+      // SOLO el casino (Agentes/casinodrex) sale por el proxy. Chunior y Supabase van DIRECTO
+      // (Chunior no necesita proxy y salía por él → fallaba la lectura de fichas).
+      proxyBypassRules: (cfg.bypass ? cfg.bypass + "," : "") + "<local>,bo.chunior.com,*.chunior.com,*.supabase.co"
     });
     try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
     _proxyApplied = true;
