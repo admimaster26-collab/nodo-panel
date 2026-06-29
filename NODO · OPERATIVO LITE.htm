@@ -3032,8 +3032,14 @@ async function soloConsultarUsuario(){
     toast(usuario+": "+saldo, "green");
     await registrarEnHistorial({usuario, tipo:'CONSULTA', monto:0, origen:'MANUAL', estado:'OK', notas:saldo});
   } catch(e) {
-    if(res) res.innerHTML = '<div class="err-box">Error: '+escapeHtml(e.message||'sin detalle')+'</div>';
-    toast("Error al consultar.","red");
+    const _m = (e && (e.message||String(e))) || 'sin detalle';
+    const _esTimeout = /timeout|tard[oó] demasiado|timed out/i.test(_m);
+    const _esIpc = /invoking remote method/i.test(_m);
+    const _txt = _esTimeout ? '⏱️ La consulta tardó demasiado (el casino puede estar lento). Reintentá.'
+      : _esIpc ? '⚠️ No se pudo consultar (la ventana de agentes no respondió). Revisá que esté abierta y reintentá.'
+      : 'Error: '+escapeHtml(_m);
+    if(res) res.innerHTML = '<div class="err-box">'+_txt+'</div>';
+    toast(_esTimeout?'Consulta lenta · reintentá':'Error al consultar.','red');
   }
 }
 
@@ -3068,17 +3074,20 @@ async function ejecutarOperacionManual(){
   if(btnEjecutar){ btnEjecutar.disabled = true; btnEjecutar.style.opacity = '0.6'; btnEjecutar.textContent = 'Procesando...'; }
 
   let _lockLiberado = false;
-  // Timeout de seguridad: si la operación se cuelga (un await que nunca resuelve),
-  // a los 75s liberamos el lock y avisamos para que el operador reintente.
+  // Timeout de seguridad SOLO para un cuelgue real (un await que nunca resuelve / IPC muerto).
+  // DEBE ser mayor que la suma de los timeouts del proceso main de un mismo flujo:
+  // buscarUsuario (45s) + cargarSaldo/retirarSaldo (180s) = 225s. Si es menor, salta a mitad
+  // de una operación lenta (proxy) y marca "se colgó" aunque en el casino SÍ se completó (error ciego).
+  // El timeout del main (línea ~3162) ya maneja el caso lento verificando saldo; este es el último recurso.
   const _safetyTimer = setTimeout(() => {
     if(_lockLiberado) return;
     _lockLiberado = true;
     _operacionManualEnCurso = false;
     _wdUnlock(); // por si quedó el watchdog bloqueado
     if(btnEjecutar){ btnEjecutar.disabled = false; btnEjecutar.style.opacity = ''; btnEjecutar.textContent = 'Ejecutar'; }
-    if(res) res.innerHTML = '<div class="err-box">⏱️ La operación se colgó (el script de agentes no respondió en 75s).<br>Revisá que la ventana de agentes esté abierta y reintentá.</div>';
-    toast('⏱️ Operación cancelada por timeout · reintentá', 'red');
-  }, 75000);
+    if(res) res.innerHTML = '<div class="err-box">⏱️ La operación no respondió a tiempo (más de 4 min).<br>Revisá que la ventana de agentes esté abierta y verificá en el casino antes de reintentar.</div>';
+    toast('⏱️ Operación sin respuesta · verificá antes de reintentar', 'red');
+  }, 240000);
 
   // Asegurar que se libere SIEMPRE al final, pase lo que pase
   const _liberarLock = () => {
