@@ -1,6 +1,6 @@
 {
   "name": "nodo-operativo",
-  "version": "1.0.33",
+  "version": "1.0.34",
   "description": "NODO · OPERATIVO — Panel de operaciones",
   "main": "main.js",
   "scripts": {

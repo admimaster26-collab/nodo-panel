@@ -11826,6 +11826,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
             notas: (it._raw&&it._raw.notas)||"",
             created_at: it.fecha,
             saldo_post: it.saldo_post!=null ? it.saldo_post : null,
+            saldo_pre: it.saldo_pre!=null ? it.saldo_pre : null,
             chunior_movimiento_id: it.chunior_movimiento_id,
             solicitud_id: it.solicitud_id || (it._raw&&it._raw.solicitud_id) || null,
             historial_id: it.historial_id || it.id || null,
