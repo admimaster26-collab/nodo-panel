@@ -1097,7 +1097,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
             <h1 style="font-size:26px">Chat interno</h1>
             <div class="small">Consultas desde landing. Podés pegar texto o imágenes con Ctrl + V.</div>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="mini-btn gray chat-full-back" onclick="cerrarChatExpandido()">← Bandeja / Esc</button><button class="mini-btn blue" onclick="cargarChats(true)">🔄 Actualizar chats</button><button class="mini-btn gray" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button><button class="mini-btn gray" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú">⟩ Minimizar</button></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="mini-btn gray chat-full-back" onclick="cerrarChatExpandido()">← Bandeja / Esc</button><button class="mini-btn gray" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú · (Esc en la bandeja también minimiza)">⟩ Minimizar</button><button class="mini-btn blue" onclick="cargarChats(true)">🔄 Actualizar chats</button><button class="mini-btn gray" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button></div>
         </div>
 
         <div class="chat-layout">
@@ -5050,9 +5050,21 @@ function cerrarChatExpandido(){
   document.body.classList.remove("chat-expanded");
 }
 document.addEventListener("keydown", function(e){
-  if(e.key === "Escape" && document.body.classList.contains("chat-expanded")){
+  if(e.key !== "Escape") return;
+  // Esc contextual (agilidad en demanda):
+  //   1) Conversación abierta → volver a la bandeja.
+  //   2) En la bandeja (chat visible, desktop) → minimizar el chat.
+  // No dispara si estás tipeando en un campo (para no minimizar por error operando).
+  if(document.body.classList.contains("chat-expanded")){
     e.preventDefault();
     cerrarChatExpandido();
+    return;
+  }
+  const ae = document.activeElement;
+  const tipeando = ae && /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||"");
+  if(!tipeando && window.matchMedia && window.matchMedia("(min-width:1101px)").matches && !document.body.classList.contains("chat-min")){
+    e.preventDefault();
+    try{ window.nodoChatMin && nodoChatMin(true); }catch(_e){}
   }
 });
 
