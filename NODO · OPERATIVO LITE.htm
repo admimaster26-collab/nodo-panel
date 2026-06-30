@@ -14,7 +14,7 @@
 <title>NODO · OPERATIVO LITE</title>
 
 <style>
-*{box-sizing:border-box;margin:0;padding:0;font-family:Arial,sans-serif}
+*{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased}
 :root{
   --bg:#0e1014;--panel:#151821;--card:#191d27;--card2:#1c2230;--line:#2c3140;
   --muted:#98a2b3;--blue:#3d5afe;--green:#12b76a;--red:#f04438;--yellow:#fdb022;
@@ -895,8 +895,8 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
         <div id="alertas"></div>
 
         <div class="top-grid">
-          <div class="stat-card"><div class="stat-title">Solicitudes pendientes</div><div class="stat-value" id="statPendientes">0</div><div class="stat-sub" id="statRetiros">Retiros: 0</div></div>
-          <div class="stat-card"><div class="stat-title">Chats sin leer</div><div class="stat-value" id="statChats">0</div><div class="stat-sub">Consultas portal</div></div>
+          <div class="stat-card stat-mini"><span class="stat-mini-ico">📋</span><div class="stat-mini-body"><span class="stat-mini-num" id="statPendientes">0</span><span class="stat-mini-lbl">Solicitudes</span><span class="stat-mini-sub" id="statRetiros">Retiros: 0</span></div></div>
+          <div class="stat-card stat-mini"><span class="stat-mini-ico" id="statChatsIco">✉️</span><div class="stat-mini-body"><span class="stat-mini-num" id="statChats">0</span><span class="stat-mini-lbl">Chats sin leer</span><span class="stat-mini-sub">Consultas portal</span></div></div>
           <div class="stat-card"><div class="stat-title">Billetera en portal</div><div class="stat-value" id="statBilletera">-</div><div class="stat-sub" id="statBilleteraTipo">-</div></div>
           <div class="stat-card fichas-card" id="statFichasCard"><div class="stat-title">Fichas Drex / Chunior</div><div class="fichas-line"><span>Drex</span><b id="statDrexFichas">—</b></div><div class="fichas-line"><span>Chunior</span><b id="statChuniorFichas">—</b></div><div class="fichas-line"><span>Diferencia</span><b id="statDiffFichas" class="fichas-diff">—</b></div><div class="fichas-note" id="statFichasEstado">Esperando lectura...</div></div>
         </div>
@@ -12692,6 +12692,27 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
   body.chat-min .main{ grid-column:2!important; }
   body.chat-min #viewChat{ display:none!important; }
 }
+</style>
+
+<style id="nodoEstetica">
+/* Retoques estéticos (CSS puro, nada operativo). */
+@media(min-width:1101px){
+  /* Solicitudes y Chats compactos; más espacio para Billetera y para Fichas (destacada). */
+  .top-grid{ grid-template-columns: minmax(132px,.6fr) minmax(132px,.6fr) minmax(165px,1fr) minmax(235px,1.4fr)!important; }
+}
+.stat-mini{ display:flex!important; align-items:center; gap:11px; padding:11px 13px!important; }
+.stat-mini .stat-mini-ico{ font-size:22px; line-height:1; opacity:.92; }
+.stat-mini .stat-mini-body{ display:flex; flex-direction:column; min-width:0; }
+.stat-mini .stat-mini-num{ font-size:22px; font-weight:800; line-height:1.05; }
+.stat-mini .stat-mini-lbl{ font-size:11px; font-weight:600; color:#c6d0de; }
+.stat-mini .stat-mini-sub{ font-size:10px; color:var(--muted); }
+/* Ficha Drex/Chunior destacada (sin pisar los estados ok/alerta que cambian el borde). */
+#statFichasCard{ background:linear-gradient(135deg,rgba(20,27,40,.98),rgba(24,32,48,.96))!important; }
+/* Notificación de chat: el badge pulsa cuando hay sin leer → se nota mientras se opera. */
+.badge-chat:not(.hidden){ animation:nodoPulseChat 1.6s ease-in-out infinite; }
+@keyframes nodoPulseChat{ 0%,100%{ box-shadow:0 0 0 0 rgba(240,68,56,.55);} 50%{ box-shadow:0 0 0 5px rgba(240,68,56,0);} }
+/* Botones del header del chat: parejos y prolijos. */
+.chat-head .mini-btn, #viewChat > div:first-child .mini-btn{ border-radius:9px; font-weight:600; font-size:11px; padding:7px 11px; }
 </style>
 
 <script id="nodoValidacionSoftJs">
