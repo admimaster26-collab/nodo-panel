@@ -4775,25 +4775,35 @@ function abrirAprobarSolicitud(id){
           return;
         }
 
-        // ÉXITO: calcular saldo_post — misma lógica que la operación manual
+        // ── CONFIRMACIÓN de la carga del PORTAL (misma lógica que el manual) ──
+        // Solo acreditamos si la carga está CONFIRMADA: exito ("Operación correcta") O delta de saldo
+        // LEÍDO (post - pre == monto). Si corrió pero NO se confirma → NO acreditar (sin fantasma):
+        // queda APROBADA_MANUAL para verificar/reintentar con ▶ Auto.
         const _saldoPreCasinoAp = (typeof resultado?.previousBalance?.value === 'number') ? resultado.previousBalance.value : null;
-        const _saldoPostLeidoAp = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
-        let _saldoPostAp = _saldoPostLeidoAp;
-        if(_saldoPostAp === null && _saldoPreCasinoAp !== null){
-          // Pre leído del modal (incluso si es 0, lo usamos igual que el manual)
-          _saldoPostAp = _saldoPreCasinoAp + montoFinal;
+        let _saldoPostLeidoAp = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
+        // Lectura fresca si el modal no dijo "correcta" y el post no se leyó (o vino sospechosamente bajo).
+        if((!resultado || resultado.exito !== true) && _saldoPreCasinoAp !== null && (_saldoPostLeidoAp === null || _saldoPostLeidoAp <= montoFinal)){
+          try{ const _pv = await callDrex("buscarUsuario", usuario, {skipBalance:false}); if(_pv?.exists && typeof _pv.balance?.value === 'number') _saldoPostLeidoAp = _pv.balance.value; }catch(_e){}
         }
-        if(_saldoPostAp === null || _saldoPostAp === montoFinal){
-          // Si pre fue 0 (no se leyó el balance real), hacer lectura fresca post-carga
-          try{
-            const _bPost = await callDrex("buscarUsuario", usuario);
-            if(typeof _bPost?.balance?.value === 'number' && _bPost.balance.value > montoFinal){
-              _saldoPostAp = _bPost.balance.value;
-            }
-          }catch(e){}
-        }
-        const _saldoPreAp = _saldoPostAp !== null ? _saldoPostAp - montoFinal : null;
+        const _deltaOkAp = (_saldoPreCasinoAp !== null && _saldoPostLeidoAp !== null) && Math.abs((_saldoPostLeidoAp - _saldoPreCasinoAp) - montoFinal) < 1;
+        const _confirmadaAp = (resultado && resultado.exito === true) || _deltaOkAp;
+        // saldo_post para el historial: el LEÍDO si lo hay; si no, estimado pre+monto. saldo_pre: el real del modal.
+        const _saldoPostAp = _saldoPostLeidoAp !== null ? _saldoPostLeidoAp : (_saldoPreCasinoAp !== null ? _saldoPreCasinoAp + montoFinal : null);
+        const _saldoPreAp = _saldoPreCasinoAp !== null ? _saldoPreCasinoAp : (_saldoPostAp !== null ? _saldoPostAp - montoFinal : null);
         const _bilLandingAp = getBilleraLanding();
+        if(!_confirmadaAp){
+          await registrarEnHistorial({
+            usuario, tipo:'CARGA', monto:montoFinal, origen:'PANEL', estado:'VERIFICAR',
+            notas:(obs?obs+' · ':'')+'Sin confirmar en Agentes · NO acreditada · usá ▶ Auto', solicitud_id:id,
+            billetera_id: s.ID_BILLETERA || (_bilLandingAp ? _bilLandingAp.ID_BILLETERA : null),
+            billetera_nombre: s.BILLETERA_NOMBRE || (_bilLandingAp ? _bilLandingAp.NOMBRE_VISIBLE : null),
+            saldo_pre: _saldoPreAp, saldo_post: _saldoPostAp
+          });
+          await notificarUsuarioEnChat(usuario, `⏳ Tu carga de $${montoFinal.toLocaleString("es-AR")} está en revisión. En breve te confirmamos.${obs?`\n📝 ${obs}`:""}`);
+          toast('⚠️ Carga del portal SIN CONFIRMAR en Agentes · queda APROBADA_MANUAL · usá ▶ Auto','yellow');
+          await refrescarTodo(false);
+          return;
+        }
         await registrarEnHistorial({
           usuario, tipo:'CARGA', monto:montoFinal, origen:'PANEL', estado:'OK',
           notas:obs||null, solicitud_id:id,
