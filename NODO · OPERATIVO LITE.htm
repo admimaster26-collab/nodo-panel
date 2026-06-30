@@ -3085,9 +3085,9 @@ async function ejecutarOperacionManual(){
     _operacionManualEnCurso = false;
     _wdUnlock(); // por si quedó el watchdog bloqueado
     if(btnEjecutar){ btnEjecutar.disabled = false; btnEjecutar.style.opacity = ''; btnEjecutar.textContent = 'Ejecutar'; }
-    if(res) res.innerHTML = '<div class="err-box">⏱️ La operación no respondió a tiempo (más de 4 min).<br>Revisá que la ventana de agentes esté abierta y verificá en el casino antes de reintentar.</div>';
+    if(res) res.innerHTML = '<div class="err-box">⏱️ La operación no respondió a tiempo.<br>Revisá que la ventana de agentes esté abierta y verificá en el casino antes de reintentar.</div>';
     toast('⏱️ Operación sin respuesta · verificá antes de reintentar', 'red');
-  }, 240000);
+  }, 90000);
 
   // Asegurar que se libere SIEMPRE al final, pase lo que pase
   const _liberarLock = () => {

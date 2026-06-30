@@ -471,10 +471,12 @@ async function navigateAgentTo(url = AGENT_URL) {
 function automationTimeoutFor(method) {
   const envTimeout = Number(process.env.DREX_AUTOMATION_TIMEOUT_MS || 0);
   if (envTimeout > 0) return envTimeout;
-  if (method === 'cargarSaldo' || method === 'retirarSaldo') return 180000;
-  if (method === 'crearUsuario' || method === 'cambiarClave') return 90000;
-  if (method === 'buscarUsuario' || method === 'obtenerSaldoAgente') return 45000;
-  return 60000;
+  // Timeouts ajustados para que un CUELGUE se resuelva rápido y libere al operador (demanda alta).
+  // Una carga normal tarda ~10-15s; si pasa de 45s está colgada → abortar y reintentar.
+  if (method === 'cargarSaldo' || method === 'retirarSaldo') return 45000;   // antes 180s
+  if (method === 'crearUsuario' || method === 'cambiarClave') return 55000;  // antes 90s
+  if (method === 'buscarUsuario' || method === 'obtenerSaldoAgente') return 28000; // antes 45s
+  return 40000; // antes 60s
 }
 
 function sendAutomation(method, ...args) {

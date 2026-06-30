@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const USER_SEARCH_URL = 'https://bo.casinodrex.com/agents/user_search';
-const DEFAULT_TIMEOUT = 30000;
+const DEFAULT_TIMEOUT = 18000; // antes 30s — si un elemento no aparece (ventana trabada), falla más rápido y libera
 const STEP_DELAY = 180;
 
 const SELECTORS = {
