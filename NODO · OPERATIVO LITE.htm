@@ -3815,6 +3815,7 @@ function filtrarHistorial(){
         notas: it._raw&&it._raw.notas||'',
         created_at: it.fecha,
         saldo_post: it.saldo_post!=null ? it.saldo_post : null,
+        saldo_pre: it.saldo_pre!=null ? it.saldo_pre : null,
         chunior_movimiento_id: it.chunior_movimiento_id,
         solicitud_id: it.solicitud_id || (it._raw&&it._raw.solicitud_id) || null,
         historial_id: it.historial_id || (it.fuente !== 'SOLICITUD' ? it.id : null) || null,
@@ -4182,6 +4183,7 @@ function construirHistorialUnificado(){
       historial_id: histId || null,
       solicitud_id: sid || null,
       saldo_post: s.SALDO_POST!=null ? s.SALDO_POST : null,
+      saldo_pre: s.SALDO_PRE!=null ? s.SALDO_PRE : null,
       operador: (s.OPERADOR && s.OPERADOR !== 'panel' ? s.OPERADOR : ''),
       pendiente: esPendiente(s)
     });
@@ -4198,6 +4200,7 @@ function construirHistorialUnificado(){
       billetera_id: h.billetera_id||null, historial_id: h.id,
       solicitud_id: h.solicitud_id || null,
       saldo_post: h.saldo_post!=null ? h.saldo_post : null,
+      saldo_pre: h.saldo_pre!=null ? h.saldo_pre : null,
       operador: h.operador || '',
       pendiente: false
     });
@@ -5822,16 +5825,20 @@ async function _resolverAliasParaCasino(usuario){
   const norm = normalizarUsuarioCasino(usuario);
   if(norm === usuario) return usuario; // sin caracteres raros, nada que decidir
   try {
-    const { data } = await supabaseClient
+    const { data, error } = await supabaseClient
       .from('usuarios')
       .select('usuario')
       .eq('usuario', usuario)
       .limit(1);
+    // Si NO pudimos verificar en NODO (ej. 401 del blindaje: la tabla usuarios no se lee directo),
+    // NO adivinamos normalizando: mandamos el alias TAL CUAL lo tipeó el operador. Normalizar a ciegas
+    // mandaba un alias equivocado al casino → la búsqueda se trababa (cuelgue).
+    if(error){ return usuario; }
     if(data && data.length){
       // Match exacto en NODO con esos caracteres → el casino también lo tiene así
       return usuario;
     }
-    // No hay match exacto → probablemente el casino lo tiene normalizado
+    // No hay match exacto (y SÍ pudimos consultar) → probablemente el casino lo tiene normalizado
     console.log('[alias normalizado] "'+usuario+'" no está exacto en NODO · casino recibe "'+norm+'"');
     return norm;
   } catch(e){
