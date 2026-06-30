@@ -1097,7 +1097,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
             <h1 style="font-size:26px">Chat interno</h1>
             <div class="small">Consultas desde landing. Podés pegar texto o imágenes con Ctrl + V.</div>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="mini-btn gray chat-full-back" onclick="cerrarChatExpandido()">← Bandeja / Esc</button><button class="mini-btn blue" onclick="cargarChats(true)">🔄 Actualizar chats</button><button class="mini-btn gray" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="mini-btn gray chat-full-back" onclick="cerrarChatExpandido()">← Bandeja / Esc</button><button class="mini-btn blue" onclick="cargarChats(true)">🔄 Actualizar chats</button><button class="mini-btn gray" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button><button class="mini-btn gray" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú">⟩ Minimizar</button></div>
         </div>
 
         <div class="chat-layout">
@@ -2677,8 +2677,20 @@ function iniciarRealtimeSolicitudes(){
 }
 
 
+// Minimizar/restaurar la bandeja de chat (solo desktop). Persiste en localStorage.
+// Minimizado: el chat se oculta y el main ocupa todo el ancho (mejor vista del historial).
+// Se restaura tocando "Chat" en el menú.
+window.nodoChatMin = function(min){
+  try{
+    if(min){ document.body.classList.add('chat-min'); localStorage.setItem('nodo_chat_min','1'); }
+    else { document.body.classList.remove('chat-min'); localStorage.removeItem('nodo_chat_min'); }
+  }catch(_e){}
+};
+try{ if(localStorage.getItem('nodo_chat_min')==='1') document.body.classList.add('chat-min'); }catch(_e){}
+
 function mostrarVista(vista){
   if(vista==="chat" && window.matchMedia && window.matchMedia("(min-width:1101px)").matches){
+    try{ window.nodoChatMin && nodoChatMin(false); }catch(_e){} // tocar Chat restaura el panel si estaba minimizado
     document.querySelectorAll(".nav-btn").forEach(x=>x.classList.remove("active"));
     document.getElementById("navChat")?.classList.add("active");
     cargarChats(true);
@@ -12669,6 +12681,16 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
 }
 @media(max-width:1000px){
   .val-toolbar{grid-template-columns:1fr 1fr}
+}
+</style>
+
+<style id="nodoChatMin">
+/* Minimizar la bandeja de chat (solo desktop): oculta el panel y el main ocupa todo el ancho,
+   para ver bien el historial. Se restaura tocando "Chat" en el menú. No afecta a mobile. */
+@media(min-width:1101px){
+  body.chat-min .layout{ grid-template-columns:66px minmax(0,1fr)!important; padding:9px!important; }
+  body.chat-min .main{ grid-column:2!important; }
+  body.chat-min #viewChat{ display:none!important; }
 }
 </style>
 
