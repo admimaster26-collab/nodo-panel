@@ -703,11 +703,13 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
   // 0/vacío y, si leemos ahí, agarramos un 0 transitorio).
   let newBalance = null, exito = null, resultadoTexto = '', modalResRef = null;
   let postCero = null;           // último post leído == 0 (puede ser transitorio o real)
-  // Ventana de detección del modal "Resultado de la operación": 12s (suficiente para el proxy).
-  // Si no se llega a leer acá, el renderer hace una lectura fresca de saldo (delta pre/post) como
-  // respaldo, así que no hace falta esperar 25s y la operación resuelve más rápido.
-  const tFinRes = now() + 12000;
-  const tCeroAceptable = tFinRes - 1500; // tras esto, un 0 persistente se acepta como real
+  // Ventana de detección del modal "Resultado de la operación": tope 8s (antes 12s).
+  // CLAVE para demanda alta: en cuanto el modal da el veredicto ("Operación correcta" → exito)
+  // CORTAMOS, sin esperar a que se popule el balance. El balance queda best-effort (el renderer
+  // lo estima pre±monto / lo deriva) y si exito no se vio, hace una lectura fresca como respaldo.
+  // Así "Procesando" dura ~2-3s en el caso normal en vez de esperar a que pinte el saldo.
+  const tFinRes = now() + 8000;
+  const tCeroAceptable = now() + 2500; // hasta acá un post 0 se trata como transitorio (retiros)
   while (now() < tFinRes) {
     const modalRes = _detectarModalResultado();
     if (modalRes) {
@@ -716,23 +718,17 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
       exito = /operaci[oó]n correcta/i.test(resultadoTexto);
       const post = _leerBalanceJugadorEnModal(modalRes); // Balance Jugador REAL del modal de resultado
       if (post && post.raw && /\d/.test(post.raw)) {
-        // Un 0 suele ser que el campo todavía no pintó (transitorio) → seguir esperando.
-        // Aplica a CARGA y RETIRO: el bug era leer ese 0 transitorio en retiros (ej.
-        // saldo 84.378 - retiro 84.000 = 378, pero el modal mostraba 0 al aparecer).
-        // PERO un retiro total deja el saldo en 0 de verdad → si el 0 persiste hasta
-        // cerca del timeout, lo aceptamos.
-        if (post.value === 0) {
-          postCero = post;
-          if (now() < tCeroAceptable) { await delay(250); continue; }
-          // 0 persistente → es real (retiro total / saldo agotado)
-          newBalance = post;
-          break;
-        }
+        // Un 0 suele ser que el campo todavía no pintó (transitorio, sobre todo en retiros).
+        // Le damos una gracia corta (2.5s); pasada esa, un 0 se acepta como real (retiro total).
+        if (post.value === 0 && now() < tCeroAceptable) { postCero = post; await delay(200); continue; }
         newBalance = post;
         break;
       }
+      // El modal YA dio el veredicto (exito true/false) pero el balance aún no se leyó →
+      // confirmamos por exito y seguimos. No esperamos a que pinte el saldo (acelera mucho).
+      if (exito === true || exito === false) break;
     }
-    await delay(200);
+    await delay(150);
   }
   // Si salimos por timeout con un 0 leído (nunca se pobló otro valor), lo tomamos como real.
   if (!newBalance && postCero) newBalance = postCero;
