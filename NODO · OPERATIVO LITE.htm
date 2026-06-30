@@ -3202,52 +3202,30 @@ async function ejecutarOperacionManual(){
       }
     }
 
-    // ── CONFIRMACIÓN de que la carga REALMENTE se hizo en Agentes ──
-    // Fuente fuerte: el modal "Resultado de la operación" dijo "Operación correcta" (resultado.exito).
-    // Fuente alternativa: el saldo del casino se movió EXACTO el monto (post - pre == ±monto).
-    // Si NO se puede confirmar (timeout / página lenta / no se leyó el modal) NO anotamos en Chunior
-    // (evita el movimiento FANTASMA) y marcamos la operación para verificar a mano en el casino.
-    const _deltaEsperado = tipo === "CARGA" ? montoAbs : -montoAbs;
-    // RESPALDO de confirmación: si el modal NO dijo "Operación correcta" y NO se leyó el post del modal,
-    // pero SÍ tenemos el pre, hacemos UNA lectura fresca del saldo para confirmar por delta. Atrapa la
-    // carga que SÍ se hizo pero cuyo modal de resultado no se llegó a leer (proxy lento) → anotamos en
-    // Chunior y evitamos la discrepancia, sin esperar de más.
-    let saldoPostVerif = saldoPostCasino;
-    if(ok && (!resultado || resultado.exito !== true) && saldoPreCasino !== null && saldoPostVerif === null){
-      try{
-        const _pv = await callDrex("buscarUsuario", usuario, { skipBalance:false });
-        if(_pv && _pv.exists && typeof _pv.balance?.value === 'number'){
-          saldoPostVerif = _pv.balance.value;
-          if(saldoPostCasino === null) saldoPost = saldoPostVerif; // saldo post REAL para el historial
-        }
-      }catch(_e){}
-    }
-    const _deltaConfirma = (saldoPreCasino !== null && saldoPostVerif !== null) && Math.abs((saldoPostVerif - saldoPreCasino) - _deltaEsperado) < 1;
-    const cargaConfirmada = ok && ((resultado && resultado.exito === true) || _deltaConfirma);
-    const sinConfirmar = ok && !cargaConfirmada;
-    // 3 estados de la confirmación según el modal de resultado:
-    //   exito===true  → confirmado (modal dijo "Operación correcta")
-    //   exito===false → el modal APARECIÓ pero NO dijo "correcta" → rechazo probable (fallo definitivo)
-    //   exito===null  → el modal NUNCA apareció (timeout/lento) → desconocido
-    // En los dos últimos NO anotamos en Chunior; el mensaje y el estado cambian para guiar al operador.
-    const falloCasino = sinConfirmar && resultado && resultado.exito === false;
-    const est2  = !ok ? "ERROR" : (cargaConfirmada ? "OK" : (falloCasino ? "ERROR" : "VERIFICAR"));
-    const notas = !ok ? ((resultado && resultado.message) || "error")
-                : cargaConfirmada ? (resultado?.previousBalance?.raw || busqueda.balance?.raw || null)
-                : falloCasino ? "El casino NO confirmó 'Operación correcta' (rechazo probable) · NO anotado en Chunior"
-                : "Sin confirmar en Agentes (timeout/lento) · verificar en casino · NO anotado en Chunior";
-
-    // Detección de duplicado SOLO si la lectura post fue 100% confiable (no fallback)
-    // y muestra un múltiplo claro del monto (2x-4x). Si la lectura no funcionó, no
-    // disparamos — el historial igual queda bien con el cálculo manual.
-    const saldoPostLeido = (typeof resultado?.newBalance?.value === 'number') ? resultado.newBalance.value : null;
-    const postConfiable  = saldoPostLeido !== null && !resultado?.newBalance?.unchanged;
-    if(ok && tipo === "CARGA" && saldoPreCasino !== null && postConfiable){
-      const movido = saldoPostLeido - saldoPreCasino;
-      const veces  = Math.round(movido / montoAbs);
-      if(veces >= 2 && veces <= 4 && Math.abs(movido - veces * montoAbs) < 1){
-        toast('🚨 POSIBLE CARGA DUPLICADA ('+veces+'x) · saldo subió de '+money(saldoPreCasino)+' a '+money(saldoPostLeido)+' en una sola operación.', 'red');
+    // ── CONFIRMACIÓN estilo NODO hermano (rápido, SIN re-leer el saldo) ──
+    // El script CORRIÓ (pasó el gate de página/saldo previo → ok!==false) → la operación SE APLICÓ.
+    // NO re-leemos el saldo (re-leer demoraba el "Procesando" y disparaba 403). El modal de resultado
+    // se usa para: (a) detectar DUPLICADO con certeza (saldo saltó 2-6x) y (b) cazar un RECHAZO
+    // explícito (exito===false: el modal apareció pero NO dijo "Operación correcta").
+    const _signo = tipo === "CARGA" ? 1 : -1;
+    const _postEnModal = saldoPostCasino; // post REAL del modal (null si no se leyó)
+    let _confianza = 'confirmado', _vecesDup = 0;
+    if(ok && saldoPreCasino !== null && _postEnModal !== null){
+      const _movido = _postEnModal - saldoPreCasino;
+      if(Math.sign(_movido) === _signo && Math.abs(_movido) >= montoAbs * 1.5){
+        const _veces = Math.round(_movido / (_signo * montoAbs));
+        if(_veces >= 2 && _veces <= 6 && Math.abs(_movido - _veces * _signo * montoAbs) < 1){ _confianza = 'duplicado'; _vecesDup = _veces; }
       }
+    }
+    const _rechazoCasino = ok && resultado && resultado.exito === false; // modal apareció y NO confirmó → rechazo
+    const aplicadoLimpio = ok && !_rechazoCasino && _confianza !== 'duplicado';
+    const est2  = !ok ? "ERROR" : (_rechazoCasino ? "ERROR" : "OK");
+    const notas = !ok ? ((resultado && resultado.message) || "error")
+                : _rechazoCasino ? "El casino NO confirmó 'Operación correcta' (rechazo) · NO anotado en Chunior"
+                : _confianza === 'duplicado' ? ('🚨 DUPLICADO x'+(_vecesDup||'?')+' · saldo '+money(saldoPre)+'→'+money(saldoPost))
+                : (resultado?.previousBalance?.raw || busqueda.balance?.raw || null);
+    if(_confianza === 'duplicado'){
+      toast('🚨 '+tipo+' DUPLICADA ('+(_vecesDup||'?')+'x) en agentes · saldo '+money(saldoPre)+' → '+money(saldoPost)+'. Revisá y corregí.', 'red');
     }
 
     // Si el pre quedó en 0/null (el modal no llegó a leer el saldo previo) pero tenemos el post REAL,
@@ -3260,8 +3238,8 @@ async function ejecutarOperacionManual(){
     // después cuando Chunior responda en background).
     const filaHist = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:est2, notas, chunior_movimiento_id:null, saldo_post:saldoPost, saldo_pre:saldoPre});
 
-    // ── Chunior EN BACKGROUND ── SOLO si la carga quedó CONFIRMADA en Agentes (no escritura ciega)
-    const debeChunior = cargaConfirmada && !!(bil && bil.CHUNIOR_UID);
+    // ── Chunior EN BACKGROUND ── SOLO si la operación quedó APLICADA LIMPIA (script corrió, sin rechazo ni duplicado)
+    const debeChunior = aplicadoLimpio && !!(bil && bil.CHUNIOR_UID);
     if(debeChunior){
       const chuPromise = tipo === "CARGA"
         ? registrarCargaEnChunior (bil.CHUNIOR_UID, montoAbs, usuario)
@@ -3296,18 +3274,18 @@ async function ejecutarOperacionManual(){
     if(ok){
       if(bil && bil.ID_BILLETERA) await ajustarSaldoBilletera(bil.ID_BILLETERA, tipo==="CARGA" ? montoAbs : -montoAbs);
       if(res){
-        if(falloCasino){
-          // El casino mostró el resultado pero NO dijo "Operación correcta" → rechazo probable. NO se anotó en Chunior.
-          res.innerHTML = '<div class="err-box">❌ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b>: el casino <b>NO confirmó "Operación correcta"</b> (rechazo probable).<br><span class="small">NO se anotó en Chunior. <b>Verificá en el casino antes de reintentar.</b></span></div>';
-        } else if(sinConfirmar){
-          // No pudimos LEER el resultado (lento/timeout) → NO se anotó en Chunior. Verificación manual.
-          res.innerHTML = '<div class="alert-box">⚠️ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b>: <b>no se pudo confirmar</b> en Agentes (lento/timeout).<br><span class="small">NO se anotó en Chunior (para evitar duplicado). <b>Verificá en el casino:</b> si NO se hizo, reintentá; si SÍ, anotala a mano.</span></div>';
+        if(_rechazoCasino){
+          // El modal de resultado apareció pero NO dijo "Operación correcta" → rechazo. NO se anotó en Chunior.
+          res.innerHTML = '<div class="err-box">❌ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b>: el casino <b>NO confirmó "Operación correcta"</b> (rechazo).<br><span class="small">NO se anotó en Chunior. Verificá en el casino antes de reintentar.</span></div>';
+        } else if(_confianza === 'duplicado'){
+          // El saldo saltó un múltiplo del monto → se aplicó de más. NO se anota en Chunior; el operador corrige.
+          res.innerHTML = '<div class="alert-box">🚨 '+tipo+' DUPLICADA ('+(_vecesDup||'?')+'x) → <b>'+escapeHtml(usuario)+'</b> · saldo '+money(saldoPre)+'→'+money(saldoPost)+'.<br><span class="small">NO se anotó en Chunior. Revisá/corregí en el casino.</span></div>';
         } else {
           // El N° de Chunior se actualiza después si llega — por ahora mostramos OK directo
           res.innerHTML = '<div class="ok-box">✅ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b> completada</div>';
         }
       }
-      toast(falloCasino ? ('❌ '+tipo+' rechazada por el casino · no anotada') : sinConfirmar ? ('⚠️ '+tipo+' sin confirmar · verificá en el casino') : (tipo+" completada: "+usuario+" · "+money(montoAbs)), falloCasino ? "red" : sinConfirmar ? "yellow" : "green");
+      toast(_rechazoCasino ? ('❌ '+tipo+' rechazada por el casino · no anotada') : _confianza === 'duplicado' ? ('🚨 '+tipo+' duplicada · revisá') : (tipo+" completada: "+usuario+" · "+money(montoAbs)), (_rechazoCasino||_confianza==='duplicado') ? "red" : "green");
       // Auto-registrar al usuario en NODO si vino de una CARGA y no existe en la base (segundo plano)
       if(tipo === "CARGA" && busqueda?.user){
         _autoregistrarUsuarioSiFalta(busqueda.user);
