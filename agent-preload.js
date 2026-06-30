@@ -703,10 +703,10 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
   // 0/vacío y, si leemos ahí, agarramos un 0 transitorio).
   let newBalance = null, exito = null, resultadoTexto = '', modalResRef = null;
   let postCero = null;           // último post leído == 0 (puede ser transitorio o real)
-  // Ventana de detección del modal "Resultado de la operación". Subida a 25s: con proxy,
-  // casinodrex tarda más en mostrarlo; si la cerrábamos a los 8s perdíamos la confirmación
-  // ("Operación correcta"/post) y la operación quedaba "sin confirmar" aunque sí se hizo.
-  const tFinRes = now() + 25000;
+  // Ventana de detección del modal "Resultado de la operación": 12s (suficiente para el proxy).
+  // Si no se llega a leer acá, el renderer hace una lectura fresca de saldo (delta pre/post) como
+  // respaldo, así que no hace falta esperar 25s y la operación resuelve más rápido.
+  const tFinRes = now() + 12000;
   const tCeroAceptable = tFinRes - 1500; // tras esto, un 0 persistente se acepta como real
   while (now() < tFinRes) {
     const modalRes = _detectarModalResultado();

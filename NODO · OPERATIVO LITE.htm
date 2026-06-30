@@ -3208,7 +3208,21 @@ async function ejecutarOperacionManual(){
     // Si NO se puede confirmar (timeout / página lenta / no se leyó el modal) NO anotamos en Chunior
     // (evita el movimiento FANTASMA) y marcamos la operación para verificar a mano en el casino.
     const _deltaEsperado = tipo === "CARGA" ? montoAbs : -montoAbs;
-    const _deltaConfirma = (saldoPreCasino !== null && saldoPostCasino !== null) && Math.abs((saldoPostCasino - saldoPreCasino) - _deltaEsperado) < 1;
+    // RESPALDO de confirmación: si el modal NO dijo "Operación correcta" y NO se leyó el post del modal,
+    // pero SÍ tenemos el pre, hacemos UNA lectura fresca del saldo para confirmar por delta. Atrapa la
+    // carga que SÍ se hizo pero cuyo modal de resultado no se llegó a leer (proxy lento) → anotamos en
+    // Chunior y evitamos la discrepancia, sin esperar de más.
+    let saldoPostVerif = saldoPostCasino;
+    if(ok && (!resultado || resultado.exito !== true) && saldoPreCasino !== null && saldoPostVerif === null){
+      try{
+        const _pv = await callDrex("buscarUsuario", usuario, { skipBalance:false });
+        if(_pv && _pv.exists && typeof _pv.balance?.value === 'number'){
+          saldoPostVerif = _pv.balance.value;
+          if(saldoPostCasino === null) saldoPost = saldoPostVerif; // saldo post REAL para el historial
+        }
+      }catch(_e){}
+    }
+    const _deltaConfirma = (saldoPreCasino !== null && saldoPostVerif !== null) && Math.abs((saldoPostVerif - saldoPreCasino) - _deltaEsperado) < 1;
     const cargaConfirmada = ok && ((resultado && resultado.exito === true) || _deltaConfirma);
     const sinConfirmar = ok && !cargaConfirmada;
     // 3 estados de la confirmación según el modal de resultado:
@@ -3843,7 +3857,7 @@ function renderHistorial(lista){
   }
 
   let html = '<div class="table-wrap"><table><thead><tr>'+
-    '<th>Fecha</th><th>Tipo</th><th>Usuario</th><th>Monto</th><th>Saldo post</th>'+
+    '<th>Fecha</th><th>Tipo</th><th>Usuario</th><th>Monto</th><th>Saldo pre</th><th>Saldo post</th>'+
     '<th>Billetera</th><th>Origen</th><th>Estado</th><th>Op</th><th></th>'+
     '</tr></thead><tbody>';
 
@@ -3881,6 +3895,9 @@ function renderHistorial(lista){
       ? '<button class="mini-btn red" onclick="reintentarOperacionFallida(\x27'+h.id+'\x27)" style="font-size:11px" title="'+(chuniorPendiente?'Falta anotar en Chunior — reintentar':'Verificar Drex/Chunior y reintentar lo que falte')+'">'+(chuniorPendiente?'⚠️ Falta Chunior':'↻ Reintentar')+'</button>'
       : '';
     const acciones = [retryBtn, chuniorBtn, claveBtn, undoBtn].filter(Boolean).join(' ') || '-';
+    const saldoPreTd = (h.saldo_pre !== null && h.saldo_pre !== undefined && h.saldo_pre !== '')
+      ? '<span style="color:#9aa7bd">'+money(h.saldo_pre)+'</span>'
+      : '<span class="small">—</span>';
     const saldoPostTd = (h.saldo_post !== null && h.saldo_post !== undefined && h.saldo_post !== '')
       ? '<span style="font-weight:700;color:#7ee07e">'+money(h.saldo_post)+'</span>'
       : '<span class="small">—</span>';
@@ -3889,6 +3906,7 @@ function renderHistorial(lista){
       '<td style="white-space:nowrap">'+tipoIcon(h.tipo)+' '+escapeHtml(h.tipo||'—')+'</td>'+
       '<td><b>'+escapeHtml(h.usuario||'—')+'</b>'+notasTd+'</td>'+
       '<td style="font-weight:700">'+(h.monto?money(h.monto):'—')+'</td>'+
+      '<td style="font-size:12px;white-space:nowrap">'+saldoPreTd+'</td>'+
       '<td style="font-size:12px;white-space:nowrap">'+saldoPostTd+'</td>'+
       '<td style="font-size:12px">'+escapeHtml(String(h.billetera_nombre||'—').split('·')[0].trim()||String(h.billetera_nombre||'—'))+'</td>'+
       '<td>'+origenPill(h.origen)+'</td>'+
