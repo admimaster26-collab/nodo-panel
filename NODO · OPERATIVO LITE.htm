@@ -3250,6 +3250,12 @@ async function ejecutarOperacionManual(){
       }
     }
 
+    // Si el pre quedó en 0/null (el modal no llegó a leer el saldo previo) pero tenemos el post REAL,
+    // lo derivamos: pre = post ∓ monto. Evita guardar "saldo pre 0" cuando en realidad había saldo.
+    if((saldoPre === 0 || saldoPre === null) && saldoPost !== null){
+      saldoPre = tipo === "CARGA" ? (saldoPost - montoAbs) : (saldoPost + montoAbs);
+    }
+
     // Registramos en historial AHORA con chunior_movimiento_id=null (se actualiza
     // después cuando Chunior responda en background).
     const filaHist = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:est2, notas, chunior_movimiento_id:null, saldo_post:saldoPost, saldo_pre:saldoPre});
@@ -4789,7 +4795,8 @@ function abrirAprobarSolicitud(id){
         const _confirmadaAp = (resultado && resultado.exito === true) || _deltaOkAp;
         // saldo_post para el historial: el LEÍDO si lo hay; si no, estimado pre+monto. saldo_pre: el real del modal.
         const _saldoPostAp = _saldoPostLeidoAp !== null ? _saldoPostLeidoAp : (_saldoPreCasinoAp !== null ? _saldoPreCasinoAp + montoFinal : null);
-        const _saldoPreAp = _saldoPreCasinoAp !== null ? _saldoPreCasinoAp : (_saldoPostAp !== null ? _saldoPostAp - montoFinal : null);
+        // pre: el real del modal; si vino 0/null (no se leyó) lo derivamos del post (post - monto).
+        const _saldoPreAp = (_saldoPreCasinoAp !== null && _saldoPreCasinoAp !== 0) ? _saldoPreCasinoAp : (_saldoPostAp !== null ? _saldoPostAp - montoFinal : _saldoPreCasinoAp);
         const _bilLandingAp = getBilleraLanding();
         if(!_confirmadaAp){
           await registrarEnHistorial({
