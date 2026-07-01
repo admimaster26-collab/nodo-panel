@@ -3230,12 +3230,20 @@ async function ejecutarOperacionManual(){
       }
     }
     const _rechazoCasino = ok && resultado && resultado.exito === false; // modal apareció y NO confirmó → rechazo
-    const aplicadoLimpio = ok && !_rechazoCasino && _confianza !== 'duplicado';
-    const est2  = !ok ? "ERROR" : (_rechazoCasino ? "ERROR" : "OK");
+    // ── CONFIRMACIÓN de que Agentes REALMENTE acreditó (evita el FANTASMA que dispara la discrepancia) ──
+    // Chunior SOLO si: exito ("Operación correcta") O el saldo del MODAL se movió el monto exacto.
+    // NO re-leemos el saldo (lento + el casino no refleja al instante → lectura stale/falsa). Si no se
+    // puede confirmar → "sin confirmar": NO anota Chunior (mejor eso que un movimiento fantasma).
+    const _deltaOk = (saldoPreCasino !== null && _postEnModal !== null) && Math.abs((_postEnModal - saldoPreCasino) - (_signo * montoAbs)) < 1;
+    const cargaConfirmada = ok && !_rechazoCasino && ((resultado && resultado.exito === true) || _deltaOk);
+    const aplicadoLimpio = cargaConfirmada && _confianza !== 'duplicado';
+    const sinConfirmar = ok && !_rechazoCasino && !cargaConfirmada && _confianza !== 'duplicado';
+    const est2  = !ok ? "ERROR" : (_rechazoCasino ? "ERROR" : (cargaConfirmada ? "OK" : "VERIFICAR"));
     const notas = !ok ? ((resultado && resultado.message) || "error")
                 : _rechazoCasino ? "El casino NO confirmó 'Operación correcta' (rechazo) · NO anotado en Chunior"
                 : _confianza === 'duplicado' ? ('🚨 DUPLICADO x'+(_vecesDup||'?')+' · saldo '+money(saldoPre)+'→'+money(saldoPost))
-                : (resultado?.previousBalance?.raw || busqueda.balance?.raw || null);
+                : cargaConfirmada ? (resultado?.previousBalance?.raw || busqueda.balance?.raw || null)
+                : "Sin confirmar la acreditación en Agentes · NO anotado en Chunior · verificá/reintentá";
     if(_confianza === 'duplicado'){
       toast('🚨 '+tipo+' DUPLICADA ('+(_vecesDup||'?')+'x) en agentes · saldo '+money(saldoPre)+' → '+money(saldoPost)+'. Revisá y corregí.', 'red');
     }
@@ -3292,12 +3300,15 @@ async function ejecutarOperacionManual(){
         } else if(_confianza === 'duplicado'){
           // El saldo saltó un múltiplo del monto → se aplicó de más. NO se anota en Chunior; el operador corrige.
           res.innerHTML = '<div class="alert-box">🚨 '+tipo+' DUPLICADA ('+(_vecesDup||'?')+'x) → <b>'+escapeHtml(usuario)+'</b> · saldo '+money(saldoPre)+'→'+money(saldoPost)+'.<br><span class="small">NO se anotó en Chunior. Revisá/corregí en el casino.</span></div>';
+        } else if(sinConfirmar){
+          // El script corrió pero NO pudimos confirmar la acreditación (ni "Operación correcta" ni delta) → NO Chunior (evita fantasma/discrepancia).
+          res.innerHTML = '<div class="alert-box">⚠️ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b>: <b>no se pudo confirmar la acreditación</b> en Agentes.<br><span class="small">NO se anotó en Chunior (evita discrepancia). Verificá en el casino: si NO se acreditó, reintentá; si SÍ, anotala a mano.</span></div>';
         } else {
           // El N° de Chunior se actualiza después si llega — por ahora mostramos OK directo
           res.innerHTML = '<div class="ok-box">✅ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b> completada</div>';
         }
       }
-      toast(_rechazoCasino ? ('❌ '+tipo+' rechazada por el casino · no anotada') : _confianza === 'duplicado' ? ('🚨 '+tipo+' duplicada · revisá') : (tipo+" completada: "+usuario+" · "+money(montoAbs)), (_rechazoCasino||_confianza==='duplicado') ? "red" : "green");
+      toast(_rechazoCasino ? ('❌ '+tipo+' rechazada por el casino · no anotada') : _confianza === 'duplicado' ? ('🚨 '+tipo+' duplicada · revisá') : sinConfirmar ? ('⚠️ '+tipo+' sin confirmar acreditación · verificá') : (tipo+" completada: "+usuario+" · "+money(montoAbs)), (_rechazoCasino||_confianza==='duplicado') ? "red" : sinConfirmar ? "yellow" : "green");
       // Auto-registrar al usuario en NODO si vino de una CARGA y no existe en la base (segundo plano)
       if(tipo === "CARGA" && busqueda?.user){
         _autoregistrarUsuarioSiFalta(busqueda.user);
