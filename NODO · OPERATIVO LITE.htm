@@ -5768,37 +5768,44 @@ async function ejecutarVincular(usuario, telefono){
   }catch(e){ toast("Error al vincular: "+(e.message||e),"red"); }
 }
 // MODAL de vinculación (inputs HTML reales → anda en Electron). Permite ajustar el usuario si en el casino quedó con otro nombre.
-function abrirModalVincular(usuario, telefono){
-  usuario=String(usuario||"").replace(/^alta-/i,"").trim(); telefono=String(telefono||"").trim();
+// prefill=true → pre-carga el usuario (caso usuario EXISTENTE que cayó en soporte).
+// prefill=false → usuario VACÍO (caso NUEVO: el operador crea la cuenta; el apodo va solo de referencia).
+// El teléfono SIEMPRE se pre-carga (es el que ingresó en el portal → así el vínculo queda tel↔usuario REAL).
+function abrirModalVincular(usuarioSugerido, telefono, prefill){
+  usuarioSugerido=String(usuarioSugerido||"").replace(/^alta-/i,"").trim(); telefono=String(telefono||"").trim();
   // Escape propio: la función E() vive dentro de closures y no está en este scope top-level (antes rompía el botón).
   const escV=(v)=>String(v||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
-  if(typeof abrirModal!=="function"){ return ejecutarVincular(usuario, telefono); }
+  if(typeof abrirModal!=="function"){ return ejecutarVincular(prefill?usuarioSugerido:"", telefono); }
+  const valUsuario = prefill ? escV(usuarioSugerido) : "";
+  const hint = usuarioSugerido ? `<div style="font-size:12px;margin-bottom:8px;color:#c6d0de">Pidió alta como <b style="color:#fde68a">"${escV(usuarioSugerido)}"</b>${prefill?"":" (apodo — el usuario real lo creás vos)"}.</div>` : "";
   abrirModal("🔗 Validar y vincular usuario",
-    `<div style="font-size:12px;line-height:1.6;margin-bottom:8px">El usuario pidió alta. <b>1)</b> Creá la cuenta en Agentes (idealmente con el mismo usuario). <b>2)</b> Si quedó con otro nombre, ajustalo acá. <b>3)</b> Confirmá: se verifica en Agentes y se vincula a su teléfono.</div>
-     <label>Usuario en Agentes</label>
-     <input id="vincUsuarioInp" type="text" value="${escV(usuario)}" placeholder="usuario del casino" autocomplete="off">
+    hint +
+    `<div style="font-size:12px;line-height:1.6;margin-bottom:8px"><b>1)</b> Creá la cuenta en Agentes. <b>2)</b> Escribí abajo el <b>usuario REAL que creaste</b>. <b>3)</b> Confirmá: se verifica en Agentes y se vincula al teléfono. Después pasale ese usuario al cliente para que ingrese.</div>
+     <label>Usuario en Agentes (el que creaste)</label>
+     <input id="vincUsuarioInp" type="text" value="${valUsuario}" placeholder="usuario que creaste en el casino" autocomplete="off">
      <label style="margin-top:6px">Teléfono (el que ingresó en el portal)</label>
      <input id="vincTelInp" type="text" value="${escV(telefono)}" placeholder="con código de área" autocomplete="off">`,
     async function(){
       const u=String((document.getElementById("vincUsuarioInp")||{}).value||"").trim();
       const tel=String((document.getElementById("vincTelInp")||{}).value||"").trim();
-      if(!u){ toast("Completá el usuario","red"); return; }
+      if(!u){ toast("Completá el usuario que creaste","red"); return; }
       if(!tel){ toast("Completá el teléfono","red"); return; }
       cerrarModal();
       await ejecutarVincular(u, tel);
     }, "Verificar y vincular");
 }
-// Botón Vincular del chat normal (chatAccionesRapidas).
+// Botón Vincular del chat normal (chatAccionesRapidas): usuario EXISTENTE → pre-carga.
 async function chatAccionVincular(usuarioArg, telefonoArg){
   const c = (chats||[]).find(x=>String(x.ID_CHAT)===String(chatActualId));
   const usuario = String((usuarioArg!==undefined ? usuarioArg : (c&&c.USUARIO))||"").trim();
   const telefono = String((telefonoArg!==undefined ? telefonoArg : (c&&c.TELEFONO))||"").trim();
-  abrirModalVincular(usuario, telefono);
+  abrirModalVincular(usuario, telefono, true);
 }
-// Botón Vincular de la vista de CONSULTA/bandeja (usa el ticket abierto; el ticket ya trae el teléfono real).
+// Botón Vincular de la vista de CONSULTA/bandeja: es alta de NUEVO → usuario VACÍO (el operador lo crea),
+// el apodo va de referencia y el teléfono se pre-carga (el que ingresó en el portal).
 window.vincularDesdeConsulta=function(){
   const t=window.__nodoChatCurrentTicket||{};
-  abrirModalVincular(String(t.usuario||"").trim(), String(t.telefono||t.TELEFONO||"").trim());
+  abrirModalVincular(String(t.usuario||"").trim(), String(t.telefono||t.TELEFONO||"").trim(), false);
 };
 
 // Normaliza un alias para mandarlo al casino (sin acentos, sin puntos, espacios, signos).
