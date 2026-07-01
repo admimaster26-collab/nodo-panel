@@ -99,6 +99,12 @@ function proxyRulesFromEnvV15() {
   return `http=${host}:${port};https=${host}:${port}`;
 }
 
+// Sesión DEDICADA de Agentes (casinodrex). El proxy se aplica SOLO acá; Chunior, Supabase y el
+// resto (sesión default) NUNCA se ven afectados por el proxy ni por el closeAllConnections
+// (antes cortaba las conexiones de Chunior → pestaña en blanco / fallo). Igual que el NODO hermano.
+const AGENT_PARTITION = 'persist:nodo-agentes';
+function agentSes(){ try { return session.fromPartition(AGENT_PARTITION); } catch(_e){ return session.defaultSession; } }
+
 async function configurarProxyElectronV15() {
   const enabled = envBoolV15(process.env.PROXY_ENABLED, false);
   if (!enabled) {
@@ -112,16 +118,16 @@ async function configurarProxyElectronV15() {
     return { ok: false, enabled: true, error: "Falta PROXY_HOST / PROXY_PORT" };
   }
 
-  await session.defaultSession.setProxy({
+  // Proxy SOLO en la sesión de Agentes → no toca Chunior/Supabase.
+  await agentSes().setProxy({
     mode: "fixed_servers",
     proxyRules,
-    // SOLO el casino (Agentes/casinodrex) debe salir por el proxy. Chunior y Supabase van DIRECTO.
-    proxyBypassRules: (process.env.PROXY_BYPASS_RULES ? process.env.PROXY_BYPASS_RULES + "," : "") + "<local>,bo.chunior.com,*.chunior.com,*.supabase.co"
+    proxyBypassRules: process.env.PROXY_BYPASS_RULES || "<local>"
   });
 
-  try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
+  try { await agentSes().closeAllConnections(); } catch (_e) {}
 
-  console.log("[proxy] ACTIVADO:", proxyRules);
+  console.log("[proxy] ACTIVADO (sesión agentes):", proxyRules);
   return { ok: true, enabled: true, proxyRules };
 }
 
@@ -133,11 +139,10 @@ async function aplicarProxyRuntime(cfg) {
     cfg = cfg || {};
     if (!cfg.enabled || !cfg.host || !cfg.port) {
       _runtimeProxyAuth = null;
-      // Sin proxy: SOLO limpiamos si antes había uno activo. Si ya estaba en directo, NO tocamos
-      // la sesión (el closeAllConnections inútil cortaba Chunior en el arranque → bucle de re-login).
+      // Sin proxy: SOLO limpiamos si antes había uno activo (solo la sesión de Agentes).
       if (_proxyApplied) {
-        await session.defaultSession.setProxy({ mode: "direct" });
-        try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
+        await agentSes().setProxy({ mode: "direct" });
+        try { await agentSes().closeAllConnections(); } catch (_e) {}
         _proxyApplied = false;
         console.log("[proxy] runtime: limpiado (salida directa)");
       }
@@ -147,14 +152,13 @@ async function aplicarProxyRuntime(cfg) {
     const rules = protocol.startsWith("socks")
       ? `socks=${cfg.host}:${cfg.port}`
       : `http=${cfg.host}:${cfg.port};https=${cfg.host}:${cfg.port}`;
-    await session.defaultSession.setProxy({
+    // Proxy SOLO en la sesión de Agentes → Chunior y Supabase (sesión default) intactos.
+    await agentSes().setProxy({
       mode: "fixed_servers",
       proxyRules: rules,
-      // SOLO el casino (Agentes/casinodrex) sale por el proxy. Chunior y Supabase van DIRECTO
-      // (Chunior no necesita proxy y salía por él → fallaba la lectura de fichas).
-      proxyBypassRules: (cfg.bypass ? cfg.bypass + "," : "") + "<local>,bo.chunior.com,*.chunior.com,*.supabase.co"
+      proxyBypassRules: cfg.bypass || "<local>"
     });
-    try { await session.defaultSession.closeAllConnections(); } catch (_e) {}
+    try { await agentSes().closeAllConnections(); } catch (_e) {}
     _proxyApplied = true;
     _runtimeProxyAuth = cfg.username ? { username: String(cfg.username), password: String(cfg.password || "") } : null;
     console.log("[proxy] runtime ACTIVADO:", rules);
@@ -318,6 +322,7 @@ function createAgentWindow(url = AGENT_URL) {
     show:   false,
     webPreferences: {
       preload:              path.join(__dirname, 'agent-preload.js'),
+      partition:            AGENT_PARTITION, // sesión dedicada → el proxy solo afecta a Agentes
       contextIsolation:     true,
       nodeIntegration:      false,
       sandbox:              true,
@@ -515,6 +520,7 @@ function createVerifyWindow() {
     show:   false,
     webPreferences: {
       preload:          path.join(__dirname, 'agent-preload.js'),
+      partition:        AGENT_PARTITION, // misma sesión que Agentes (comparte login + proxy)
       contextIsolation: true,
       nodeIntegration:  false,
       sandbox:          true,
