@@ -1,6 +1,6 @@
 {
   "name": "nodo-operativo",
-  "version": "1.0.44",
+  "version": "1.0.45",
   "description": "NODO · OPERATIVO — Panel de operaciones",
   "main": "main.js",
   "scripts": {
@@ -11,7 +11,8 @@
     "release": "electron-builder --win --publish always"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.105.4"
+    "@supabase/supabase-js": "^2.105.4",
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "electron": "^32.3.3",
@@ -20,6 +21,13 @@
   "build": {
     "appId": "com.nodooperativo.app",
     "productName": "NODO · OPERATIVO",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "admimaster26-collab",
+        "repo": "nodo-panel"
+      }
+    ],
     "files": [
       "main.js",
       "app-preload.js",
@@ -55,7 +63,11 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "artifactName": "NODO-OPERATIVO-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "NODO-OPERATIVO-${version}.${ext}"
     }
   }
 }
