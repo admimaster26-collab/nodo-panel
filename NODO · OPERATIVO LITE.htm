@@ -880,6 +880,14 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
       <button id="navVerificaciones" class="nav-btn hidden" onclick="mostrarVista('verificaciones')" style="border:1px solid rgba(61,90,254,.4)">🔍 Verificaciones <span id="badgeVerif" class="badge-alert hidden">0</span></button>
 
       <button class="nav-btn" onclick="cerrarSesion()">🚪 Cerrar sesión</button>
+
+      <div id="updaterBox" class="card" style="margin-top:10px;font-size:11px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+          <span id="updaterVersionTxt" style="color:#8b949e">—</span>
+          <button class="mini-btn gray" style="padding:4px 8px;font-size:11px" onclick="nodoBuscarActualizacion()">🔄 Buscar act.</button>
+        </div>
+        <div id="updaterStatusTxt" style="margin-top:4px;color:#8b949e"></div>
+      </div>
     </aside>
 
     <main class="main">
@@ -3519,6 +3527,48 @@ async function _copiarMensajeClienteNuevo(usuario, clave){
   try{ await navigator.clipboard.writeText(msg); toast("Mensaje copiado · pegalo en el chat", "green"); }
   catch(_e){ toast("No se pudo copiar", "red"); }
 }
+// ── Auto-actualización: chequeo/descarga/instalación MANUAL (botón en el sidebar) ──
+// Nunca automática: mientras seguimos iterando, cada oficina actualiza cuando el
+// operador lo decide, no sola al abrir la app.
+function nodoUpdaterStatus(payload){
+  const el=document.getElementById("updaterStatusTxt");
+  if(!el || !payload) return;
+  const st=payload.state;
+  if(st==="checking") el.innerHTML="Buscando actualización...";
+  else if(st==="not-available") el.innerHTML="✅ Ya tenés la última versión";
+  else if(st==="available") el.innerHTML="🆕 v"+escapeHtml(payload.version||"")+" disponible — <a href=\"javascript:void 0\" onclick=\"nodoDescargarActualizacion()\" style=\"color:#58a6ff\">Descargar</a>";
+  else if(st==="downloading") el.innerHTML="⬇️ Descargando... "+(payload.percent||0)+"%";
+  else if(st==="downloaded") el.innerHTML="✅ Lista v"+escapeHtml(payload.version||"")+" — <a href=\"javascript:void 0\" onclick=\"nodoInstalarActualizacion()\" style=\"color:#3fb950;font-weight:700\">Reiniciar e instalar</a>";
+  else if(st==="error") el.innerHTML='<span style="color:#f85149">Error: '+escapeHtml(payload.message||"")+"</span>";
+}
+async function nodoInitUpdater(){
+  try{
+    if(!window.updaterAPI) return;
+    const v = await window.updaterAPI.getVersion();
+    const el=document.getElementById("updaterVersionTxt");
+    if(el && v && v.version) el.textContent = "v"+v.version;
+    window.updaterAPI.onStatus(nodoUpdaterStatus);
+  }catch(_e){}
+}
+async function nodoBuscarActualizacion(){
+  const el=document.getElementById("updaterStatusTxt");
+  if(!window.updaterAPI){ if(el) el.textContent="No disponible en este entorno."; return; }
+  const r = await window.updaterAPI.check();
+  if(!r || !r.ok){
+    if(el) el.textContent = (r&&r.reason==="dev-mode") ? "Solo disponible en la app instalada." : "No se pudo buscar actualización.";
+  }
+}
+async function nodoDescargarActualizacion(){
+  const el=document.getElementById("updaterStatusTxt");
+  if(el) el.textContent="⬇️ Descargando...";
+  try{ await window.updaterAPI.download(); }catch(_e){ if(el) el.textContent="Error al descargar."; }
+}
+async function nodoInstalarActualizacion(){
+  try{ await window.updaterAPI.install(); }catch(_e){}
+}
+document.addEventListener("DOMContentLoaded", nodoInitUpdater);
+if(document.readyState !== "loading") nodoInitUpdater();
+
 // ── Crear nuevo usuario en el casino ─────────────────────────────────────────
 function abrirModalCrearUsuario(){
   if(!window.ctrlElectron){ alert("Solo disponible en la app de escritorio."); return; }

@@ -3,6 +3,17 @@ const fs      = require('node:fs');
 const { app, BrowserWindow, ipcMain, session } = require('electron');
 const { createClient } = require('@supabase/supabase-js');
 
+// ── Auto-actualización (electron-updater, chequeo MANUAL desde el panel) ──────
+// autoDownload=false: solo busca y avisa; el operador decide bajar/instalar
+// desde el botón del panel. Así ninguna oficina se actualiza sola mientras
+// seguimos iterando el código.
+let autoUpdater = null;
+try {
+  autoUpdater = require('electron-updater').autoUpdater;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+} catch (_e) { console.warn('[updater] electron-updater no disponible:', _e && _e.message); }
+
 
 // ============================================================
 // PANEL V15 · RPC BRIDGE
@@ -694,6 +705,46 @@ ipcMain.handle('panel:get-context', async () => ({
   // PRODUCCIÓN: ya NO se exponen supabase_url/supabase_key acá (el renderer no los usa; tiene su
   // propio cliente con la anon key PÚBLICA). Lo ideal es migrar más lecturas a panelAPI.rpc.
 }));
+
+// ── Auto-actualización: chequeo/descarga/instalación MANUAL desde el botón del panel ──
+function _sendUpdaterStatus(event, payload) {
+  try {
+    const win = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+    if (win) win.webContents.send('updater:status', payload);
+  } catch (_e) {}
+}
+
+ipcMain.handle('updater:version', () => ({ ok: true, version: app.getVersion() }));
+
+ipcMain.handle('updater:check', async (event) => {
+  if (!autoUpdater) return { ok: false, reason: 'no-updater' };
+  if (!app.isPackaged) return { ok: false, reason: 'dev-mode' };
+  try {
+    autoUpdater.removeAllListeners();
+    autoUpdater.on('checking-for-update', () => _sendUpdaterStatus(event, { state: 'checking' }));
+    autoUpdater.on('update-available',    (info) => _sendUpdaterStatus(event, { state: 'available', version: info && info.version }));
+    autoUpdater.on('update-not-available',() => _sendUpdaterStatus(event, { state: 'not-available' }));
+    autoUpdater.on('error', (err) => _sendUpdaterStatus(event, { state: 'error', message: String(err && err.message || err) }));
+    autoUpdater.on('download-progress', (p) => _sendUpdaterStatus(event, { state: 'downloading', percent: Math.round(p && p.percent || 0) }));
+    autoUpdater.on('update-downloaded', (info) => _sendUpdaterStatus(event, { state: 'downloaded', version: info && info.version }));
+    const r = await autoUpdater.checkForUpdates();
+    return { ok: true, version: r && r.updateInfo && r.updateInfo.version };
+  } catch (e) {
+    return { ok: false, reason: 'error', message: String(e && e.message || e) };
+  }
+});
+
+ipcMain.handle('updater:download', async () => {
+  if (!autoUpdater) return { ok: false };
+  try { await autoUpdater.downloadUpdate(); return { ok: true }; }
+  catch (e) { return { ok: false, message: String(e && e.message || e) }; }
+});
+
+ipcMain.handle('updater:install', () => {
+  if (!autoUpdater) return { ok: false };
+  autoUpdater.quitAndInstall(false, true);
+  return { ok: true };
+});
 
 // Abre/enfoca la ventana del backoffice
 // Navega la ventana del backoffice a la URL de búsqueda y espera a que cargue

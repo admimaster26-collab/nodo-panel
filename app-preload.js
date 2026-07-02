@@ -50,3 +50,14 @@ contextBridge.exposeInMainWorld('panelAPI', {
   ping: () => ipcRenderer.invoke('panel:ping'),
   getContext: () => ipcRenderer.invoke('panel:get-context')
 });
+
+// ============================================================
+// Auto-actualización · chequeo/descarga/instalación MANUAL
+// ============================================================
+contextBridge.exposeInMainWorld('updaterAPI', {
+  getVersion: () => ipcRenderer.invoke('updater:version'),
+  check:      () => ipcRenderer.invoke('updater:check'),
+  download:   () => ipcRenderer.invoke('updater:download'),
+  install:    () => ipcRenderer.invoke('updater:install'),
+  onStatus:   (cb) => ipcRenderer.on('updater:status', (_event, payload) => cb(payload))
+});
