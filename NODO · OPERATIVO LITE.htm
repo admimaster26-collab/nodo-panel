@@ -4425,6 +4425,11 @@ async function mostrarBlacklist24h(){
   abrirModal('🚫 Blacklist · retiros últimas 24hs',
     '<div style="padding:8px 0;color:var(--muted)">Cargando retiros de las últimas 24hs...</div>', null, 'Cerrar');
   const _sb = document.getElementById('modalSaveBtn'); if(_sb) _sb.style.display = 'none';
+  // Misma fuente de flags 🔔/📱 que el CRM (panel_crm_flags, viene del CSV de whaticket/admi) —
+  // así el usuario que aparece acá se lee con el mismo contexto que en Jugadores/CRM.
+  if(!window._crmFlags && typeof cargarOperacionesAgente === 'function'){
+    try{ await cargarOperacionesAgente(); }catch(_e){}
+  }
   try {
     const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     let { data, error } = await supabaseClient
@@ -4478,8 +4483,10 @@ async function mostrarBlacklist24h(){
         + (g.count>=3?'background:#dc2828;color:#fff':g.count===2?'background:#e6a028;color:#1a1205':'background:#2a3344;color:#c0cad8')
         + '">'+g.count+'</span>';
       const uKey = 'bl_'+btoa(unescape(encodeURIComponent(g.usuario))).replace(/[^a-zA-Z0-9]/g,'');
+      const _fl = (window._crmFlags||{})[String(g.usuario||'').toLowerCase()];
+      const flagsTxt = ' <span title="Push: '+(_fl&&_fl.push?'sí':'no')+'" style="opacity:'+(_fl&&_fl.push?1:.28)+'">🔔</span><span title="App instalada: '+(_fl&&_fl.app?'sí':'no')+'" style="opacity:'+(_fl&&_fl.app?1:.28)+'">📱</span>';
       filas += '<tr style="background:'+bg+';border-top:1px solid '+borde+';cursor:pointer" onclick="(function(e){var d=document.getElementById(\''+uKey+'\');if(d)d.classList.toggle(\'hidden\');})()" title="Ver retiros individuales">'
-        + '<td style="padding:7px 8px"><span style="color:#7c8aa0">▸</span> <b>'+escapeHtml(g.usuario)+'</b>'+crossBadge+'</td>'
+        + '<td style="padding:7px 8px"><span style="color:#7c8aa0">▸</span> <b>'+escapeHtml(g.usuario)+'</b>'+flagsTxt+crossBadge+'</td>'
         + '<td style="padding:7px 8px;text-align:center">'+countBadge+'</td>'
         + '<td style="padding:7px 8px;text-align:right;white-space:nowrap"><b>'+money(g.total)+'</b></td>'
         + '<td style="padding:7px 8px;font-size:11px;color:#9aa4b2;white-space:nowrap">'+escapeHtml(formatFecha(g.ultima))+'</td>'
