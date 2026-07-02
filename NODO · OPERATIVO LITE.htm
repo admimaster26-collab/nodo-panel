@@ -8672,7 +8672,7 @@ async function cargarSolicitudesPortal(silencioso=false){
     if(res) res.innerHTML = '';
     portalPoblarBilleteras(document.getElementById('portalJobBilletera'), s);
     const btn = document.getElementById('portalJobEnviarBtn');
-    if(btn){ btn.disabled=false; btn.style.opacity=''; btn.textContent='Enviar al worker'; }
+    if(btn){ btn.disabled=false; btn.style.opacity=''; btn.textContent='Aprobar'; }
     el.style.display = 'block';
     setTimeout(()=>{ const inp = document.getElementById('portalJobMontoAprobado'); if(inp){ inp.focus(); inp.select(); } }, 80);
   };
@@ -10168,11 +10168,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
   function ticketsAgrupados(){
     const map = new Map();
+    // El alta de usuario NUEVO (portal → "Sos nuevo") manda el teléfono DENTRO de metadata
+    // (landing_portal_v16_crear_solicitud no tiene columna TELEFONO propia para SOPORTE) —
+    // por eso hacía falta este fallback, si no el modal de vincular quedaba con el tel vacío.
+    const _telSol=function(s){ const m=s?.METADATA??s?.metadata??{}; return S(s.TELEFONO||s.telefono||m.telefono||m.TELEFONO||""); };
     solicitudesSoporte().forEach(s=>{
       const usuario=S(s.USUARIO||s.USUARIO_JUGADOR||s.usuario||"Usuario").trim() || "Usuario";
       const key=U(usuario);
       if(!map.has(key)){
-        map.set(key,{id:"TICKET_"+key.replace(/[^A-Z0-9]/g,"_"), usuario, telefono:S(s.TELEFONO||s.telefono||""), items:[], unread:0, fecha:"", mensaje:"", solicitudId:""});
+        map.set(key,{id:"TICKET_"+key.replace(/[^A-Z0-9]/g,"_"), usuario, telefono:_telSol(s), items:[], unread:0, fecha:"", mensaje:"", solicitudId:""});
       }
       const g=map.get(key);
       g.items.push(s);
@@ -10181,7 +10185,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       if(!g.fecha || new Date(f).getTime() > new Date(g.fecha||0).getTime()) g.fecha=f;
       g.mensaje=s.MENSAJE_INICIAL||s.mensaje_inicial||s.DESTINO||s.destino||"Consulta desde portal";
       g.solicitudId=S(s.ID||s.SOLICITUD_ID||s.id||"");
-      if(!g.telefono) g.telefono=S(s.TELEFONO||s.telefono||"");
+      if(!g.telefono) g.telefono=_telSol(s);
     });
     return Array.from(map.values()).sort((a,b)=>new Date(b.fecha||0)-new Date(a.fecha||0));
   }
@@ -10957,17 +10961,22 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
   function ticketsAgrupadosFinal(){
     const map=new Map();
+    // El alta de usuario NUEVO (portal → "Sos nuevo") manda el teléfono DENTRO de metadata
+    // (landing_portal_v16_crear_solicitud no tiene columna TELEFONO propia para SOPORTE) —
+    // fallback a metadata.telefono, si no el modal de vincular queda con el tel vacío.
     soporteRows().forEach(s=>{
       const usuario=usuarioSol(s);
       const key=U(usuario);
+      const m0=metaObj(s);
+      const tel0=S(s.TELEFONO||s.telefono||m0.telefono||m0.TELEFONO||"");
       if(!map.has(key)){
-        map.set(key,{id:"TICKET_"+key.replace(/[^A-Z0-9]/g,"_"),usuario,telefono:S(s.TELEFONO||s.telefono||""),items:[],fecha:"",mensaje:"",solicitudId:"",masterId:null,accepted:false,thread:[]});
+        map.set(key,{id:"TICKET_"+key.replace(/[^A-Z0-9]/g,"_"),usuario,telefono:tel0,items:[],fecha:"",mensaje:"",solicitudId:"",masterId:null,accepted:false,thread:[]});
       }
       const g=map.get(key);
       g.items.push(s);
       const sid=idSol(s);
-      const m=metaObj(s);
-      if(!g.telefono)g.telefono=S(s.TELEFONO||s.telefono||"");
+      const m=m0;
+      if(!g.telefono)g.telefono=tel0;
       const f=fechaSol(s);
       if(!g.fecha||toDate(f)>toDate(g.fecha))g.fecha=f;
       g.mensaje=msgSol(s);
