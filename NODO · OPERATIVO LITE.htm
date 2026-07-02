@@ -8291,7 +8291,7 @@ if(window.ctrlElectron){
           <div><span class="v154p-badge">${esc(s.ESTADO || "-")}</span></div>
           <div class="v154p-actions">
             ${tomada?`<button class="v154p-btn yellow" disabled>Tomada</button>`:`<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
-            <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Crear job</button>
+            <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
             <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
             <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
           </div>
@@ -8326,7 +8326,7 @@ if(window.ctrlElectron){
       const acciones = cerrada
         ? `<button class="mini-btn blue" onclick="v154pDetalleSolicitud(${id})">Ver</button>`
         : `${tomada?`<button class="mini-btn yellow" disabled>Tomada</button>`:`<button class="mini-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
-          <button class="mini-btn green" onclick="v154pCrearJobSolicitud(${id})">Crear job</button>
+          <button class="mini-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
           <button class="mini-btn blue" onclick="v154pDetalleSolicitud(${id})">Ver</button>
           <button class="mini-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>`;
       return `<tr>
