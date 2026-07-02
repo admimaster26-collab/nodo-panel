@@ -3208,7 +3208,7 @@ async function ejecutarOperacionManual(){
     // Saldo PRE: lo leemos siempre (ya sea del casino o de la búsqueda inicial).
     // Saldo POST: SIEMPRE lo calculamos (pre + monto). Es lo más confiable.
     // La lectura post del casino se usa SOLO para detectar duplicados como bonus.
-    const saldoPreCasino = (typeof resultado?.previousBalance?.value === 'number') ? resultado.previousBalance.value : null;
+    const saldoPreCasino = (typeof resultado?.previousBalance?.value === 'number' && !resultado?.previousBalance?.unchanged) ? resultado.previousBalance.value : null;
     const saldoPostCasino = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
     let saldoPre  = saldoPreCasino !== null ? saldoPreCasino : ((typeof busqueda.balance?.value === 'number') ? busqueda.balance.value : null);
     let saldoPost = saldoPostCasino !== null ? saldoPostCasino : ((ok && saldoPre !== null) ? saldoPre + (tipo === "CARGA" ? montoAbs : -montoAbs) : null);
@@ -3249,11 +3249,11 @@ async function ejecutarOperacionManual(){
       toast('🚨 '+tipo+' DUPLICADA ('+(_vecesDup||'?')+'x) en agentes · saldo '+money(saldoPre)+' → '+money(saldoPost)+'. Revisá y corregí.', 'red');
     }
 
-    // Si el pre quedó en 0/null (el modal no llegó a leer el saldo previo) pero tenemos el post REAL,
-    // lo derivamos: pre = post ∓ monto. Evita guardar "saldo pre 0" cuando en realidad había saldo.
-    if((saldoPre === 0 || saldoPre === null) && saldoPost !== null){
-      saldoPre = tipo === "CARGA" ? (saldoPost - montoAbs) : (saldoPost + montoAbs);
-    }
+    // NOTA: el saldo pre YA se resolvió arriba (modal → busqueda.balance → último saldo post
+    // conocido del usuario). NO re-derivar pre desde post acá: si post vino de una lectura
+    // espuria (0 transitorio del modal en una PC lenta), "pre = post - monto" da NEGATIVO
+    // (bug real visto en producción, PC piloto). Mejor dejar pre/post en null (se muestra "—")
+    // que mostrar un saldo negativo falso.
 
     // Registramos en historial AHORA con chunior_movimiento_id=null (se actualiza
     // después cuando Chunior responda en background).
@@ -4975,14 +4975,15 @@ function abrirAprobarSolicitud(id){
         // ── CONFIRMACIÓN de la carga del PORTAL (mismo criterio simple que la carga manual) ──
         // Confiamos en que el script corrió (sin re-leer saldo: eso demoraba y disparaba 403).
         // Solo frenamos ante un RECHAZO CLARO del casino (modal apareció y dijo que NO).
-        const _saldoPreCasinoAp = (typeof resultado?.previousBalance?.value === 'number') ? resultado.previousBalance.value : null;
+        const _saldoPreCasinoAp = (typeof resultado?.previousBalance?.value === 'number' && !resultado?.previousBalance?.unchanged) ? resultado.previousBalance.value : null;
         const _saldoPostLeidoAp = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
         const _rechazoCasinoAp = resultado && resultado.exito === false; // modal apareció y NO confirmó → rechazo CLARO
         const _confirmadaAp = !_rechazoCasinoAp;
         // saldo_post para el historial: el LEÍDO si lo hay; si no, estimado pre+monto. saldo_pre: el real del modal.
+        // NO re-derivar pre desde post (post-monto): un post "0" puede ser una lectura espuria
+        // transitoria (PC lenta) y da un pre NEGATIVO falso. Sin dato confiable → null (se ve "—").
         const _saldoPostAp = _saldoPostLeidoAp !== null ? _saldoPostLeidoAp : (_saldoPreCasinoAp !== null ? _saldoPreCasinoAp + montoFinal : null);
-        // pre: el real del modal; si vino 0/null (no se leyó) lo derivamos del post (post - monto).
-        const _saldoPreAp = (_saldoPreCasinoAp !== null && _saldoPreCasinoAp !== 0) ? _saldoPreCasinoAp : (_saldoPostAp !== null ? _saldoPostAp - montoFinal : _saldoPreCasinoAp);
+        const _saldoPreAp = _saldoPreCasinoAp;
         const _bilLandingAp = getBilleraLanding();
         if(!_confirmadaAp){
           await registrarEnHistorial({
@@ -6792,7 +6793,7 @@ async function ejecutarAutoCarga(id){
   }
 
   // Saldo PRE leído del casino o busqueda. POST siempre calculado.
-  const saldoPreCasinoAC = (typeof resultado?.previousBalance?.value === 'number') ? resultado.previousBalance.value : null;
+  const saldoPreCasinoAC = (typeof resultado?.previousBalance?.value === 'number' && !resultado?.previousBalance?.unchanged) ? resultado.previousBalance.value : null;
   const saldoPreAC  = saldoPreCasinoAC !== null ? saldoPreCasinoAC : (busqueda.balance?.value ?? null);
   const saldoPostAC = (saldoPreAC !== null) ? saldoPreAC + monto : null;
 
@@ -8828,7 +8829,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       }
 
       const ok = resultado && resultado.ok !== false;
-      const saldoPreCasino = (typeof resultado?.previousBalance?.value === 'number') ? resultado.previousBalance.value : null;
+      const saldoPreCasino = (typeof resultado?.previousBalance?.value === 'number' && !resultado?.previousBalance?.unchanged) ? resultado.previousBalance.value : null;
       const saldoPostCasino = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
       let saldoPre = saldoPreCasino !== null ? saldoPreCasino : ((typeof busqueda.balance?.value === 'number') ? busqueda.balance.value : null);
       let saldoPost = saldoPostCasino !== null ? saldoPostCasino : ((ok && saldoPre !== null) ? saldoPre + (tipo === 'CARGA' ? montoAbs : -montoAbs) : null);

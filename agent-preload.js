@@ -665,8 +665,20 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
 
   // El modal tiene DOS inputs disabled del jugador: pre y post.
   // Leemos ambos por orden DOM. El primero es el saldo actual (PRE).
-  const balancesAntes = _leerBalancesEnModalDeposito();
-  const balance = balancesAntes.pre || _leerSaldoJugadorEnModalAbierto() || opened.balance || { raw:'', value:0 };
+  // Reintenta hasta ~2s (PCs lentas/con proxy tardan más en pintar el input) antes de
+  // rendirse — un solo intento a los 500ms dejaba "pre" sin leer más seguido de lo debido,
+  // y el panel terminaba mostrando saldo "—" (o, en versiones viejas, un negativo falso).
+  let balancesAntes = _leerBalancesEnModalDeposito();
+  const _tPreFin = now() + 2000;
+  while (!balancesAntes.pre && now() < _tPreFin) {
+    await delay(200);
+    balancesAntes = _leerBalancesEnModalDeposito();
+  }
+  const _preLeido = balancesAntes.pre || _leerSaldoJugadorEnModalAbierto() || opened.balance || null;
+  // Si de verdad no se pudo leer, NO inventamos un {value:0}: eso es indistinguible de un
+  // saldo real de $0 y corrompe cálculos aguas abajo (saldo derivado negativo). Se marca
+  // "unchanged"/sin dato — el panel ya sabe mostrar "—" en vez de un número falso.
+  const balance = _preLeido || { raw:'', value:0, unchanged:true };
 
   // Para retiros: verifica saldo suficiente (sólo si hay un balance válido conocido)
   if (actionName === 'retiro' && balance && balance.value > 0) {
