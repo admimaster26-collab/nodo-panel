@@ -1,6 +1,6 @@
 {
   "name": "nodo-operativo",
-  "version": "1.0.46",
+  "version": "1.0.47",
   "description": "NODO · OPERATIVO — Panel de operaciones",
   "main": "main.js",
   "scripts": {
@@ -39,9 +39,11 @@
       "NODO · OPERATIVO LITE.htm",
       "index.html",
       "nodoSuperior/**/*",
+      "icons/**/*",
       "node_modules/**/*"
     ],
     "win": {
+      "icon": "icons/icon-512.png",
       "target": [
         {
           "target": "nsis",
