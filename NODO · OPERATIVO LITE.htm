@@ -1233,7 +1233,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
         <div class="card" style="margin-bottom:12px">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
             <b>📊 Importar operaciones del agente</b>
-            <button class="mini-btn gray" onclick="toggleOpsCsv()" id="btnToggleOpsCsv">Mostrar</button>
+            <div style="display:flex;gap:8px">
+              <button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button>
+              <button class="mini-btn gray" onclick="toggleOpsCsv()" id="btnToggleOpsCsv">Mostrar</button>
+            </div>
           </div>
           <div id="formOpsCsv" class="hidden">
             <div class="small" style="margin-bottom:12px;color:var(--muted);line-height:1.5">
@@ -3220,11 +3223,13 @@ async function ejecutarOperacionManual(){
       }
     }
 
-    // ── CONFIRMACIÓN estilo NODO hermano (rápido, SIN re-leer el saldo) ──
+    // ── CONFIRMACIÓN estilo NODO hermano (simple, SIN re-leer el saldo, SIN estado "sin confirmar") ──
     // El script CORRIÓ (pasó el gate de página/saldo previo → ok!==false) → la operación SE APLICÓ.
-    // NO re-leemos el saldo (re-leer demoraba el "Procesando" y disparaba 403). El modal de resultado
-    // se usa para: (a) detectar DUPLICADO con certeza (saldo saltó 2-6x) y (b) cazar un RECHAZO
-    // explícito (exito===false: el modal apareció pero NO dijo "Operación correcta").
+    // Confiamos en que el script corrió limpio (igual que el hermano); NO exigimos "Operación correcta"
+    // ni delta de saldo para anotar en Chunior. Solo frenamos en dos casos CLAROS: (a) RECHAZO explícito
+    // (el modal apareció y dijo que NO, exito===false) y (b) DUPLICADO (el saldo saltó 2-6x el monto).
+    // Trade-off aceptado (pedido explícito 2026-07-02): si el casino rechazó pero el modal no llegó a
+    // verse (exito===null), se anota igual — prioriza velocidad/simpleza sobre el 100% de certeza.
     const _signo = tipo === "CARGA" ? 1 : -1;
     const _postEnModal = saldoPostCasino; // post REAL del modal (null si no se leyó)
     let _confianza = 'confirmado', _vecesDup = 0;
@@ -3235,21 +3240,14 @@ async function ejecutarOperacionManual(){
         if(_veces >= 2 && _veces <= 6 && Math.abs(_movido - _veces * _signo * montoAbs) < 1){ _confianza = 'duplicado'; _vecesDup = _veces; }
       }
     }
-    const _rechazoCasino = ok && resultado && resultado.exito === false; // modal apareció y NO confirmó → rechazo
-    // ── CONFIRMACIÓN de que Agentes REALMENTE acreditó (evita el FANTASMA que dispara la discrepancia) ──
-    // Chunior SOLO si: exito ("Operación correcta") O el saldo del MODAL se movió el monto exacto.
-    // NO re-leemos el saldo (lento + el casino no refleja al instante → lectura stale/falsa). Si no se
-    // puede confirmar → "sin confirmar": NO anota Chunior (mejor eso que un movimiento fantasma).
-    const _deltaOk = (saldoPreCasino !== null && _postEnModal !== null) && Math.abs((_postEnModal - saldoPreCasino) - (_signo * montoAbs)) < 1;
-    const cargaConfirmada = ok && !_rechazoCasino && ((resultado && resultado.exito === true) || _deltaOk);
+    const _rechazoCasino = ok && resultado && resultado.exito === false; // modal apareció y NO confirmó → rechazo CLARO
+    const cargaConfirmada = ok && !_rechazoCasino; // script corrió y no hubo rechazo explícito → se confía
     const aplicadoLimpio = cargaConfirmada && _confianza !== 'duplicado';
-    const sinConfirmar = ok && !_rechazoCasino && !cargaConfirmada && _confianza !== 'duplicado';
-    const est2  = !ok ? "ERROR" : (_rechazoCasino ? "ERROR" : (cargaConfirmada ? "OK" : "VERIFICAR"));
+    const est2  = !ok ? "ERROR" : (_rechazoCasino ? "ERROR" : "OK");
     const notas = !ok ? ((resultado && resultado.message) || "error")
                 : _rechazoCasino ? "El casino NO confirmó 'Operación correcta' (rechazo) · NO anotado en Chunior"
                 : _confianza === 'duplicado' ? ('🚨 DUPLICADO x'+(_vecesDup||'?')+' · saldo '+money(saldoPre)+'→'+money(saldoPost))
-                : cargaConfirmada ? (resultado?.previousBalance?.raw || busqueda.balance?.raw || null)
-                : "Sin confirmar la acreditación en Agentes · NO anotado en Chunior · verificá/reintentá";
+                : (resultado?.previousBalance?.raw || busqueda.balance?.raw || null);
     if(_confianza === 'duplicado'){
       toast('🚨 '+tipo+' DUPLICADA ('+(_vecesDup||'?')+'x) en agentes · saldo '+money(saldoPre)+' → '+money(saldoPost)+'. Revisá y corregí.', 'red');
     }
@@ -3306,15 +3304,12 @@ async function ejecutarOperacionManual(){
         } else if(_confianza === 'duplicado'){
           // El saldo saltó un múltiplo del monto → se aplicó de más. NO se anota en Chunior; el operador corrige.
           res.innerHTML = '<div class="alert-box">🚨 '+tipo+' DUPLICADA ('+(_vecesDup||'?')+'x) → <b>'+escapeHtml(usuario)+'</b> · saldo '+money(saldoPre)+'→'+money(saldoPost)+'.<br><span class="small">NO se anotó en Chunior. Revisá/corregí en el casino.</span></div>';
-        } else if(sinConfirmar){
-          // El script corrió pero NO pudimos confirmar la acreditación (ni "Operación correcta" ni delta) → NO Chunior (evita fantasma/discrepancia).
-          res.innerHTML = '<div class="alert-box">⚠️ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b>: <b>no se pudo confirmar la acreditación</b> en Agentes.<br><span class="small">NO se anotó en Chunior (evita discrepancia). Verificá en el casino: si NO se acreditó, reintentá; si SÍ, anotala a mano.</span></div>';
         } else {
           // El N° de Chunior se actualiza después si llega — por ahora mostramos OK directo
           res.innerHTML = '<div class="ok-box">✅ '+tipo+' de '+money(montoAbs)+' → <b>'+escapeHtml(usuario)+'</b> completada</div>';
         }
       }
-      toast(_rechazoCasino ? ('❌ '+tipo+' rechazada por el casino · no anotada') : _confianza === 'duplicado' ? ('🚨 '+tipo+' duplicada · revisá') : sinConfirmar ? ('⚠️ '+tipo+' sin confirmar acreditación · verificá') : (tipo+" completada: "+usuario+" · "+money(montoAbs)), (_rechazoCasino||_confianza==='duplicado') ? "red" : sinConfirmar ? "yellow" : "green");
+      toast(_rechazoCasino ? ('❌ '+tipo+' rechazada por el casino · no anotada') : _confianza === 'duplicado' ? ('🚨 '+tipo+' duplicada · revisá') : (tipo+" completada: "+usuario+" · "+money(montoAbs)), (_rechazoCasino||_confianza==='duplicado') ? "red" : "green");
       // Auto-registrar al usuario en NODO si vino de una CARGA y no existe en la base (segundo plano)
       if(tipo === "CARGA" && busqueda?.user){
         _autoregistrarUsuarioSiFalta(busqueda.user);
@@ -4426,6 +4421,126 @@ async function reincluirRetiroBlacklist(historialId){
   renderHistorialUnificado();
 }
 
+// Modal de la Blacklist 24hs — TODOS los usuarios con retiro en las últimas 24hs (todas las
+// oficinas, sin filtrar por pcOperativa: buscamos reincidencia CRUZADA entre oficinas), agrupados
+// y ordenados por reincidencia. Adoptado del NODO hermano (2026-07-02).
+async function mostrarBlacklist24h(){
+  abrirModal('🚫 Blacklist · retiros últimas 24hs',
+    '<div style="padding:8px 0;color:var(--muted)">Cargando retiros de las últimas 24hs...</div>', null, 'Cerrar');
+  const _sb = document.getElementById('modalSaveBtn'); if(_sb) _sb.style.display = 'none';
+  try {
+    const desde = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    let { data, error } = await supabaseClient
+      .from('historial_ops')
+      .select('id, usuario, monto, billetera_nombre, estado, origen, created_at, pc_codigo, notas')
+      .eq('tipo', 'RETIRO')
+      .gte('created_at', desde)
+      .order('created_at', { ascending: false })
+      .limit(1000);
+    if(error) throw error;
+    data = (data || []).filter(function(r){
+      if(/\[BL_EXCLUIDO\]/.test(String(r.notas||''))) return false;
+      if(String(r.estado||'').toUpperCase() === 'REVERTIDA') return false;
+      return true;
+    });
+
+    const body = document.getElementById('modalBody') || document.querySelector('#modal .modal-body');
+    if(!data || !data.length){
+      if(body) body.innerHTML = '<div class="ok-box" style="padding:12px">✅ No hay retiros registrados en las últimas 24hs.</div>';
+      return;
+    }
+
+    const porUsuario = {};
+    data.forEach(function(r){
+      const u = String(r.usuario || '?');
+      if(!porUsuario[u]) porUsuario[u] = { usuario:u, count:0, total:0, ultima:r.created_at, pcs:new Set(), retiros:[] };
+      const g = porUsuario[u];
+      g.count++;
+      g.total += Math.abs(Number(r.monto) || 0);
+      if(r.created_at > g.ultima) g.ultima = r.created_at;
+      if(r.pc_codigo) g.pcs.add(r.pc_codigo);
+      g.retiros.push(r);
+    });
+
+    const lista = Object.values(porUsuario).sort(function(a,b){
+      if(b.count !== a.count) return b.count - a.count;
+      return b.total - a.total;
+    });
+    const reincidentes = lista.filter(function(g){ return g.count >= 2; }).length;
+
+    let filas = '';
+    lista.forEach(function(g){
+      let bg = 'transparent', borde = 'rgba(255,255,255,.08)';
+      if(g.count >= 3){ bg = 'rgba(220,40,40,.14)';  borde = 'rgba(220,40,40,.5)'; }
+      else if(g.count === 2){ bg = 'rgba(230,160,40,.12)'; borde = 'rgba(230,160,40,.45)'; }
+      const esCross = [...g.pcs].some(function(pc){ return pc && pc !== pcOperativa; });
+      const crossBadge = esCross
+        ? '<span class="badge badge-danger" style="font-size:9px;padding:2px 6px;margin-left:6px">🚨 otra PC</span>' : '';
+      const pcsTxt = [...g.pcs].join(', ') || '—';
+      const countBadge = '<span style="display:inline-block;min-width:22px;text-align:center;font-weight:800;border-radius:6px;padding:2px 7px;'
+        + (g.count>=3?'background:#dc2828;color:#fff':g.count===2?'background:#e6a028;color:#1a1205':'background:#2a3344;color:#c0cad8')
+        + '">'+g.count+'</span>';
+      const uKey = 'bl_'+btoa(unescape(encodeURIComponent(g.usuario))).replace(/[^a-zA-Z0-9]/g,'');
+      filas += '<tr style="background:'+bg+';border-top:1px solid '+borde+';cursor:pointer" onclick="(function(e){var d=document.getElementById(\''+uKey+'\');if(d)d.classList.toggle(\'hidden\');})()" title="Ver retiros individuales">'
+        + '<td style="padding:7px 8px"><span style="color:#7c8aa0">▸</span> <b>'+escapeHtml(g.usuario)+'</b>'+crossBadge+'</td>'
+        + '<td style="padding:7px 8px;text-align:center">'+countBadge+'</td>'
+        + '<td style="padding:7px 8px;text-align:right;white-space:nowrap"><b>'+money(g.total)+'</b></td>'
+        + '<td style="padding:7px 8px;font-size:11px;color:#9aa4b2;white-space:nowrap">'+escapeHtml(formatFecha(g.ultima))+'</td>'
+        + '<td style="padding:7px 8px;font-size:11px;color:#9aa4b2">'+escapeHtml(pcsTxt)+'</td>'
+        + '</tr>';
+      let subRetiros = '';
+      g.retiros.forEach(function(r){
+        subRetiros += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:4px 0;border-top:1px solid rgba(255,255,255,.06);font-size:12px">'
+          + '<span style="color:#c0cad8">'+escapeHtml(formatFecha(r.created_at))+' · <b>'+money(Math.abs(Number(r.monto)||0))+'</b> · '+escapeHtml(r.billetera_nombre||'—')+'</span>'
+          + '<button class="mini-btn yellow" style="font-size:10px" onclick="event.stopPropagation();excluirRetiroBlacklistModal(\''+escapeHtml(String(r.id))+'\',this)">🚫 Quitar</button>'
+          + '</div>';
+      });
+      filas += '<tr id="'+uKey+'" class="hidden"><td colspan="5" style="padding:6px 14px;background:#10141d">'
+        + '<div class="small" style="color:var(--muted);margin-bottom:2px">Retiros de las últimas 24hs (quitar = no cuenta en blacklist):</div>'
+        + subRetiros + '</td></tr>';
+    });
+
+    if(body) body.innerHTML =
+        '<div style="display:flex;gap:14px;margin-bottom:10px;flex-wrap:wrap;font-size:13px">'
+      +   '<span>👥 <b>'+lista.length+'</b> usuarios</span>'
+      +   '<span>↩️ <b>'+data.length+'</b> retiros</span>'
+      +   (reincidentes ? '<span style="color:#ffb86b">🔁 <b>'+reincidentes+'</b> reincidentes (2+)</span>' : '')
+      + '</div>'
+      + '<div style="max-height:55vh;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:10px">'
+      +   '<table style="width:100%;border-collapse:collapse;font-size:13px">'
+      +     '<thead><tr style="position:sticky;top:0;background:#161b26;z-index:1">'
+      +       '<th style="padding:8px;text-align:left">Usuario</th>'
+      +       '<th style="padding:8px;text-align:center">Retiros</th>'
+      +       '<th style="padding:8px;text-align:right">Total</th>'
+      +       '<th style="padding:8px;text-align:left">Último</th>'
+      +       '<th style="padding:8px;text-align:left">Oficina</th>'
+      +     '</tr></thead>'
+      +     '<tbody>'+filas+'</tbody>'
+      +   '</table>'
+      + '</div>';
+  } catch(e){
+    const body = document.getElementById('modalBody') || document.querySelector('#modal .modal-body');
+    if(body) body.innerHTML = '<div class="err-box" style="padding:12px">Error cargando blacklist: '+escapeHtml(e.message||'')+'</div>';
+  }
+}
+
+// Excluir un retiro desde el modal de blacklist (marca [BL_EXCLUIDO] y recarga el modal).
+async function excluirRetiroBlacklistModal(historialId, btn){
+  if(btn){ btn.disabled = true; btn.textContent = '...'; }
+  try {
+    const { data: row } = await supabaseClient.from('historial_ops').select('notas').eq('id', historialId).single();
+    const notas = (String(row?.notas||'').trim() + ' [BL_EXCLUIDO]').trim();
+    const { error } = await supabaseClient.from('historial_ops').update({ notas }).eq('id', historialId);
+    if(error) throw error;
+    const h = (_historialData||[]).find(function(x){ return String(x.id)===String(historialId); });
+    if(h) h.notas = notas;
+    toast('🚫 Retiro excluido de la blacklist.', 'green');
+    await mostrarBlacklist24h();
+  } catch(e){
+    toast('Error al excluir: '+(e.message||''), 'red');
+  }
+}
+
 // ── Caché local (por PC) ─────────────────────────────────────────────────────
 function _histLocalKey(){ return "nodo_historial_"+(pcOperativa||"sin_pc"); }
 function _guardarHistorialLocal(){
@@ -4853,18 +4968,13 @@ function abrirAprobarSolicitud(id){
           return;
         }
 
-        // ── CONFIRMACIÓN de la carga del PORTAL (misma lógica que el manual) ──
-        // Solo acreditamos si la carga está CONFIRMADA: exito ("Operación correcta") O delta de saldo
-        // LEÍDO (post - pre == monto). Si corrió pero NO se confirma → NO acreditar (sin fantasma):
-        // queda APROBADA_MANUAL para verificar/reintentar con ▶ Auto.
+        // ── CONFIRMACIÓN de la carga del PORTAL (mismo criterio simple que la carga manual) ──
+        // Confiamos en que el script corrió (sin re-leer saldo: eso demoraba y disparaba 403).
+        // Solo frenamos ante un RECHAZO CLARO del casino (modal apareció y dijo que NO).
         const _saldoPreCasinoAp = (typeof resultado?.previousBalance?.value === 'number') ? resultado.previousBalance.value : null;
-        let _saldoPostLeidoAp = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
-        // Lectura fresca si el modal no dijo "correcta" y el post no se leyó (o vino sospechosamente bajo).
-        if((!resultado || resultado.exito !== true) && _saldoPreCasinoAp !== null && (_saldoPostLeidoAp === null || _saldoPostLeidoAp <= montoFinal)){
-          try{ const _pv = await callDrex("buscarUsuario", usuario, {skipBalance:false}); if(_pv?.exists && typeof _pv.balance?.value === 'number') _saldoPostLeidoAp = _pv.balance.value; }catch(_e){}
-        }
-        const _deltaOkAp = (_saldoPreCasinoAp !== null && _saldoPostLeidoAp !== null) && Math.abs((_saldoPostLeidoAp - _saldoPreCasinoAp) - montoFinal) < 1;
-        const _confirmadaAp = (resultado && resultado.exito === true) || _deltaOkAp;
+        const _saldoPostLeidoAp = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
+        const _rechazoCasinoAp = resultado && resultado.exito === false; // modal apareció y NO confirmó → rechazo CLARO
+        const _confirmadaAp = !_rechazoCasinoAp;
         // saldo_post para el historial: el LEÍDO si lo hay; si no, estimado pre+monto. saldo_pre: el real del modal.
         const _saldoPostAp = _saldoPostLeidoAp !== null ? _saldoPostLeidoAp : (_saldoPreCasinoAp !== null ? _saldoPreCasinoAp + montoFinal : null);
         // pre: el real del modal; si vino 0/null (no se leyó) lo derivamos del post (post - monto).
@@ -4872,14 +4982,14 @@ function abrirAprobarSolicitud(id){
         const _bilLandingAp = getBilleraLanding();
         if(!_confirmadaAp){
           await registrarEnHistorial({
-            usuario, tipo:'CARGA', monto:montoFinal, origen:'PANEL', estado:'VERIFICAR',
-            notas:(obs?obs+' · ':'')+'Sin confirmar en Agentes · NO acreditada · usá ▶ Auto', solicitud_id:id,
+            usuario, tipo:'CARGA', monto:montoFinal, origen:'PANEL', estado:'ERROR',
+            notas:(obs?obs+' · ':'')+'El casino NO confirmó "Operación correcta" (rechazo) · NO acreditada', solicitud_id:id,
             billetera_id: s.ID_BILLETERA || (_bilLandingAp ? _bilLandingAp.ID_BILLETERA : null),
             billetera_nombre: s.BILLETERA_NOMBRE || (_bilLandingAp ? _bilLandingAp.NOMBRE_VISIBLE : null),
             saldo_pre: _saldoPreAp, saldo_post: _saldoPostAp
           });
-          await notificarUsuarioEnChat(usuario, `⏳ Tu carga de $${montoFinal.toLocaleString("es-AR")} está en revisión. En breve te confirmamos.${obs?`\n📝 ${obs}`:""}`);
-          toast('⚠️ Carga del portal SIN CONFIRMAR en Agentes · queda APROBADA_MANUAL · usá ▶ Auto','yellow');
+          await notificarUsuarioEnChat(usuario, `⚠️ Tu carga de $${montoFinal.toLocaleString("es-AR")} fue rechazada por el casino. Ya lo estamos revisando.${obs?`\n📝 ${obs}`:""}`);
+          toast('❌ Carga del portal RECHAZADA por el casino · queda APROBADA_MANUAL · usá ▶ Auto','red');
           await refrescarTodo(false);
           return;
         }
