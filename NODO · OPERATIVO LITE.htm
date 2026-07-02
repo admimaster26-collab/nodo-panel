@@ -4801,11 +4801,21 @@ function renderEstadoLanding(){
 
 async function ajustarSaldoBilletera(id, delta){
   if(!id || !delta) return;
+  // Ajuste ATÓMICO en el servidor (panel_billetera_ajustar_saldo: UPDATE...RETURNING dentro de
+  // Postgres), no un read-modify-write local. Antes se leía el saldo en memoria (podía estar
+  // desactualizado) y se escribía calculado acá — si dos operaciones tocaban la misma billetera
+  // casi al mismo tiempo, la segunda podía pisar a la primera sin avisar (lost update silencioso).
   const b = billeteras.find(x=>x.ID_BILLETERA===id);
-  const saldoActual = b ? Number(b.SALDO||0) : 0;
-  const nuevoSaldo  = Math.max(0, saldoActual + delta);
-  await supabaseClient.rpc("panel_billetera_update",{p_secret:window.PANEL_DATA_SECRET,p_id:Number(id),p_patch:{saldo:nuevoSaldo}});
-  if(b) b.SALDO = nuevoSaldo;
+  try{
+    const { data, error } = await supabaseClient.rpc("panel_billetera_ajustar_saldo",{p_secret:window.PANEL_DATA_SECRET,p_id:Number(id),p_delta:delta});
+    if(error) throw error;
+    const fila = Array.isArray(data) ? data[0] : data;
+    const saldoReal = fila && typeof fila.saldo === 'number' ? fila.saldo : null;
+    if(b && saldoReal !== null) b.SALDO = saldoReal;
+  }catch(e){
+    console.warn('[ajustarSaldoBilletera] no se pudo actualizar el saldo:', e);
+    toast('⚠️ No se pudo actualizar el saldo de la billetera (se registró igual la operación) — revisá manualmente.', 'yellow');
+  }
 }
 
 function renderBilleteras(){
@@ -5202,11 +5212,18 @@ async function seleccionarBilletera(id){
     realId = String(data[0].id);
   }
 
-  // Reset seguro sin oficina_id: limpiamos por compatibilidad P1 y por IDs visibles en pantalla.
-  // Esto evita el error de schema cache/columna oficina_id y alcanza para XGENERALENUSO -> XPLATA -> P1.
-  try{ await supabaseClient.from('billeteras').update({seleccionada_manual:false}).eq('pc_codigo','P1'); }catch(_e){}
+  // Reset seguro sin oficina_id: limpiamos por TODOS los alias de la oficina actual (pcAliasesHist,
+  // el mismo mecanismo que ya usa el resto del panel para agrupar nombres viejos/nuevos de una
+  // misma oficina, ej. P1 = P1/PC1/XGENERALENUSO/XGENERAL/GENERAL/OFI_1) + por IDs visibles en
+  // pantalla. Antes tenía además un reset hardcodeado a pc_codigo='P1' fijo que se ejecutaba
+  // SIEMPRE sin importar qué oficina operara — cualquier oficina que pusiera SU billetera en
+  // portal le apagaba de paso el "EN PORTAL" de P1. Sacado: debe ser solo la oficina actual (con
+  // sus alias), para que valga igual para todas, existentes y futuras.
   if(pcOperativa){
-    try{ await supabaseClient.from('billeteras').update({seleccionada_manual:false}).eq('pc_codigo',pcOperativa); }catch(_e){}
+    try{
+      const _aliasesReset = (typeof pcAliasesHist === 'function') ? pcAliasesHist() : [pcOperativa];
+      await supabaseClient.from('billeteras').update({seleccionada_manual:false}).in('pc_codigo', _aliasesReset);
+    }catch(_e){}
   }
   try{
     const idsVisibles = (billeteras||[])
