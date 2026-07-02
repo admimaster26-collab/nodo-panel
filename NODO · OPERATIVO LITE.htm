@@ -3503,6 +3503,22 @@ function _configurarConsultaRetirosLive(){
   inputMonto.addEventListener("input", onChange);
 }
 
+// Copia solo el usuario (para pasárselo al cliente junto con su teléfono → login al portal de cargas).
+async function _copiarSoloUsuario(usuario){
+  try{ await navigator.clipboard.writeText(usuario); toast("Usuario copiado: " + usuario, "green"); }
+  catch(_e){ toast("No se pudo copiar", "red"); }
+}
+// Mensaje prolijo y completo para pegar en el chat del cliente: usuario+clave y la aclaración
+// de los DOS logins distintos (portal de cargas con usuario+teléfono vs. plataforma con usuario+clave).
+async function _copiarMensajeClienteNuevo(usuario, clave){
+  const msg = "¡Listo! Tu usuario ya está creado ✅\n\n" +
+    "Usuario: " + usuario + "\n" +
+    "Clave: " + clave + "\n\n" +
+    "🔹 Para CARGAR o RETIRAR fichas: entrá al portal de cargas con tu usuario + tu teléfono.\n" +
+    "🔹 Para JUGAR en la plataforma: entrá con tu usuario + la clave de arriba.";
+  try{ await navigator.clipboard.writeText(msg); toast("Mensaje copiado · pegalo en el chat", "green"); }
+  catch(_e){ toast("No se pudo copiar", "red"); }
+}
 // ── Crear nuevo usuario en el casino ─────────────────────────────────────────
 function abrirModalCrearUsuario(){
   if(!window.ctrlElectron){ alert("Solo disponible en la app de escritorio."); return; }
@@ -3548,6 +3564,10 @@ async function _ejecutarCrearUsuario(){
         '<div class="ok-box" style="margin-top:8px">' +
           '✅ Usuario creado y copiado al portapapeles.<br>' +
           '<b>User:</b> ' + escapeHtml(aliasFinal) + ' &nbsp;·&nbsp; <b>Clave:</b> ' + escapeHtml(claveFinal) +
+          '<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">' +
+            '<button type="button" class="mini-btn blue" onclick="_copiarSoloUsuario(\'' + escapeHtml(aliasFinal) + '\')">📋 Copiar solo usuario</button>' +
+            '<button type="button" class="mini-btn green" onclick="_copiarMensajeClienteNuevo(\'' + escapeHtml(aliasFinal) + '\',\'' + escapeHtml(claveFinal) + '\')">💬 Copiar mensaje para el cliente</button>' +
+          '</div>' +
         '</div>';
       if(btn){ btn.disabled = false; btn.textContent = 'Crear otro'; }
       if(document.getElementById("nuevoJugUsuario")) document.getElementById("nuevoJugUsuario").value = "";
