@@ -4718,7 +4718,7 @@ function tablaSolicitudesHTML(lista){
                   ? `${window.ctrlElectron?`<button class="mini-btn purple" onclick="ejecutarAutoRetiro('${id}')">▶ Auto</button>`:""}
                      <button class="mini-btn green" onclick="abrirCerrarRetiro('${id}')">Cerrar retiro</button>`
                   : `${window.ctrlElectron?`<button class="mini-btn purple" onclick="ejecutarAutoCarga('${id}')">▶ Auto</button>`:""}
-                     <button class="mini-btn green" onclick="abrirAprobarSolicitud('${id}')">Aprobar</button>`}
+                     <button class="mini-btn green" onclick="abrirAprobarSolicitud('${id}')">Cargar</button>`}
                <button class="mini-btn red" onclick="abrirRechazarSolicitud('${id}')">Rechazar</button>`
           :normalizar(s.ESTADO)==="APROBADA_MANUAL"&&tipo==="CARGA"&&window.ctrlElectron?`
             <button class="mini-btn purple" onclick="ejecutarAutoCarga('${id}')">▶ Auto</button>
@@ -5043,7 +5043,7 @@ function abrirAprobarSolicitud(id){
       await registrarEnHistorial({usuario, tipo:'CARGA', monto:montoFinal, origen:'PANEL', estado:'OK', notas:obs||null, solicitud_id:id});
       await refrescarTodo(false);
     }
-  },"Aprobar");
+  },"Cargar");
 }
 async function abrirCerrarRetiro(id){
   const s = solicitudes.find(x=>String(x.ID||x.SOLICITUD_ID)===String(id));
@@ -7405,14 +7405,17 @@ async function registrarCargaEnChunior(chunior_uid, monto, usuario){
 
   // Esperar y leer la respuesta de Chunior. Antes era una espera fija de 2.5s + parser
   // estricto; si Chunior tardaba o cambiaba el formato del mensaje, el N° quedaba null
-  // (carga anotada pero "Falta Chunior"). Ahora: poll hasta 8s + varias estrategias.
-  await new Promise(function(r){setTimeout(r,1200);});
+  // (carga anotada pero "Falta Chunior"). Luego: poll hasta 8s (más robusto, pero cola
+  // larga en el peor caso — comparado con el NODO hermano, que usa un fijo de 2.5s).
+  // Ajuste (2026-07-02): baja la espera inicial y el techo del poll para acercarnos a la
+  // velocidad del hermano en el caso típico, sin volver a perder el N° en el caso lento.
+  await new Promise(function(r){setTimeout(r,500);});
 
   let movimientoId = null;
   let errorMsg = null;
   let dbgTxt = null;
   const _tParse = Date.now();
-  while(Date.now() - _tParse < 8000){
+  while(Date.now() - _tParse < 4500){
     let res = null;
     try {
       res = await window.chunior.exec(
@@ -7438,7 +7441,7 @@ async function registrarCargaEnChunior(chunior_uid, monto, usuario){
     if(res && res.ok){ movimientoId = res.id; dbgTxt = res.dbg||null; break; }
     if(res && res.error){ errorMsg = res.error; break; }
     // pending → la página todavía no mostró el resultado; esperar y reintentar
-    await new Promise(function(r){ setTimeout(r,400); });
+    await new Promise(function(r){ setTimeout(r,250); });
   }
   if(!movimientoId && dbgTxt){
     console.warn('[chunior] Anotó con éxito pero no pude leer el N° de movimiento. Texto del mensaje:', dbgTxt);
