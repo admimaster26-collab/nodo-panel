@@ -706,6 +706,20 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
     firstVisible('button.btn.btn-primary');
   if (!applyButton) throw new Error('No se encontró el botón "Aplicar".');
   if (applyButton.disabled) throw new Error('El botón "Aplicar" está deshabilitado (¿monto inválido?).');
+
+  // Si quedó abierto un modal de "Resultado de la operación" de una operación ANTERIOR
+  // (el cierre previo pudo haber fallado silenciosamente), cerrarlo ANTES de aplicar esta.
+  // Si no, el poll de abajo puede agarrar ese resultado VIEJO como si fuera el de ESTA
+  // operación — reportando éxito/saldo de la carga pasada, no la actual (fantasma real).
+  const _staleRes = _detectarModalResultado();
+  if (_staleRes) {
+    try {
+      const btnAceptStale = Array.from(_staleRes.querySelectorAll('button, [role="button"]'))
+        .find(b => /^\s*aceptar\s*$/i.test((b.textContent || '').trim()));
+      if (btnAceptStale) { clickElement(btnAceptStale); await delay(400); }
+    } catch (_) {}
+  }
+
   clickElement(applyButton);
 
   // Tras Aplicar, el casino muestra el modal "Resultado de la operación" con el Balance
@@ -715,30 +729,41 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
   // 0/vacío y, si leemos ahí, agarramos un 0 transitorio).
   let newBalance = null, exito = null, resultadoTexto = '', modalResRef = null;
   let postCero = null;           // último post leído == 0 (puede ser transitorio o real)
+  let falsoDesde = null;         // momento en que empezamos a ver exito===false (posible transitorio)
   // Ventana de detección del modal "Resultado de la operación": tope 8s (antes 12s).
   // CLAVE para demanda alta: en cuanto el modal da el veredicto ("Operación correcta" → exito)
   // CORTAMOS, sin esperar a que se popule el balance. El balance queda best-effort (el renderer
   // lo estima pre±monto / lo deriva) y si exito no se vio, hace una lectura fresca como respaldo.
   // Así "Procesando" dura ~2-3s en el caso normal en vez de esperar a que pinte el saldo.
   const tFinRes = now() + 8000;
-  const tCeroAceptable = now() + 2500; // hasta acá un post 0 se trata como transitorio (retiros)
+  const tCeroAceptable = now() + 2500;   // hasta acá un post 0 se trata como transitorio (retiros)
+  const GRACIA_FALSO_MS = 1200;          // cuánto esperar desde que vemos exito===false por primera vez
   while (now() < tFinRes) {
     const modalRes = _detectarModalResultado();
     if (modalRes) {
       modalResRef = modalRes;
       resultadoTexto = (modalRes.textContent || '').replace(/\s+/g, ' ').trim();
-      exito = /operaci[oó]n correcta/i.test(resultadoTexto);
+      const _exitoAhora = /operaci[oó]n correcta/i.test(resultadoTexto);
       const post = _leerBalanceJugadorEnModal(modalRes); // Balance Jugador REAL del modal de resultado
       if (post && post.raw && /\d/.test(post.raw)) {
         // Un 0 suele ser que el campo todavía no pintó (transitorio, sobre todo en retiros).
         // Le damos una gracia corta (2.5s); pasada esa, un 0 se acepta como real (retiro total).
         if (post.value === 0 && now() < tCeroAceptable) { postCero = post; await delay(200); continue; }
         newBalance = post;
+        exito = _exitoAhora;
         break;
       }
-      // El modal YA dio el veredicto (exito true/false) pero el balance aún no se leyó →
-      // confirmamos por exito y seguimos. No esperamos a que pinte el saldo (acelera mucho).
-      if (exito === true || exito === false) break;
+      if (_exitoAhora === true) { exito = true; break; } // éxito confirmado, no hace falta esperar más
+      // exito===false: puede ser un RECHAZO real, o el modal recién apareciendo sin pintar
+      // todavía el texto de "Operación correcta" (el mismo caso que el 0 transitorio de arriba,
+      // pero para el texto). Si lo tomamos al toque, una carga que SÍ se aplicó terminaba en rojo
+      // "rechazada" antes de que el modal pintara el texto real (visto en producción). Se le da
+      // una gracia corta contada desde la PRIMERA vez que vimos false; si sigue en false pasada
+      // la gracia, ahí sí es un rechazo real.
+      exito = false;
+      if (!falsoDesde) falsoDesde = now();
+      if (now() - falsoDesde < GRACIA_FALSO_MS) { await delay(150); continue; }
+      break;
     }
     await delay(150);
   }
