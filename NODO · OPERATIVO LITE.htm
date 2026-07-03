@@ -3304,6 +3304,24 @@ async function ejecutarOperacionManual(){
             }
             // Recién acá comparamos fichas: Chunior YA confirmó su movimiento.
             _watchdogTrigger(1500);
+          } else if(rChu && rChu.ok && !rChu.movimientoId){
+            // Chunior ACEPTÓ el movimiento (sin error) pero no pudimos leer su N° en la
+            // respuesta (parseo flaky de esa página). Antes esto no entraba en NINGUNA
+            // rama: no se avisaba, no se marcaba nada, y la fila quedaba para siempre
+            // como "NO registrado" pese a estar anotada de verdad — false alarm real.
+            // Marcamos en notas (sin inventar un chunior_movimiento_id falso, que se usa
+            // para "Cambiar billetera" y otras acciones que necesitan un N° real).
+            toast("📋 "+tipo+" anotado en Chunior (sin N° confirmado)", 'blue');
+            if(filaHist && filaHist.id){
+              try {
+                const notaMarca = (String(notas||'').trim()+' [CHUNIOR_OK_SIN_N]').trim();
+                await supabaseClient.from('historial_ops')
+                  .update({ notas: notaMarca })
+                  .eq('id', filaHist.id);
+                if(typeof cargarHistorial === 'function') await cargarHistorial();
+              } catch(e){ console.warn('update notas [CHUNIOR_OK_SIN_N] falló:', e); }
+            }
+            _watchdogTrigger(1500);
           } else if(rChu && rChu.error){
             toast('⚠️ '+tipo+' OK en casino pero falló en Chunior: '+rChu.error, 'red');
             // Chunior falló → NO chequeamos fichas (sabríamos que hay discrepancia,
@@ -3977,8 +3995,11 @@ function renderHistorial(lista){
     //   2) estado OK pero SIN chunior_movimiento_id y la billetera TIENE chunior_uid
     //      → la carga entró en Drex pero NO se anotó en Chunior (queda discrepancia)
     const _bilDeFila = billeteras.find(function(b){ return String(b.ID_BILLETERA) === String(h.billetera_id); });
+    // [CHUNIOR_OK_SIN_N] = Chunior SÍ aceptó el movimiento, solo no pudimos leer el N° de
+    // vuelta (parseo flaky) — no es una falta real, no hay que ofrecer reintentar.
     const chuniorPendiente = (h.estado === 'OK')
       && !h.chunior_movimiento_id
+      && !/\[CHUNIOR_OK_SIN_N\]/.test(String(h.notas||''))
       && (h.tipo === 'CARGA' || h.tipo === 'RETIRO')
       && _bilDeFila && _bilDeFila.CHUNIOR_UID;
     const necesitaRetry = (h.estado === 'ERROR' && h.usuario && (h.tipo === 'CARGA' || h.tipo === 'RETIRO')) || chuniorPendiente;
@@ -4021,14 +4042,17 @@ async function reintentarOperacionFallida(historialId){
   const { data: row, error } = await supabaseClient
     .from('historial_ops').select('*').eq('id', historialId).single();
   if(error || !row){ toast('No se encontró la fila del historial.', 'red'); return; }
-  const { usuario, tipo, monto, billetera_id, billetera_nombre, chunior_movimiento_id, saldo_pre, saldo_post } = row;
+  const { usuario, tipo, monto, billetera_id, billetera_nombre, chunior_movimiento_id, saldo_pre, saldo_post, notas } = row;
 
   // Resolver billetera (ID → nombre → landing) para Chunior
   let bil = billeteras.find(function(b){ return String(b.ID_BILLETERA) === String(billetera_id); });
   if(!bil && billetera_nombre) bil = billeteras.find(function(b){ return String(b.NOMBRE_VISIBLE) === String(billetera_nombre); });
   if(!bil) bil = getBilleraLanding();
   const necesitaChunior = !!(bil && bil.CHUNIOR_UID);
-  let chuniorYaHecho     = !!chunior_movimiento_id;
+  // [CHUNIOR_OK_SIN_N]: Chunior ya aceptó el movimiento, solo no tenemos el N° — contar como
+  // "ya hecho" acá también para no ofrecer re-anotar (evita un duplicado real en Chunior).
+  const _chuniorMarcadoSinN = /\[CHUNIOR_OK_SIN_N\]/.test(String(notas||''));
+  let chuniorYaHecho     = !!chunior_movimiento_id || _chuniorMarcadoSinN;
   let movChuVerificado   = chunior_movimiento_id;
 
   // 1) Leer agentes (saldo) Y verificar Chunior EN PARALELO.
@@ -8966,6 +8990,18 @@ async function ejecutarSolicitudPortalSimple(ctx){
                   await supabaseClient.from('historial_ops').update({chunior_movimiento_id:rChu.movimientoId}).eq('id', filaHist.id);
                   if(typeof cargarHistorial === 'function') await cargarHistorial();
                 }catch(e){ console.warn('update chunior_movimiento_id portal falló:', e); }
+              }
+              _watchdogTrigger(1500);
+            }else if(rChu && rChu.ok && !rChu.movimientoId){
+              // Igual que en manual: Chunior aceptó pero no pudimos leer el N° — marcar en
+              // notas para no dejar una false alarm de "no registrado" en el historial.
+              toast('📋 '+tipo+' anotado en Chunior (sin N° confirmado)', 'blue');
+              if(filaHist && filaHist.id){
+                try{
+                  const notaMarcaP = (String(notas||'').trim()+' [CHUNIOR_OK_SIN_N]').trim();
+                  await supabaseClient.from('historial_ops').update({notas:notaMarcaP}).eq('id', filaHist.id);
+                  if(typeof cargarHistorial === 'function') await cargarHistorial();
+                }catch(e){ console.warn('update notas [CHUNIOR_OK_SIN_N] portal falló:', e); }
               }
               _watchdogTrigger(1500);
             }else if(rChu && rChu.error){
