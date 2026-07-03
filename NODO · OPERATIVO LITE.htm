@@ -3123,7 +3123,7 @@ async function ejecutarOperacionManual(){
     _lockLiberado = true;
     _operacionManualEnCurso = false;
     _drexGlobalUnlock();
-    _wdUnlock(); // por si quedó el watchdog bloqueado
+    _wdForceUnlock(); // reset duro: por si quedó el watchdog bloqueado (no importa cuántos _wdLock anidados)
     if(btnEjecutar){ btnEjecutar.disabled = false; btnEjecutar.style.opacity = ''; btnEjecutar.textContent = 'Ejecutar'; }
     if(res) res.innerHTML = '<div class="err-box">⏱️ La operación no respondió a tiempo.<br>Revisá que la ventana de agentes esté abierta y verificá en el casino antes de reintentar.</div>';
     toast('⏱️ Operación sin respuesta · verificá antes de reintentar', 'red');
@@ -3136,6 +3136,7 @@ async function ejecutarOperacionManual(){
     clearTimeout(_safetyTimer);
     _operacionManualEnCurso = false;
     _drexGlobalUnlock();
+    _wdForceUnlock(); // libera el candado del watchdog que se tomó al arrancar (ver más abajo)
     if(btnEjecutar){ btnEjecutar.disabled = false; btnEjecutar.style.opacity = ''; btnEjecutar.textContent = 'Ejecutar'; }
   };
 
@@ -3163,6 +3164,15 @@ async function ejecutarOperacionManual(){
   }
 
   try {
+    // Candado del watchdog para TODA la secuencia (sesión + búsqueda + carga), sin huecos.
+    // Antes solo se bloqueaba alrededor de buscarUsuario y, por separado, alrededor de
+    // cargarSaldo/retirarSaldo — el hueco intermedio (y sobre todo el tiempo de
+    // ensureDrexSession, que puede tardar) quedaba desprotegido. Si el watchdog tenía un
+    // chequeo ya programado (_watchdogTrigger de la operación anterior) y caía justo ahí,
+    // navegaba/refrescaba la página de Agentes a mitad de camino — cortando la carga en curso
+    // (bug real reportado: "pega el usuario y está por cargar, refresca y corta"). _wdLock es
+    // un contador (_watchdog.busy++), así que anidar los candados de abajo es seguro.
+    _wdLock();
     toast("Abriendo backoffice...","blue");
     if(!await ensureDrexSession()){ toast("Sesión de backoffice requerida.","red"); return; }
 
@@ -5647,6 +5657,10 @@ const _watchdog = {
 // Helpers para que las operaciones se anuncien al watchdog
 function _wdLock(){   _watchdog.busy++; }
 function _wdUnlock(){ if(_watchdog.busy > 0) _watchdog.busy--; }
+// Reset duro a 0 — para los puntos de limpieza GARANTIZADA al final de una operación (o su
+// timeout de seguridad), sin depender de contar bien cuántos _wdLock() anidados quedaron
+// pendientes. Evita dejar el watchdog trabado para siempre por un desbalance de conteo.
+function _wdForceUnlock(){ _watchdog.busy = 0; }
 
 function _wdParseMontoAR(s){
   const m = String(s||'').match(/\$\s*([\d.,]+)/);
@@ -8828,10 +8842,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
     const liberar = () => {
       _portalSolicitudOperacionEnCurso = false;
       _drexGlobalUnlock();
+      _wdForceUnlock(); // libera el candado del watchdog tomado al arrancar (mismo fix que en manual)
       if(btn){ btn.disabled = false; btn.style.opacity = ''; btn.textContent = 'Aprobar'; }
     };
 
     try{
+      // Mismo fix que en la carga manual: candado del watchdog para TODA la secuencia
+      // (sesión + búsqueda + carga), sin huecos — evita que un check ya programado del
+      // watchdog refresque la página de Agentes justo cuando se está por aplicar.
+      _wdLock();
       if(res) res.innerHTML = '<div class="alert-box" style="padding:8px 10px">Operando en Agentes...</div>';
       await actualizarSolicitudPortal(id, 'EN_PROCESO', {etapa:'PORTAL_OPERANDO_PANEL', monto_aprobado:montoAbs, titular:ctx.titular, destino:ctx.destino, cbu:ctx.cbu, observacion:ctx.obs});
 
