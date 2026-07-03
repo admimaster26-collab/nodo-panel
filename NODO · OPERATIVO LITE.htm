@@ -3070,12 +3070,33 @@ async function soloConsultarUsuario(){
 // falta, pero NO reescribir la lógica de este flujo. Si lo rompés, volvé con:
 //   git checkout estable-flujo-carga -- "NODO · OPERATIVO LITE.htm" agent-preload.js main.js
 // ══════════════════════════════════════════════════════════════════════════════
+// ── Candado GLOBAL de automatización en Agentes ───────────────────────────────
+// _operacionManualEnCurso, _portalSolicitudOperacionEnCurso, etc. cada uno solo evita
+// re-entrar a SU PROPIA función (anti-doble-click) — pero no se enteran entre sí. Eso
+// dejaba pasar una carga MANUAL y una aprobación de PORTAL corriendo a la vez contra la
+// MISMA ventana de Agentes → colisión real (una se aplica, la otra falla/rechaza, mismo
+// usuario, casi el mismo segundo — visto en producción 2026-07-03). Este candado es
+// compartido por todos los flujos que tocan la ventana de Agentes.
+window._drexGlobalBusy = false;
+window._drexGlobalBusyMotivo = null;
+function _drexGlobalLock(motivo){
+  if(window._drexGlobalBusy) return false;
+  window._drexGlobalBusy = true;
+  window._drexGlobalBusyMotivo = motivo || '';
+  return true;
+}
+function _drexGlobalUnlock(){ window._drexGlobalBusy = false; window._drexGlobalBusyMotivo = null; }
+
 // ── Operación manual automatizada ─────────────────────────────────────────────
 let _operacionManualEnCurso = false;
 async function ejecutarOperacionManual(){
   // Anti-doble-click: si ya hay una operación corriendo, ignorar
   if(_operacionManualEnCurso){
     toast("Ya hay una operación en curso, esperá que termine.", "yellow");
+    return;
+  }
+  if(!_drexGlobalLock('manual')){
+    toast("Hay otra operación corriendo en Agentes ahora mismo (portal u otra). Esperá a que termine.", "yellow");
     return;
   }
   if(!window.ctrlElectron){ alert("La automatización solo funciona en la app de escritorio."); return; }
@@ -3101,6 +3122,7 @@ async function ejecutarOperacionManual(){
     if(_lockLiberado) return;
     _lockLiberado = true;
     _operacionManualEnCurso = false;
+    _drexGlobalUnlock();
     _wdUnlock(); // por si quedó el watchdog bloqueado
     if(btnEjecutar){ btnEjecutar.disabled = false; btnEjecutar.style.opacity = ''; btnEjecutar.textContent = 'Ejecutar'; }
     if(res) res.innerHTML = '<div class="err-box">⏱️ La operación no respondió a tiempo.<br>Revisá que la ventana de agentes esté abierta y verificá en el casino antes de reintentar.</div>';
@@ -3113,6 +3135,7 @@ async function ejecutarOperacionManual(){
     _lockLiberado = true;
     clearTimeout(_safetyTimer);
     _operacionManualEnCurso = false;
+    _drexGlobalUnlock();
     if(btnEjecutar){ btnEjecutar.disabled = false; btnEjecutar.style.opacity = ''; btnEjecutar.textContent = 'Ejecutar'; }
   };
 
@@ -8765,6 +8788,10 @@ async function ejecutarSolicitudPortalSimple(ctx){
     // registrarCarga/RetiroEnChunior() y ajustarSaldoBilletera() ya probadas.
     if(_portalSolicitudOperacionEnCurso){ toast('Hay una operación portal en curso. Esperá que termine.', 'yellow'); return; }
     if(!window.ctrlElectron){ alert('La automatización solo funciona en la app de escritorio.'); return; }
+    if(!_drexGlobalLock('portal')){
+      toast('Hay otra operación corriendo en Agentes ahora mismo (manual u otra). Esperá a que termine.', 'yellow');
+      return;
+    }
 
     const {id, usuario, tipo, montoAprobado:montoAbs, bilId} = ctx;
     const bil = (billeteras || []).find(b => String(b.ID_BILLETERA) === String(bilId)) || portalBilleteraPreferida(ctx.solicitud);
@@ -8776,6 +8803,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
     const liberar = () => {
       _portalSolicitudOperacionEnCurso = false;
+      _drexGlobalUnlock();
       if(btn){ btn.disabled = false; btn.style.opacity = ''; btn.textContent = 'Aprobar'; }
     };
 
