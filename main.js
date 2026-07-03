@@ -27,8 +27,13 @@ function cargarEnvLocalV15() {
     // NODO_ENV=p4 → lee .env.p4 ; sin NODO_ENV → lee .env.
     const envName = process.env.NODO_ENV ? (".env." + String(process.env.NODO_ENV).toLowerCase()) : ".env";
     // PRODUCCIÓN: en la app empaquetada __dirname está dentro del .asar (no se puede dejar un .env ahí).
-    // Buscamos el .env PRIMERO junto al ejecutable instalado (process.execPath) y después en __dirname (dev).
+    // Prioridad: (1) carpeta de datos de usuario de Windows (app.getPath('userData'), típicamente
+    // %APPDATA%\nodo-operativo\) — NUNCA la toca el instalador/desinstalador de NSIS, sobrevive
+    // a cada actualización. (2) junto al ejecutable instalado (compatibilidad con instalaciones
+    // viejas que todavía tienen el .env ahí — pero OJO, ese se pierde en cada update porque el
+    // desinstalador de la versión previa borra toda la carpeta de instalación). (3) __dirname (dev).
     const dirs = [];
+    try { dirs.push(app.getPath('userData')); } catch (_e) {}
     try { dirs.push(path.dirname(process.execPath)); } catch (_e) {}
     dirs.push(__dirname);
     let envPath = "";
