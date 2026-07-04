@@ -6260,17 +6260,17 @@ async function ejecutarVincular(usuario, telefono){
         toast("No se pudo vincular: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return;
       }
     }
-    // 3) Avisar al usuario por el chat del portal con su info de ingreso + botón "Ingresar".
-    let _avisado=false;
+    // 3) Toast YA (no esperamos el envío del aviso → sensación instantánea).
+    toast("✅ "+usuario+" vinculado. Avisándole por el chat con el botón para ingresar…","green");
+    // Aviso al usuario por el chat del portal con su info de ingreso + botón "Ingresar" (background).
     try{
       if(typeof window.nodoEnviarMensajePortal==="function"){
         const msg="✅ ¡Listo! Ya validamos tu cuenta.\n\nPara entrar al portal usá:\n👤 Usuario: "+usuario+"\n📱 Teléfono: "+telefono+"\n\nTocá el botón *Ingresar* acá abajo 👇\n⟦INGRESAR:"+usuario+"⟧";
-        const rr=await window.nodoEnviarMensajePortal(usuario,msg);
-        _avisado=!!(rr&&rr.ok);
+        window.nodoEnviarMensajePortal(usuario,msg).then(rr=>{
+          if(!(rr&&rr.ok)) console.warn("aviso 'Ingresar' no ruteado ("+((rr&&rr.error)||"?")+") — el portal lo detecta igual por auto-chequeo");
+        }).catch(_e=>{});
       }
     }catch(_e){}
-    if(_avisado) toast("✅ "+usuario+" vinculado. Le avisamos por el chat con el botón para ingresar.","green");
-    else toast("✅ "+usuario+" vinculado. Avisale por el chat que ingrese al portal con el usuario "+usuario+".","green");
   }catch(e){ toast("Error al vincular: "+(e.message||e),"red"); }
 }
 // MODAL de vinculación (inputs HTML reales → anda en Electron). Permite ajustar el usuario si en el casino quedó con otro nombre.
@@ -11604,19 +11604,25 @@ async function ejecutarSolicitudPortalSimple(ctx){
       });
     }
 
-    // Absorber nuevas SOPORTE del mismo usuario para que no vuelvan a En espera.
-    for(const s of (fresh.items||[])){
-      const sid=idSol(s);
-      if(!sid||sid===masterId)continue;
-      const m=metaObj(s);
-      if(U(m.chat_estado)!=="ABSORBIDO_PANEL"){
-        await actualizarSolicitudPortal(sid,"EN_REVISION",{
-          chat_estado:"ABSORBIDO_PANEL",
-          chat_master_id:masterId,
-          chat_thread_ref:masterId
-        });
+    // Absorber nuevas SOPORTE del mismo usuario para que no vuelvan a En espera. Esto es bookkeeping:
+    // NO lo esperamos (era la causa de que "el mensaje tarde en enviarse" cuando el usuario tenía
+    // varias solicitudes). Corre en background; el mensaje ya quedó guardado en el thread del master.
+    (async()=>{
+      for(const s of (fresh.items||[])){
+        const sid=idSol(s);
+        if(!sid||sid===masterId)continue;
+        const m=metaObj(s);
+        if(U(m.chat_estado)!=="ABSORBIDO_PANEL"){
+          try{
+            await actualizarSolicitudPortal(sid,"EN_REVISION",{
+              chat_estado:"ABSORBIDO_PANEL",
+              chat_master_id:masterId,
+              chat_thread_ref:masterId
+            });
+          }catch(e){ console.warn("absorber SOPORTE bg:",e); }
+        }
       }
-    }
+    })();
   }
 
   window.enviarChat=async function(){
