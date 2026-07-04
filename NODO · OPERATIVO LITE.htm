@@ -10737,11 +10737,14 @@ async function ejecutarSolicitudPortalSimple(ctx){
     renderChatListStep2();
   }, 700);
 
-  // Anti-parpadeo: si una capa vieja repinta la lista antigua, volvemos a Step2.
+  // Anti-parpadeo: si la lista queda sin render, repintar con el ACTIVO (Final). Antes usaba
+  // renderChatListStep2 (viejo) → si la red de seguridad disparaba, reaparecía la lista vieja
+  // (con el tab Interno muerto y datos de otro módulo).
   setInterval(function(){
     const box=document.getElementById("chatList") || document.getElementById("v15ChatList");
     if(box && !box.innerHTML.includes("wq2-wrap")){
-      renderChatListStep2();
+      if(typeof renderChatListStep2Final === "function") renderChatListStep2Final();
+      else renderChatListStep2();
     }
   }, 1200);
 })();
@@ -10824,7 +10827,11 @@ async function ejecutarSolicitudPortalSimple(ctx){
     window.__nodoChatCurrentUser = "";
     window.__nodoChatCurrentTicket = null;
     try{
-      if(typeof renderChatListStep2 === "function") renderChatListStep2();
+      // Preferir SIEMPRE el render activo (Final). Antes llamaba a renderChatListStep2 (módulo
+      // viejo), así que al volver a la bandeja la lista de "en espera" se pintaba con el render
+      // viejo (otros tabs/datos) → se veía distinto de donde debería.
+      if(typeof renderChatListStep2Final === "function") renderChatListStep2Final();
+      else if(typeof renderChatListStep2 === "function") renderChatListStep2();
       else if(typeof cargarChats === "function") cargarChats();
     }catch(_e){}
     const body=document.getElementById("chatBody") || document.getElementById("v15ChatBody");
@@ -11411,7 +11418,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
     if(tab==="espera"&&!espera.length&&abiertos.length)tab=window.__wq2ActiveTab="abiertos";
 
     const q=(document.getElementById("wq2Search")?.value||"").toLowerCase().trim();
-    let pool=tab==="abiertos"?abiertos:(tab==="interno"?[]:espera);
+    let pool=tab==="abiertos"?abiertos:espera;
     if(q)pool=pool.filter(t=>(t.usuario+" "+t.telefono+" "+t.mensaje).toLowerCase().includes(q));
 
     try{
@@ -11423,11 +11430,10 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
     const tabBtn=(id,label,count,active)=>`<button class="wq2-tab${active?" active":""}" onclick="wq2SetTab('${id}')">${label}${count?` <span class="wq2-count">${count}</span>`:""}</button>`;
     let html=`<div class="wq2-wrap">
-      <div class="wq2-search"><input id="wq2Search" placeholder="Nombre, número o usuario..." oninput="renderChatListStep2()" value="${E(q)}"></div>
+      <div class="wq2-search"><input id="wq2Search" placeholder="Nombre, número o usuario..." oninput="renderChatListStep2Final()" value="${E(q)}"></div>
       <div class="wq2-tabs">
         ${tabBtn("espera","En espera",espera.length,tab==="espera")}
         ${tabBtn("abiertos","Abiertos",abiertos.length,tab==="abiertos")}
-        ${tabBtn("interno","Interno",0,tab==="interno")}
       </div>`;
 
     if(!pool.length){
