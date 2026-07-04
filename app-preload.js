@@ -59,5 +59,6 @@ contextBridge.exposeInMainWorld('updaterAPI', {
   check:      () => ipcRenderer.invoke('updater:check'),
   download:   () => ipcRenderer.invoke('updater:download'),
   install:    () => ipcRenderer.invoke('updater:install'),
+  openReleases: () => ipcRenderer.invoke('updater:open-releases'),
   onStatus:   (cb) => ipcRenderer.on('updater:status', (_event, payload) => cb(payload))
 });

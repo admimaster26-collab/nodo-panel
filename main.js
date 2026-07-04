@@ -1,6 +1,6 @@
 const path    = require('node:path');
 const fs      = require('node:fs');
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const { createClient } = require('@supabase/supabase-js');
 
 // ── Auto-actualización (electron-updater, chequeo MANUAL desde el panel) ──────
@@ -749,6 +749,14 @@ ipcMain.handle('updater:install', () => {
   if (!autoUpdater) return { ok: false };
   autoUpdater.quitAndInstall(false, true);
   return { ok: true };
+});
+
+// "Volver a la versión anterior": abre la página de releases en el navegador, donde la oficina
+// puede bajar cualquier instalador previo si esta versión falla. Es la salida de emergencia
+// más confiable (un downgrade automático de electron-updater es frágil).
+ipcMain.handle('updater:open-releases', async () => {
+  try { await shell.openExternal('https://github.com/admimaster26-collab/nodo-panel/releases'); return { ok: true }; }
+  catch (e) { return { ok: false, message: String(e && e.message || e) }; }
 });
 
 // Abre/enfoca la ventana del backoffice
