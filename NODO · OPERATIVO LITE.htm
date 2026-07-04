@@ -3176,64 +3176,120 @@ async function ejecutarOperacionManual(){
     toast("Abriendo backoffice...","blue");
     if(!await ensureDrexSession()){ toast("Sesión de backoffice requerida.","red"); return; }
 
-    toast("Buscando "+usuario+"...","blue");
-    _wdLock();
-    let busqueda;
-    try {
-      // CARGA: skipBalance → NO abrimos el modal acá. applyAmount (cargarSaldo)
-      //        abre el modal UNA sola vez y lee pre (input 0) + post (input 1).
-      // RETIRO: necesitamos el saldo antes para validar suficiencia → sin skip.
-      busqueda = await callDrex("buscarUsuario", usuario, { skipBalance: tipo === "CARGA" });
-    } finally {
-      _wdUnlock();
-    }
-    if(!busqueda.exists){
-      await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Usuario no encontrado'});
-      if(res) res.innerHTML = '<div class="err-box">❌ <b>'+escapeHtml(usuario)+'</b> no existe en el casino.</div>';
-      toast(usuario+" no encontrado","red"); return;
-    }
+    // ── BUSCAR + OPERAR con reintento ACOTADO ante error de página (403/CDN) o sesión caída ──
+    // Adoptado del NODO hermano (la parte REAL de su bucle — su señal 'needsRetry' es lógica
+    // muerta, no la produce nadie). Nosotros SÍ tenemos pageError/needsLogin desde agent-preload.js
+    // (status()/openMovementModal las propagan). Dos mejoras juntas:
+    //   1) Antes, si buscarUsuario volvía por un 403/CDN o sesión caída, busqueda.exists salía
+    //      falsy y el operador veía "el usuario no existe" — mensaje ENGAÑOSO. Ahora se distingue.
+    //   2) Ante un error transitorio de página/sesión, se refresca UNA vez y se reintenta (tope 2).
+    //      NO se reintenta a ciegas cuando la op pudo haberse aplicado (timeout → timeoutVerificar).
+    const MAX_REINTENTOS = 2;
+    let busqueda, resultado, intentoOp = 0;
 
-    // RETIRO: chequeo de saldo previo
-    // V15.2: si Agentes devuelve sólo "ARS" sin número, NO lo tomamos como saldo 0.
-    // Eso era un falso bloqueo. Sólo bloqueamos cuando el saldo leído tiene dígitos reales.
-    if(tipo === "RETIRO"){
-      const saldoRaw = String(busqueda.balance?.raw || "");
-      const saldo = busqueda.balance?.value ?? null;
-      const saldoConfiable = /\d/.test(saldoRaw) && typeof saldo === "number" && Number.isFinite(saldo);
-      if(saldoConfiable && saldo >= 0 && saldo < montoAbs){
-        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Saldo insuficiente'});
-        if(res) res.innerHTML = '<div class="err-box">⚠️ Saldo insuficiente: '+escapeHtml(busqueda.balance?.raw||'')+'</div>';
-        toast("Saldo insuficiente","red"); return;
+    while(intentoOp < MAX_REINTENTOS){
+      intentoOp++;
+
+      // ── BUSCAR ──
+      toast(intentoOp>1 ? ("↻ Reintento "+intentoOp+" · "+usuario+"...") : ("Buscando "+usuario+"..."),"blue");
+      _wdLock();
+      try {
+        // CARGA: skipBalance → NO abrimos el modal acá. applyAmount (cargarSaldo)
+        //        abre el modal UNA sola vez y lee pre (input 0) + post (input 1).
+        // RETIRO: necesitamos el saldo antes para validar suficiencia → sin skip.
+        busqueda = await callDrex("buscarUsuario", usuario, { skipBalance: tipo === "CARGA" });
+      } finally {
+        _wdUnlock();
       }
-    }
 
-    // ── Drex SECUENCIAL ── (esperamos confirmación antes de marcar como completada)
-    toast(tipo === "CARGA" ? "Cargando "+money(montoAbs)+"..." : "Retirando "+money(montoAbs)+"...", "blue");
+      // Página de error del CDN (403/404) en la BÚSQUEDA → refrescar y reintentar
+      if(busqueda && busqueda.pageError){
+        if(intentoOp < MAX_REINTENTOS){
+          if(res) res.innerHTML = '<div class="alert-box">↻ Agentes devolvió un error de página · reintentando ('+intentoOp+'/'+MAX_REINTENTOS+')...</div>';
+          try{ await window.ctrlElectron.navigateAgent(); }catch(_e){}
+          continue;
+        }
+        if(res) res.innerHTML = '<div class="err-box">❌ Agentes devolvió una página de error (403/CDN). No se operó · cerrá y reabrí la ventana de Agentes, o reintentá.</div>';
+        toast('Agentes devolvió error de página · reintentá', 'red'); return;
+      }
 
-    _wdLock(); // bloqueamos watchdog para que no navegue agentes mientras opera
-    let resultado;
-    try {
-      resultado = tipo === "CARGA"
-        ? await callDrex("cargarSaldo",  montoAbs)
-        : await callDrex("retirarSaldo", montoAbs);
-    } catch(e){
-      const msgTimeout = e && (e.message || String(e)) || 'Error en Drex';
-      if(/timeout|tard[oó] demasiado|timed out/i.test(msgTimeout)){
-        // El worker puede terminar la carga en Agentes/Chunior pero cortar por timeout al volver.
-        // No marcamos error ciego: intentamos leer saldo post; si no se puede, queda OK a verificar.
-        resultado = { ok:true, message:'Timeout posterior a la operación · verificar saldo', timeoutVerificar:true };
-        try{
-          const postRead = await callDrex("buscarUsuario", usuario, { skipBalance:false });
-          if(postRead && postRead.exists && typeof postRead.balance?.value === 'number'){
-            resultado.newBalance = postRead.balance;
-            resultado.message = 'Timeout, pero saldo post leído';
+      // Sesión caída en la BÚSQUEDA → login y reintentar
+      if(busqueda && busqueda.needsLogin){
+        if(res) res.innerHTML = '<div class="alert-box">🔐 Sesión de agentes caída · reingresá credenciales.</div>';
+        const reconectado = await ensureDrexSession();
+        if(!reconectado){ toast("Sesión de agentes requerida.","red"); return; }
+        continue;
+      }
+
+      if(!busqueda.exists){
+        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Usuario no encontrado'});
+        if(res) res.innerHTML = '<div class="err-box">❌ <b>'+escapeHtml(usuario)+'</b> no existe en el casino.</div>';
+        toast(usuario+" no encontrado","red"); return;
+      }
+
+      // RETIRO: chequeo de saldo previo
+      // V15.2: si Agentes devuelve sólo "ARS" sin número, NO lo tomamos como saldo 0.
+      // Eso era un falso bloqueo. Sólo bloqueamos cuando el saldo leído tiene dígitos reales.
+      if(tipo === "RETIRO"){
+        const saldoRaw = String(busqueda.balance?.raw || "");
+        const saldo = busqueda.balance?.value ?? null;
+        const saldoConfiable = /\d/.test(saldoRaw) && typeof saldo === "number" && Number.isFinite(saldo);
+        if(saldoConfiable && saldo >= 0 && saldo < montoAbs){
+          await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Saldo insuficiente'});
+          if(res) res.innerHTML = '<div class="err-box">⚠️ Saldo insuficiente: '+escapeHtml(busqueda.balance?.raw||'')+'</div>';
+          toast("Saldo insuficiente","red"); return;
+        }
+      }
+
+      // ── OPERAR ── (esperamos confirmación antes de marcar como completada)
+      toast(tipo === "CARGA" ? "Cargando "+money(montoAbs)+"..." : "Retirando "+money(montoAbs)+"...", "blue");
+      _wdLock(); // bloqueamos watchdog para que no navegue agentes mientras opera
+      try {
+        resultado = tipo === "CARGA"
+          ? await callDrex("cargarSaldo",  montoAbs)
+          : await callDrex("retirarSaldo", montoAbs);
+      } catch(e){
+        const msgTimeout = e && (e.message || String(e)) || 'Error en Drex';
+        if(/timeout|tard[oó] demasiado|timed out/i.test(msgTimeout)){
+          // El worker puede terminar la carga en Agentes/Chunior pero cortar por timeout al volver.
+          // No marcamos error ciego: intentamos leer saldo post; si no se puede, queda OK a verificar.
+          resultado = { ok:true, message:'Timeout posterior a la operación · verificar saldo', timeoutVerificar:true };
+          try{
+            const postRead = await callDrex("buscarUsuario", usuario, { skipBalance:false });
+            if(postRead && postRead.exists && typeof postRead.balance?.value === 'number'){
+              resultado.newBalance = postRead.balance;
+              resultado.message = 'Timeout, pero saldo post leído';
+            }
+          }catch(_e){}
+        }else{
+          resultado = { ok:false, message: msgTimeout };
+        }
+      } finally {
+        _wdUnlock();
+      }
+
+      // Error de página / sesión caída DURANTE la operación → refrescar/login y reintentar.
+      // OJO: el timeout (timeoutVerificar) NO entra acá — puede haberse aplicado en el casino,
+      // no reintentamos a ciegas (evita duplicar). Solo reintentamos si el modal ni se abrió.
+      if(resultado && !resultado.timeoutVerificar && (resultado.pageError || resultado.needsLogin)){
+        if(intentoOp < MAX_REINTENTOS){
+          if(resultado.needsLogin){
+            if(res) res.innerHTML = '<div class="alert-box">🔐 Sesión caída durante la operación · reingresá credenciales.</div>';
+            const recon = await ensureDrexSession();
+            if(!recon){ toast('Sesión de agentes requerida.','red'); return; }
+          } else {
+            if(res) res.innerHTML = '<div class="alert-box">↻ Error de página al operar · refrescando y reintentando ('+intentoOp+'/'+MAX_REINTENTOS+')...</div>';
+            try{ await window.ctrlElectron.navigateAgent(); }catch(_e){}
           }
-        }catch(_e){}
-      }else{
-        resultado = { ok:false, message: msgTimeout };
+          continue;
+        }
+        // Sin más reintentos → error claro (no operamos a ciegas)
+        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:(resultado.needsLogin?'Sesión caída':'Error de página')+' al operar · no confirmado'});
+        if(res) res.innerHTML = '<div class="err-box">❌ '+tipo+' no confirmada: '+(resultado.needsLogin?'sesión caída':'error de página en Agentes')+'. Verificá en el casino antes de reintentar.</div>';
+        toast(tipo+' no confirmada · verificá', 'red'); return;
       }
-    } finally {
-      _wdUnlock();
+
+      break; // el script corrió (o timeout que puede haberse aplicado) → salimos del loop
     }
 
     const ok    = resultado && resultado.ok !== false;
@@ -8880,6 +8936,18 @@ async function ejecutarSolicitudPortalSimple(ctx){
         busqueda = await callDrex('buscarUsuario', usuario, { skipBalance: false });
       }finally{
         _wdUnlock();
+      }
+
+      // Distinguir un error de página (403/CDN) o sesión caída de un "usuario no existe" real.
+      // Antes ambos caían en el mismo mensaje engañoso "Usuario no encontrado". Acá la solicitud
+      // queda EN_REVISION (no ERROR_OPERATIVO) para que se pueda reintentar sin marcarla mal.
+      if(busqueda && (busqueda.pageError || busqueda.needsLogin)){
+        const _motivo = busqueda.pageError ? 'Error de página en Agentes (403/CDN)' : 'Sesión de agentes caída';
+        await actualizarSolicitudPortal(id, 'EN_REVISION', {etapa: busqueda.pageError ? 'PORTAL_PAGE_ERROR_BUSCAR' : 'PORTAL_SESION_CAIDA_BUSCAR'});
+        if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">'+esc(_motivo)+' · no se operó. '+(busqueda.needsLogin?'Reingresá credenciales':'Reintentá')+' y volvé a aprobar.</div>';
+        toast('Portal: '+_motivo+' · reintentá', 'red');
+        await cargarSolicitudesPortal(true);
+        return;
       }
 
       if(!busqueda || !busqueda.exists){
