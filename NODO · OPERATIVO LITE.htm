@@ -842,7 +842,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   <button class="mini-btn gray" style="padding:4px 10px;font-size:11px" onclick="nodoBuscarActualizacion()" title="Buscar e instalar la última versión">🔄 Actualizar</button>
   <button class="mini-btn gray" id="updaterRollbackBtn" style="padding:4px 10px;font-size:11px;display:none" onclick="nodoVolverVersionAnterior()" title="Volver a la versión anterior si esta falla">↩ Volver</button>
   <span id="updaterStatusTxt"></span>
+  <button id="updaterMinBtn" onclick="nodoUpdaterMinimizar(true)" title="Minimizar" style="background:transparent;border:0;color:#6b7688;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">—</button>
 </div>
+<button id="updaterMiniChip" onclick="nodoUpdaterMinimizar(false)" title="Actualizaciones" style="position:fixed;top:10px;right:12px;z-index:100000;display:none;background:#151a24;border:1px solid #272b36;border-radius:999px;width:34px;height:34px;color:#8b949e;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.45);font-size:15px">🔄</button>
 <div id="loginView" class="login-wrap">
   <div class="login-card">
     <img src="icons/icon-512.png" class="logo" alt="NODO">
@@ -3771,6 +3773,17 @@ async function nodoInitUpdater(){
     // Mostrar el botón "Volver" solo si la función existe (app instalada con updater).
     const rb=document.getElementById("updaterRollbackBtn"); if(rb) rb.style.display="";
     window.updaterAPI.onStatus(nodoUpdaterStatus);
+    // Restaurar si el operador lo había dejado minimizado.
+    try{ if(localStorage.getItem("nodo_updater_min")==="1") nodoUpdaterMinimizar(true); }catch(_e){}
+  }catch(_e){}
+}
+function nodoUpdaterMinimizar(min){
+  try{
+    const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
+    if(box) box.style.display = min ? "none" : "flex";
+    if(chip) chip.style.display = min ? "flex" : "none";
+    if(chip) chip.style.alignItems="center", chip.style.justifyContent="center";
+    localStorage.setItem("nodo_updater_min", min ? "1" : "0");
   }catch(_e){}
 }
 async function nodoVolverVersionAnterior(){
@@ -4206,7 +4219,7 @@ function renderHistorial(lista){
     // Botón ℹ️ de proceso: solo si hay traza guardada de esa operación en ESTA PC.
     let _hayTraza = false; try{ _hayTraza = !!localStorage.getItem('nodo_traza_hist_'+h.id); }catch(_e){}
     const infoBtn = _hayTraza
-      ? '<button class="mini-btn" style="font-size:11px;background:#1e293b;color:#93c5fd" onclick="verTrazaHistorial(\x27'+h.id+'\x27)" title="Ver el paso a paso del proceso (dónde falló)">ℹ️ Proceso</button>'
+      ? '<button class="mini-btn" style="font-size:12px;background:#1e293b;color:#93c5fd;padding:4px 8px" onclick="verTrazaHistorial(\x27'+h.id+'\x27)" title="Ver el paso a paso del proceso (dónde falló)">ℹ️</button>'
       : '';
     const acciones = [infoBtn, retryBtn, chuniorBtn, claveBtn, undoBtn].filter(Boolean).join(' ') || '-';
     const saldoPreTd = (h.saldo_pre !== null && h.saldo_pre !== undefined && h.saldo_pre !== '')
@@ -11275,7 +11288,10 @@ async function ejecutarSolicitudPortalSimple(ctx){
     const out=[];
     (arr||[]).forEach(raw=>{
       const m=normalizeThreadRow(raw);
-      const k=[m.origen,m.solicitud_id||"",m.fecha||"",m.mensaje||""].join("|");
+      // Dedup por origen+fecha+mensaje (SIN solicitud_id): la copia local de un mensaje enviado no
+      // tiene solicitud_id y la del servidor sí; incluirlo hacía que el mismo mensaje se viera dos
+      // veces al mezclar local+servidor. Origen+fecha(ISO ms)+texto ya identifica un mensaje único.
+      const k=[m.origen,m.fecha||"",m.mensaje||""].join("|");
       if(seen.has(k))return;
       seen.add(k);out.push(m);
     });
@@ -11488,7 +11504,12 @@ async function ejecutarSolicitudPortalSimple(ctx){
     if(titulo)titulo.textContent=fresh.usuario;
     if(sub)sub.innerHTML=`Sol. ${E(fresh.masterId||fresh.solicitudId||"")} · Consulta portal <button onclick="vincularDesdeConsulta()" style="margin-left:8px;background:#1e3a5f;color:#7cc4ff;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">🔗 Validar y vincular</button> <button onclick="cerrarConsultaWq2()" style="margin-left:6px;background:#7f1d1d;color:#fca5a5;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">✕ Cerrar consulta</button>`;
 
-    const msgs=uniqThread(fresh.thread);
+    // Mezclamos el thread del SERVIDOR con la copia LOCAL (localStorage). Antes el render leía
+    // solo fresh.thread → el mensaje recién enviado desaparecía hasta el próximo poll (~15s), que
+    // se percibía como "no guarda los mensajes". El localStorage ya se escribe al enviar; uniqThread
+    // dedup-ea (mismo origen+fecha+mensaje), así el server y el local no se duplican, y los mensajes
+    // aún-no-propagados al server igual se ven y sobreviven una recarga.
+    const msgs=uniqThread((fresh.thread||[]).concat(getSavedMsgs(fresh)));
     // Parchear imagen_url desde window.chatMensajes cuando el RPC no lo incluye en chat_thread.
     // Matching por timestamp más cercano (diferencia < 5 min) para evitar asignar imagen incorrecta
     // cuando hay múltiples mensajes con imagen.
