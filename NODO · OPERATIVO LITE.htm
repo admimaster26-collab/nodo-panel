@@ -3087,6 +3087,88 @@ function _drexGlobalLock(motivo){
 }
 function _drexGlobalUnlock(){ window._drexGlobalBusy = false; window._drexGlobalBusyMotivo = null; }
 
+// ── Traza de proceso de carga/retiro (visibilidad + cancelar) ──────────────────
+// Registra cada paso de una operación con su tiempo, para: (1) mostrarlo EN VIVO en una tira
+// visible → si se traba, se ve en qué paso quedó; (2) persistirlo (localStorage) para el botón
+// ℹ️ del historial; (3) permitir CANCELAR y liberar el panel. NO toca el motor de carga — solo
+// observa y ofrece la salida de emergencia. Todo defensivo (try/catch) para no romper el flujo.
+window._traza = { pasos: [], t0: 0, cancelada: false, fin: '', titulo: '' };
+function _trazaInit(titulo){
+  window._traza = { pasos: [], t0: Date.now(), cancelada: false, fin: '', titulo: titulo||'Proceso' };
+  _trazaRender();
+}
+function _trazaPaso(msg, estado){ // estado: '' en curso | 'ok' | 'err' | 'warn'
+  try{
+    const seg = window._traza.t0 ? ((Date.now()-window._traza.t0)/1000).toFixed(1) : '0.0';
+    window._traza.pasos.push({ t: seg, msg: String(msg||''), estado: estado||'' });
+    _trazaRender();
+  }catch(_e){}
+}
+function _trazaFin(estadoFinal, histId){
+  try{
+    window._traza.fin = estadoFinal||'';
+    _trazaRender();
+    if(histId){
+      const data = { titulo:window._traza.titulo, pasos:window._traza.pasos, fin:estadoFinal||'', ts:Date.now() };
+      localStorage.setItem('nodo_traza_hist_'+histId, JSON.stringify(data));
+      const idx = JSON.parse(localStorage.getItem('nodo_traza_idx')||'[]');
+      idx.push(String(histId));
+      while(idx.length>300){ const v=idx.shift(); try{localStorage.removeItem('nodo_traza_hist_'+v);}catch(_e){} }
+      localStorage.setItem('nodo_traza_idx', JSON.stringify(idx));
+    }
+  }catch(_e){}
+  setTimeout(_trazaOcultar, estadoFinal==='ok'?3000:12000);
+}
+function _trazaCancelar(){
+  window._traza.cancelada = true;
+  _trazaPaso('⛔ Cancelado por el operador · verificá en el casino si la operación llegó a aplicarse', 'warn');
+}
+function _trazaEl(){
+  let el = document.getElementById('trazaStrip');
+  if(el) return el;
+  el = document.createElement('div');
+  el.id = 'trazaStrip';
+  el.style.cssText = 'position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:9998;max-width:min(560px,92vw);background:#0e1420;border:1px solid #2a3548;border-radius:14px;box-shadow:0 10px 34px rgba(0,0,0,.5);padding:12px 14px;font-size:12px;color:#c8d2e0;display:none';
+  document.body.appendChild(el);
+  return el;
+}
+function _trazaRender(){
+  try{
+    const el = _trazaEl();
+    const pasos = window._traza.pasos||[];
+    if(!pasos.length){ el.style.display='none'; return; }
+    const ico = e => e==='ok'?'✅':e==='err'?'❌':e==='warn'?'⚠️':'⏳';
+    const filas = pasos.map((p,i)=>{
+      const ultimo = i===pasos.length-1 && !window._traza.fin;
+      return '<div style="display:flex;gap:8px;padding:2px 0;'+(ultimo&&!p.estado?'color:#fde68a;font-weight:700':'')+'">'
+        + '<span style="color:#6b7688;min-width:40px">+'+p.t+'s</span>'
+        + '<span>'+ico(p.estado)+' '+escapeHtml(p.msg)+'</span></div>';
+    }).join('');
+    const enCurso = !window._traza.fin && !window._traza.cancelada;
+    el.innerHTML =
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;gap:10px">'
+      + '<b style="color:#7cc4ff">'+escapeHtml(window._traza.titulo||'Proceso')+'</b>'
+      + (enCurso ? '<button onclick="_trazaCancelar()" style="background:#7f1d1d;color:#fca5a5;border:0;border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">⛔ Cancelar</button>'
+                 : '<button onclick="_trazaOcultar()" style="background:#374151;color:#cbd5e1;border:0;border-radius:8px;padding:4px 10px;font-size:11px;cursor:pointer">Cerrar</button>')
+      + '</div>' + filas;
+    el.style.display = 'block';
+  }catch(_e){}
+}
+function _trazaOcultar(){ const el=document.getElementById('trazaStrip'); if(el) el.style.display='none'; }
+// Botón ℹ️ del historial: muestra el paso a paso guardado de esa operación.
+function verTrazaHistorial(histId){
+  let data = null;
+  try{ data = JSON.parse(localStorage.getItem('nodo_traza_hist_'+histId)||'null'); }catch(_e){}
+  if(!data || !data.pasos || !data.pasos.length){
+    if(typeof abrirModal==='function') abrirModal('Detalle del proceso', '<div class="alert-box">No hay traza guardada para esta operación.<br><span class="small">Solo se guarda en la PC donde se ejecutó la carga, y de las últimas ~300 operaciones.</span></div>', null, 'Cerrar');
+    return;
+  }
+  const ico = e => e==='ok'?'✅':e==='err'?'❌':e==='warn'?'⚠️':'•';
+  const filas = data.pasos.map(p=>'<div style="display:flex;gap:10px;padding:3px 0;border-bottom:1px solid rgba(255,255,255,.05)"><span style="color:#6b7688;min-width:48px">+'+p.t+'s</span><span>'+ico(p.estado)+' '+escapeHtml(p.msg)+'</span></div>').join('');
+  const cuando = data.ts ? new Date(data.ts).toLocaleString('es-AR',{timeZone:'America/Argentina/Buenos_Aires'}) : '';
+  if(typeof abrirModal==='function') abrirModal('🔎 '+(data.titulo||'Proceso'), '<div style="font-size:12px;color:#94a3b8;margin-bottom:8px">'+escapeHtml(cuando)+'</div><div style="max-height:60vh;overflow:auto;font-size:13px">'+filas+'</div>', null, 'Cerrar');
+}
+
 // ── Operación manual automatizada ─────────────────────────────────────────────
 let _operacionManualEnCurso = false;
 async function ejecutarOperacionManual(){
@@ -3152,6 +3234,7 @@ async function ejecutarOperacionManual(){
   const montoAbs= Math.abs(monto);
   const bil     = billeteras.find(function(b){ return b.ID_BILLETERA===bilId; }) || getBilleraLanding();
 
+  _trazaInit((tipo==="CARGA"?"Carga":"Retiro")+' manual · '+usuario+' · '+money(montoAbs));
   if(res) res.innerHTML = '<div class="alert-box">Procesando...</div>';
 
   if(tipo==="RETIRO"){
@@ -3174,7 +3257,9 @@ async function ejecutarOperacionManual(){
     // un contador (_watchdog.busy++), así que anidar los candados de abajo es seguro.
     _wdLock();
     toast("Abriendo backoffice...","blue");
-    if(!await ensureDrexSession()){ toast("Sesión de backoffice requerida.","red"); return; }
+    _trazaPaso('Abriendo sesión de Agentes...');
+    if(!await ensureDrexSession()){ _trazaPaso('Falta sesión de Agentes','err'); _trazaFin('err'); toast("Sesión de backoffice requerida.","red"); return; }
+    _trazaPaso('Sesión de Agentes lista','ok');
 
     // ── BUSCAR + OPERAR con reintento ACOTADO ante error de página (403/CDN) o sesión caída ──
     // Adoptado del NODO hermano (la parte REAL de su bucle — su señal 'needsRetry' es lógica
@@ -3192,6 +3277,7 @@ async function ejecutarOperacionManual(){
 
       // ── BUSCAR ──
       toast(intentoOp>1 ? ("↻ Reintento "+intentoOp+" · "+usuario+"...") : ("Buscando "+usuario+"..."),"blue");
+      _trazaPaso(intentoOp>1 ? ('Reintento '+intentoOp+' · buscando '+usuario+'...') : ('Buscando '+usuario+' en Agentes...'));
       _wdLock();
       try {
         // CARGA: skipBalance → NO abrimos el modal acá. applyAmount (cargarSaldo)
@@ -3210,20 +3296,23 @@ async function ejecutarOperacionManual(){
           continue;
         }
         if(res) res.innerHTML = '<div class="err-box">❌ Agentes devolvió una página de error (403/CDN). No se operó · cerrá y reabrí la ventana de Agentes, o reintentá.</div>';
+        _trazaPaso('Agentes devolvió error de página (403/CDN) · no se operó','err'); _trazaFin('err');
         toast('Agentes devolvió error de página · reintentá', 'red'); return;
       }
 
       // Sesión caída en la BÚSQUEDA → login y reintentar
       if(busqueda && busqueda.needsLogin){
         if(res) res.innerHTML = '<div class="alert-box">🔐 Sesión de agentes caída · reingresá credenciales.</div>';
+        _trazaPaso('Sesión de Agentes caída · reingresando...','warn');
         const reconectado = await ensureDrexSession();
-        if(!reconectado){ toast("Sesión de agentes requerida.","red"); return; }
+        if(!reconectado){ _trazaPaso('No se reingresó a Agentes','err'); _trazaFin('err'); toast("Sesión de agentes requerida.","red"); return; }
         continue;
       }
 
       if(!busqueda.exists){
-        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Usuario no encontrado'});
+        const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Usuario no encontrado'});
         if(res) res.innerHTML = '<div class="err-box">❌ <b>'+escapeHtml(usuario)+'</b> no existe en el casino.</div>';
+        _trazaPaso(usuario+' NO existe en Agentes','err'); _trazaFin('err', _fh&&_fh.id);
         toast(usuario+" no encontrado","red"); return;
       }
 
@@ -3235,14 +3324,27 @@ async function ejecutarOperacionManual(){
         const saldo = busqueda.balance?.value ?? null;
         const saldoConfiable = /\d/.test(saldoRaw) && typeof saldo === "number" && Number.isFinite(saldo);
         if(saldoConfiable && saldo >= 0 && saldo < montoAbs){
-          await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Saldo insuficiente'});
+          const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Saldo insuficiente'});
           if(res) res.innerHTML = '<div class="err-box">⚠️ Saldo insuficiente: '+escapeHtml(busqueda.balance?.raw||'')+'</div>';
+          _trazaPaso('Saldo insuficiente ('+(busqueda.balance?.raw||'').trim()+')','err'); _trazaFin('err', _fh&&_fh.id);
           toast("Saldo insuficiente","red"); return;
         }
       }
 
+      _trazaPaso(usuario+' encontrado'+(busqueda.balance?.raw?(' · saldo '+busqueda.balance.raw.trim()):''), 'ok');
+
+      // Punto de CANCELACIÓN seguro: si el operador canceló mientras buscábamos, NO aplicamos
+      // la carga (todavía no se tocó plata). Libera el panel y avisa.
+      if(window._traza && window._traza.cancelada){
+        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:'Cancelado por el operador antes de aplicar'});
+        _trazaFin('warn');
+        if(res) res.innerHTML = '<div class="alert-box">⛔ '+tipo+' cancelada antes de aplicar. No se tocó nada en el casino.</div>';
+        toast(tipo+' cancelada', 'yellow'); return;
+      }
+
       // ── OPERAR ── (esperamos confirmación antes de marcar como completada)
       toast(tipo === "CARGA" ? "Cargando "+money(montoAbs)+"..." : "Retirando "+money(montoAbs)+"...", "blue");
+      _trazaPaso((tipo==="CARGA"?"Cargando ":"Retirando ")+money(montoAbs)+' en Agentes...');
       _wdLock(); // bloqueamos watchdog para que no navegue agentes mientras opera
       try {
         resultado = tipo === "CARGA"
@@ -3284,8 +3386,9 @@ async function ejecutarOperacionManual(){
           continue;
         }
         // Sin más reintentos → error claro (no operamos a ciegas)
-        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:(resultado.needsLogin?'Sesión caída':'Error de página')+' al operar · no confirmado'});
+        const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:'ERROR', notas:(resultado.needsLogin?'Sesión caída':'Error de página')+' al operar · no confirmado'});
         if(res) res.innerHTML = '<div class="err-box">❌ '+tipo+' no confirmada: '+(resultado.needsLogin?'sesión caída':'error de página en Agentes')+'. Verificá en el casino antes de reintentar.</div>';
+        _trazaPaso((resultado.needsLogin?'Sesión caída':'Error de página')+' al operar · no confirmado','err'); _trazaFin('err', _fh&&_fh.id);
         toast(tipo+' no confirmada · verificá', 'red'); return;
       }
 
@@ -3348,17 +3451,32 @@ async function ejecutarOperacionManual(){
     // después cuando Chunior responda en background).
     const filaHist = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'MANUAL', estado:est2, notas, chunior_movimiento_id:null, saldo_post:saldoPost, saldo_pre:saldoPre});
 
+    // Traza del resultado en Agentes + persistir ligada a la fila del historial (botón ℹ️).
+    if(!ok){ _trazaPaso('Agentes: no se pudo aplicar · '+((resultado&&resultado.message)||'error'), 'err'); _trazaFin('err', filaHist&&filaHist.id); }
+    else if(_rechazoCasino){ _trazaPaso('Agentes RECHAZÓ (no dijo "Operación correcta") · no se anota en Chunior', 'err'); _trazaFin('err', filaHist&&filaHist.id); }
+    else if(_confianza==='duplicado'){ _trazaPaso('🚨 DUPLICADO ('+(_vecesDup||'?')+'x) en Agentes · revisá', 'warn'); _trazaFin('warn', filaHist&&filaHist.id); }
+    else { _trazaPaso((tipo==="CARGA"?"Carga":"Retiro")+' aplicado en Agentes'+(saldoPost!=null?(' · saldo '+money(saldoPost)):''), 'ok'); _trazaFin('ok', filaHist&&filaHist.id); }
+    // Referencia estable de esta traza para poder anexar el resultado de Chunior (async) sin
+    // que una operación posterior lo pise.
+    const _trazaPasosRef = (window._traza && window._traza.pasos) || [];
+    const _trazaTituloRef = (window._traza && window._traza.titulo) || '';
+    const _histIdRef = filaHist && filaHist.id;
+    const _guardarTraza = function(fin){ try{ if(_histIdRef) localStorage.setItem('nodo_traza_hist_'+_histIdRef, JSON.stringify({titulo:_trazaTituloRef, pasos:_trazaPasosRef, fin:fin||'', ts:Date.now()})); }catch(_e){} };
+
     // ── Chunior EN BACKGROUND ── SOLO si la operación quedó APLICADA LIMPIA (script corrió, sin rechazo ni duplicado)
     const debeChunior = aplicadoLimpio && !!(bil && bil.CHUNIOR_UID);
     if(debeChunior){
+      _trazaPasosRef.push({ t:((Date.now()-(window._traza.t0||Date.now()))/1000).toFixed(1), msg:'Anotando en Chunior (2° plano)...', estado:'' }); _trazaRender(); _guardarTraza('ok');
       const chuPromise = tipo === "CARGA"
         ? registrarCargaEnChunior (bil.CHUNIOR_UID, montoAbs, usuario)
         : registrarRetiroEnChunior(bil.CHUNIOR_UID, montoAbs, usuario);
 
+      const _chuPaso = function(msg, estado){ try{ _trazaPasosRef.push({ t:((Date.now()-(window._traza.t0||Date.now()))/1000).toFixed(1), msg:msg, estado:estado||'' }); _guardarTraza(estado==='err'?'warn':'ok'); }catch(_e){} };
       chuPromise
         .then(async function(rChu){
           if(rChu && rChu.ok && rChu.movimientoId){
             toast("📋 "+tipo+" Chunior N° "+rChu.movimientoId, 'blue');
+            _chuPaso('Chunior anotó · N° '+rChu.movimientoId, 'ok');
             // Actualizar el historial con el chunior_movimiento_id real
             if(filaHist && filaHist.id){
               try {
@@ -3378,6 +3496,7 @@ async function ejecutarOperacionManual(){
             // Marcamos en notas (sin inventar un chunior_movimiento_id falso, que se usa
             // para "Cambiar billetera" y otras acciones que necesitan un N° real).
             toast("📋 "+tipo+" anotado en Chunior (sin N° confirmado)", 'blue');
+            _chuPaso('Chunior anotó (sin N° confirmado)', 'ok');
             if(filaHist && filaHist.id){
               try {
                 const notaMarca = (String(notas||'').trim()+' [CHUNIOR_OK_SIN_N]').trim();
@@ -3390,11 +3509,12 @@ async function ejecutarOperacionManual(){
             _watchdogTrigger(1500);
           } else if(rChu && rChu.error){
             toast('⚠️ '+tipo+' OK en casino pero falló en Chunior: '+rChu.error, 'red');
+            _chuPaso('Chunior FALLÓ: '+rChu.error+' · verificá/reintentá', 'err');
             // Chunior falló → NO chequeamos fichas (sabríamos que hay discrepancia,
             // no aporta info nueva).
           }
         })
-        .catch(function(e){ toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red'); });
+        .catch(function(e){ _chuPaso('Error anotando en Chunior: '+(e.message||''), 'err'); toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red'); });
     }
     // Si no hay Chunior involucrado (billetera sin CHUNIOR_UID), NO disparamos
     // el watchdog: sabemos que va a haber discrepancia (Drex cambió, Chunior no).
@@ -3433,10 +3553,13 @@ async function ejecutarOperacionManual(){
     renderBillerasInicio();
     poblarManualBilletera();
   } catch(e) {
-    await registrarEnHistorial({usuario, tipo, monto:montoAbs, origen:'MANUAL', estado:'ERROR', notas:e.message||'excepción'});
+    const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, origen:'MANUAL', estado:'ERROR', notas:e.message||'excepción'});
     if(res) res.innerHTML = '<div class="err-box">Error inesperado: '+escapeHtml(e.message||'sin detalle')+'</div>';
+    _trazaPaso('Error inesperado: '+(e.message||'sin detalle'),'err'); _trazaFin('err', _fh&&_fh.id);
     toast("Error: "+(e.message||"sin detalle"),"red");
   } finally {
+    // Red de seguridad: si algún camino no finalizó la traza, cerrarla como error.
+    try{ if(window._traza && !window._traza.fin && window._traza.pasos && window._traza.pasos.length){ _trazaFin('err'); } }catch(_e){}
     _liberarLock();
   }
 }
@@ -4072,7 +4195,12 @@ function renderHistorial(lista){
     const retryBtn = necesitaRetry
       ? '<button class="mini-btn red" onclick="reintentarOperacionFallida(\x27'+h.id+'\x27)" style="font-size:11px" title="'+(chuniorPendiente?'Falta anotar en Chunior — reintentar':'Verificar Drex/Chunior y reintentar lo que falte')+'">'+(chuniorPendiente?'⚠️ Falta Chunior':'↻ Reintentar')+'</button>'
       : '';
-    const acciones = [retryBtn, chuniorBtn, claveBtn, undoBtn].filter(Boolean).join(' ') || '-';
+    // Botón ℹ️ de proceso: solo si hay traza guardada de esa operación en ESTA PC.
+    let _hayTraza = false; try{ _hayTraza = !!localStorage.getItem('nodo_traza_hist_'+h.id); }catch(_e){}
+    const infoBtn = _hayTraza
+      ? '<button class="mini-btn" style="font-size:11px;background:#1e293b;color:#93c5fd" onclick="verTrazaHistorial(\x27'+h.id+'\x27)" title="Ver el paso a paso del proceso (dónde falló)">ℹ️ Proceso</button>'
+      : '';
+    const acciones = [infoBtn, retryBtn, chuniorBtn, claveBtn, undoBtn].filter(Boolean).join(' ') || '-';
     const saldoPreTd = (h.saldo_pre !== null && h.saldo_pre !== undefined && h.saldo_pre !== '')
       ? '<span style="color:#9aa7bd">'+money(h.saldo_pre)+'</span>'
       : '<span class="small">—</span>';
@@ -8894,12 +9022,14 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
     _portalSolicitudOperacionEnCurso = true;
     if(btn){ btn.disabled = true; btn.style.opacity = '.65'; btn.textContent = 'Operando...'; }
+    _trazaInit((tipo==='CARGA'?'Carga':'Retiro')+' PORTAL · '+usuario+' · '+money(montoAbs)+' (sol. #'+id+')');
 
     const liberar = () => {
       _portalSolicitudOperacionEnCurso = false;
       _drexGlobalUnlock();
       _wdForceUnlock(); // libera el candado del watchdog tomado al arrancar (mismo fix que en manual)
       if(btn){ btn.disabled = false; btn.style.opacity = ''; btn.textContent = 'Aprobar'; }
+      try{ if(window._traza && !window._traza.fin && window._traza.pasos && window._traza.pasos.length){ _trazaFin('err'); } }catch(_e){}
     };
 
     try{
@@ -8923,13 +9053,17 @@ async function ejecutarSolicitudPortalSimple(ctx){
       }
 
       toast('Portal: abriendo backoffice...', 'blue');
+      _trazaPaso('Abriendo sesión de Agentes...');
       if(!await ensureDrexSession()){
         await actualizarSolicitudPortal(id, 'EN_REVISION', {etapa:'PORTAL_SIN_SESION_AGENTES'});
         if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Abrí la sesión de Agentes y reintentá.</div>';
+        _trazaPaso('Falta sesión de Agentes','err'); _trazaFin('err');
         return;
       }
+      _trazaPaso('Sesión de Agentes lista','ok');
 
       toast('Portal: buscando '+usuario+'...', 'blue');
+      _trazaPaso('Buscando '+usuario+' en Agentes...');
       _wdLock();
       let busqueda;
       try{
@@ -8946,17 +9080,27 @@ async function ejecutarSolicitudPortalSimple(ctx){
         await actualizarSolicitudPortal(id, 'EN_REVISION', {etapa: busqueda.pageError ? 'PORTAL_PAGE_ERROR_BUSCAR' : 'PORTAL_SESION_CAIDA_BUSCAR'});
         if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">'+esc(_motivo)+' · no se operó. '+(busqueda.needsLogin?'Reingresá credenciales':'Reintentá')+' y volvé a aprobar.</div>';
         toast('Portal: '+_motivo+' · reintentá', 'red');
+        _trazaPaso(_motivo+' · no se operó','err'); _trazaFin('err');
         await cargarSolicitudesPortal(true);
         return;
       }
 
       if(!busqueda || !busqueda.exists){
-        await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'LANDING', estado:'ERROR', notas:portalNotasBase(ctx)+' · Usuario no encontrado'});
+        const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'LANDING', estado:'ERROR', notas:portalNotasBase(ctx)+' · Usuario no encontrado'});
         await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_USUARIO_NO_ENCONTRADO', monto_aprobado:montoAbs});
         if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Usuario no encontrado.</div>';
+        _trazaPaso(usuario+' NO existe en Agentes','err'); _trazaFin('err', _fh&&_fh.id);
         await cargarHistorial();
         await cargarSolicitudesPortal(true);
         return;
+      }
+      _trazaPaso(usuario+' encontrado'+(busqueda.balance?.raw?(' · saldo '+busqueda.balance.raw.trim()):''), 'ok');
+      // Cancelación segura antes de aplicar (todavía no se tocó plata).
+      if(window._traza && window._traza.cancelada){
+        await actualizarSolicitudPortal(id, 'EN_REVISION', {etapa:'PORTAL_CANCELADA_OPERADOR'});
+        if(res) res.innerHTML = '<div class="alert-box" style="padding:8px 10px">⛔ Cancelada antes de aplicar. No se tocó nada en el casino.</div>';
+        _trazaFin('warn'); toast('Portal: cancelada', 'yellow');
+        await cargarSolicitudesPortal(true); return;
       }
 
       // Mismo criterio que operación manual: para retiro solo bloqueamos si el saldo leído es confiable.
@@ -8975,6 +9119,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       }
 
       toast(tipo === 'CARGA' ? 'Portal: cargando '+money(montoAbs)+'...' : 'Portal: retirando '+money(montoAbs)+'...', 'blue');
+      _trazaPaso((tipo==='CARGA'?'Cargando ':'Retirando ')+money(montoAbs)+' en Agentes...');
       _wdLock();
       let resultado;
       try{
@@ -9063,6 +9208,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
         });
         if(res) res.innerHTML = '<div class="ok-box" style="padding:8px 10px">✅ '+tipo+' portal de '+money(montoAbs)+' completada. Historial: LANDING.</div>';
         toast(tipo+' portal OK: '+usuario+' · '+money(montoAbs), 'green');
+        _trazaPaso((tipo==='CARGA'?'Carga':'Retiro')+' aplicado en Agentes'+(saldoPost!=null?(' · saldo '+money(saldoPost)):''), 'ok'); _trazaFin('ok', filaHist&&filaHist.id);
 
         // Chunior en background, igual que manual: no bloquea el flujo ni la próxima operación.
         if(bil && bil.CHUNIOR_UID){
@@ -9147,6 +9293,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       }else{
         await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_ERROR_AGENTES', monto_aprobado:montoAbs, historial_id:filaHist?.id||null, error:resultado?.message||'error'});
         if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Error en Agentes: '+esc(resultado?.message||'sin detalle')+'</div>';
+        _trazaPaso('Agentes: no se pudo aplicar · '+(resultado?.message||'error'),'err'); _trazaFin('err', filaHist&&filaHist.id);
         toast('Portal con error · revisar', 'red');
       }
 
@@ -9156,9 +9303,10 @@ async function ejecutarSolicitudPortalSimple(ctx){
       try{ await refreshAgent(); }catch(e){}
       try{ renderBillerasInicio(); poblarManualBilletera(); }catch(e){}
     }catch(e){
-      await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'LANDING', estado:'ERROR', notas:'Solicitud portal #'+id+' · '+(e.message||'excepción'), solicitud_id:id});
+      const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'LANDING', estado:'ERROR', notas:'Solicitud portal #'+id+' · '+(e.message||'excepción'), solicitud_id:id});
       await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_EXCEPCION', error:e.message||String(e), monto_aprobado:montoAbs});
       if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Error: '+esc(e.message||String(e))+'</div>';
+      _trazaPaso('Error inesperado: '+(e.message||String(e)),'err'); _trazaFin('err', _fh&&_fh.id);
       await cargarHistorial();
       await cargarSolicitudesPortal(true);
       toast('Portal con error', 'red');
