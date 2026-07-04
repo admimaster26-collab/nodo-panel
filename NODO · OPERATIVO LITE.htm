@@ -6238,10 +6238,39 @@ async function ejecutarVincular(usuario, telefono){
   if(!b || !b.exists){ toast("⚠️ '"+usuario+"' no existe en Agentes. Creá la cuenta con ese usuario y reintentá.","red"); return; }
   // 2) Agregar a la base (crea el vínculo VINCULADO)
   try{
-    const r = await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:(pcOperativa||window.pcOperativa||''),p_usuario:usuario,p_telefono:telefono});
-    const d = (r && r.data) || {};
-    if(r.error || !d.ok){ toast("No se pudo vincular: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return; }
-    toast("✅ "+usuario+" vinculado. Avisale por el chat que ingrese al portal con el usuario "+usuario+".","green");
+    const pcCod=(pcOperativa||window.pcOperativa||'');
+    // La llamada normal NO manda p_forzar (así anda igual en el esquema viejo de 4 args y en el
+    // nuevo de 5). Solo el reintento manda p_forzar:true (requiere el SQL nuevo aplicado).
+    const _vinc=async(forzar)=> forzar
+      ? await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono,p_forzar:true})
+      : await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono});
+    let r=await _vinc(false);
+    let d=(r&&r.data)||{};
+    if(r.error || !d.ok){
+      // Caso MUY común: el teléfono ya figura vinculado a "otro" usuario, pero en realidad es la
+      // MISMA persona con el nombre viejo/sucio de Whaticket (ej: "martincordoba(pr5)" con la oficina
+      // pegada, que el limpiador parsea mal). Ofrecemos reasignar el teléfono al usuario correcto:
+      // eso además deja el nombre limpio y arregla el cotejo del portal para ese usuario.
+      if(d.conflicto_tel){
+        const otro=d.usuario_actual||"otro usuario";
+        if(!confirm("Ese teléfono ya figura vinculado a «"+otro+"».\n\n¿Es la MISMA persona (dato viejo o mal escrito) y querés reasignar el teléfono al usuario «"+usuario+"»?")) return;
+        r=await _vinc(true); d=(r&&r.data)||{};
+        if(r.error || !d.ok){ toast("No se pudo reasignar: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return; }
+      } else {
+        toast("No se pudo vincular: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return;
+      }
+    }
+    // 3) Avisar al usuario por el chat del portal con su info de ingreso + botón "Ingresar".
+    let _avisado=false;
+    try{
+      if(typeof window.nodoEnviarMensajePortal==="function"){
+        const msg="✅ ¡Listo! Ya validamos tu cuenta.\n\nPara entrar al portal usá:\n👤 Usuario: "+usuario+"\n📱 Teléfono: "+telefono+"\n\nTocá el botón *Ingresar* acá abajo 👇\n⟦INGRESAR:"+usuario+"⟧";
+        const rr=await window.nodoEnviarMensajePortal(usuario,msg);
+        _avisado=!!(rr&&rr.ok);
+      }
+    }catch(_e){}
+    if(_avisado) toast("✅ "+usuario+" vinculado. Le avisamos por el chat con el botón para ingresar.","green");
+    else toast("✅ "+usuario+" vinculado. Avisale por el chat que ingrese al portal con el usuario "+usuario+".","green");
   }catch(e){ toast("Error al vincular: "+(e.message||e),"red"); }
 }
 // MODAL de vinculación (inputs HTML reales → anda en Electron). Permite ajustar el usuario si en el casino quedó con otro nombre.
@@ -11638,6 +11667,30 @@ async function ejecutarSolicitudPortalSimple(ctx){
     }
   };
   window.v15EnviarChatCompacto=window.enviarChat;
+
+  // Envía un mensaje del operador al thread del portal para un usuario dado, SIN depender del input
+  // ni de tener el chat abierto. Lo usa el flujo de vinculación para avisar "ya podés ingresar" con
+  // la info de acceso + la marca ⟦INGRESAR⟧ (el portal la convierte en un botón "Ingresar").
+  // Devuelve {ok:false,error:"sin-ticket"} si el usuario no tiene una consulta/soporte abierta.
+  window.nodoEnviarMensajePortal=async function(usuario,texto){
+    usuario=U(usuario); texto=S(texto);
+    if(!usuario||!texto) return {ok:false,error:"faltan-datos"};
+    const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===usuario);
+    if(!fresh) return {ok:false,error:"sin-ticket"};
+    const msgObj={origen:"OPERADOR",tipo:"OPERADOR",usuario:fresh.usuario,operador:(window.operador?.usuario||window.operador?.nombre||"panel"),mensaje:texto,fecha:new Date().toISOString()};
+    const saved=getSavedMsgs(fresh); saved.push(msgObj); setSavedMsgs(fresh,saved);
+    try{
+      await persistirChatStep5(fresh,"RESPONDIDO_PANEL",msgObj);
+      try{
+        const _pu=String(fresh.usuario||"").toLowerCase().trim();
+        if(_pu&&window.PUSH_API_URL){
+          fetch(window.PUSH_API_URL,{method:"POST",headers:{"Content-Type":"application/json","x-push-secret":window.PUSH_SECRET},body:JSON.stringify({usuario:_pu,title:"BET300 · Operador",body:texto.substring(0,120),url:"/",tag:"bet300-op"})}).catch(()=>{});
+        }
+      }catch(_p){}
+      try{ renderChatListStep2Final(); renderChatConversationStep5(); }catch(_r){}
+      return {ok:true};
+    }catch(e){ return {ok:false,error:e.message||String(e)}; }
+  };
 
   window.cerrarConsultaWq2=async function(){
     const ticket=window.__nodoChatCurrentTicket;
