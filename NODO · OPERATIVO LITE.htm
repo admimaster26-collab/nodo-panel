@@ -2696,9 +2696,20 @@ function iniciarBroadcastSolicitudes(){
     supabaseBroadcastChannel = supabaseClient
       .channel('nodo:solicitudes')
       .on('broadcast', {event:'cambio'}, (msg)=>{
-        try{ console.log('[RT] cambio de solicitud recibido', msg && msg.payload); }catch(_e){}
+        const pl = msg && msg.payload;
+        // El canal es GLOBAL → filtramos por MI oficina para no recargar por cambios de otras PCs.
+        // Usamos los alias de la oficina (P4/PC4/SANCHEZ) para no fallar por formato del pc_codigo.
+        try{
+          const eventPc = String((pl && pl.pc) || '').toUpperCase().trim();
+          let aliases;
+          try{ aliases = (typeof pcAliasesHist==='function') ? pcAliasesHist().map(x=>String(x).toUpperCase().trim()) : [String(pcOperativa||'').toUpperCase().trim()]; }
+          catch(_e){ aliases = [String(pcOperativa||'').toUpperCase().trim()]; }
+          aliases = aliases.filter(Boolean);
+          if(eventPc && aliases.length && !aliases.includes(eventPc)) return; // otra oficina → ignorar
+        }catch(_e){}
+        try{ console.log('[RT] cambio de solicitud (mi oficina)', pl); }catch(_e){}
         try{ if(typeof cargarSolicitudesPortal === 'function') cargarSolicitudesPortal(true); else cargarSolicitudes(true); }catch(_e){}
-        try{ const pl = msg && msg.payload; if(pl && String(pl.op)==='INSERT'){ toast('🔔 Nueva solicitud'); if(typeof sonido==='function') sonido('solicitud'); } }catch(_e){}
+        try{ if(pl && String(pl.op)==='INSERT'){ toast('🔔 Nueva solicitud'); if(typeof sonido==='function') sonido('solicitud'); } }catch(_e){}
       })
       .subscribe();
   }catch(_e){ console.warn('[RT] no se pudo suscribir al broadcast', _e); }
