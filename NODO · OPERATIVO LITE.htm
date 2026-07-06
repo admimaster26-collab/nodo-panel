@@ -8640,6 +8640,12 @@ if(window.ctrlElectron){
 
   
 async function asegurarChatsSoportePortal(){
+  // ⛔ DESACTIVADO (2026-07-05): creaba chat_sesiones para SOPORTE del portal via
+  // landing_crear_chat_v2, pero chat_sesiones.solicitud_id tiene FK a la tabla `solicitudes` y las
+  // del portal viven en `landing_solicitudes` → violaba el FK en CADA poll y por CADA SOPORTE abierta
+  // (cientos de miles de errores 23503/409 → success rate ~44% → la app se sentía lenta). El chat de
+  // SOPORTE ya funciona por chat_thread (módulo Final), así que esto es legacy y se apaga.
+  return;
   try{
     const soportes = (V154P.solicitudes||[]).filter(function(s){
       const tipo = String(s.TIPO || s.TIPO_SOLICITUD || '').toUpperCase();
