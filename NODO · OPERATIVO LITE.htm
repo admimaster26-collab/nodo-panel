@@ -2650,7 +2650,7 @@ function finalizarLogin(guardar=true){
   iniciarBroadcastSolicitudes();
   if(!timersIniciados){
     timersIniciados=true;
-    setInterval(()=>cargarSolicitudes(true),4500);
+    setInterval(()=>cargarSolicitudes(true),60000);  // fallback lento: el tiempo real lo da el broadcast (iniciarBroadcastSolicitudes)
     setInterval(()=>cargarChats(true),4500);
     setInterval(()=>cargarBilleteras(false),20000);
     setInterval(()=>{ if(chatActualId) cargarChatActual(true); },3500);
@@ -9579,7 +9579,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
   function start(){
     setTimeout(()=>cargarSolicitudesPortal(true), 800);
     setTimeout(()=>cargarChatsPortal(true), 1200);
-    setInterval(()=>cargarSolicitudesPortal(true), 15000);
+    setInterval(()=>cargarSolicitudesPortal(true), 60000)  // fallback lento: el tiempo real lo da el broadcast;
     setInterval(()=>cargarChatsPortal(true), 15000);
     setInterval(()=>{ if(V154P.chatActual) cargarChatPortalActual(true); }, 5000);
   }
