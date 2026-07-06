@@ -9424,9 +9424,16 @@ async function ejecutarSolicitudPortalSimple(ctx){
       return r;
     }
 
-    V154P.chats = normArr(r.data).map(mapChatSesion);
-    window.chats = V154P.chats.slice();
-    try{ chats = V154P.chats.slice(); }catch(_e){}
+    const _nuevosChats = normArr(r.data).map(mapChatSesion);
+    // ANTI-PARPADEO (contador 0↔N): si la RPC devolvió VACÍO pero ya teníamos chats cargados, NO pisamos
+    // con 0 — casi siempre es un timeout/vacío transitorio de la RPC (no "0 sin leer" real). Mantenemos
+    // lo último bueno. Un 0 legítimo (todo leído) igual pasa: ahí la RPC devuelve las sesiones con SIN_LEER=0
+    // (array NO vacío), así que este guard no se activa.
+    if(!(_nuevosChats.length === 0 && Array.isArray(V154P.chats) && V154P.chats.length > 0)){
+      V154P.chats = _nuevosChats;
+      window.chats = V154P.chats.slice();
+      try{ chats = V154P.chats.slice(); }catch(_e){}
+    }
 
     if(typeof v15RenderChatList === "function") v15RenderChatList();
     else if(typeof renderChatList === "function") renderChatList();
