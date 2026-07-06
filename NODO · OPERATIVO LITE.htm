@@ -2648,6 +2648,7 @@ function finalizarLogin(guardar=true){
   refrescarTodo(false);
   iniciarRealtimeSolicitudes();
   iniciarBroadcastSolicitudes();
+  iniciarBroadcastChat();
   if(!timersIniciados){
     timersIniciados=true;
     setInterval(()=>cargarSolicitudes(true),60000);  // fallback lento: el tiempo real lo da el broadcast (iniciarBroadcastSolicitudes)
@@ -2713,6 +2714,37 @@ function iniciarBroadcastSolicitudes(){
       })
       .subscribe();
   }catch(_e){ console.warn('[RT] no se pudo suscribir al broadcast', _e); }
+}
+
+// ¿el evento (pc del payload) es de MI oficina? Usa los alias (P4/PC4/SANCHEZ). Sin pc → reacciono igual.
+function _rtEsMiOficina(pc){
+  const eventPc = String(pc||'').toUpperCase().trim();
+  if(!eventPc) return true;
+  let aliases;
+  try{ aliases = (typeof pcAliasesHist==='function') ? pcAliasesHist().map(x=>String(x).toUpperCase().trim()) : [String(pcOperativa||'').toUpperCase().trim()]; }
+  catch(_e){ aliases = [String(pcOperativa||'').toUpperCase().trim()]; }
+  aliases = aliases.filter(Boolean);
+  return !aliases.length || aliases.includes(eventPc);
+}
+
+// Realtime BROADCAST de CHAT: un trigger en chat_mensajes avisa "nuevo mensaje del usuario" y el panel
+// refresca la lista de chats + la conversación abierta, sin pollear. ADITIVO (los polls de chat siguen
+// de respaldo hasta confirmar que el evento llega). Filtra por oficina como el de solicitudes.
+let supabaseChatBroadcastChannel = null;
+function iniciarBroadcastChat(){
+  try{ if(supabaseChatBroadcastChannel) supabaseClient.removeChannel(supabaseChatBroadcastChannel); }catch(_e){}
+  try{
+    supabaseChatBroadcastChannel = supabaseClient
+      .channel('nodo:chat')
+      .on('broadcast', {event:'cambio'}, (msg)=>{
+        const pl = msg && msg.payload;
+        if(!_rtEsMiOficina(pl && pl.pc)) return; // otra oficina → ignorar
+        try{ console.log('[RT] nuevo mensaje de chat (mi oficina)', pl); }catch(_e){}
+        try{ if(typeof cargarChatsPortal === 'function') cargarChatsPortal(true); else if(typeof cargarChats==='function') cargarChats(true); }catch(_e){}
+        try{ if((window.V154P && V154P.chatActual) || window.chatActualId){ if(typeof cargarChatPortalActual==='function') cargarChatPortalActual(true); else if(typeof cargarChatActual==='function') cargarChatActual(true); } }catch(_e){}
+      })
+      .subscribe();
+  }catch(_e){ console.warn('[RT] no se pudo suscribir al broadcast de chat', _e); }
 }
 
 // Minimizar/restaurar la bandeja de chat (solo desktop). Persiste en localStorage.
