@@ -2647,6 +2647,7 @@ function finalizarLogin(guardar=true){
   _nodoListo = true;
   refrescarTodo(false);
   iniciarRealtimeSolicitudes();
+  iniciarBroadcastSolicitudes();
   if(!timersIniciados){
     timersIniciados=true;
     setInterval(()=>cargarSolicitudes(true),4500);
@@ -2685,6 +2686,23 @@ function iniciarRealtimeSolicitudes(){
     .subscribe();
 }
 
+// Realtime BROADCAST (escalable, blindaje-safe): en vez de pollear, escuchamos la señal "cambió una
+// solicitud" que emite un trigger en landing_solicitudes, y hacemos UNA lectura por RPC (blindaje intacto).
+// ADITIVO: los polls siguen de respaldo hasta confirmar que el evento llega. Después bajamos los polls.
+let supabaseBroadcastChannel = null;
+function iniciarBroadcastSolicitudes(){
+  try{ if(supabaseBroadcastChannel) supabaseClient.removeChannel(supabaseBroadcastChannel); }catch(_e){}
+  try{
+    supabaseBroadcastChannel = supabaseClient
+      .channel('nodo:solicitudes')
+      .on('broadcast', {event:'cambio'}, (msg)=>{
+        try{ console.log('[RT] cambio de solicitud recibido', msg && msg.payload); }catch(_e){}
+        try{ if(typeof cargarSolicitudesPortal === 'function') cargarSolicitudesPortal(true); else cargarSolicitudes(true); }catch(_e){}
+        try{ const pl = msg && msg.payload; if(pl && String(pl.op)==='INSERT'){ toast('🔔 Nueva solicitud'); if(typeof sonido==='function') sonido('solicitud'); } }catch(_e){}
+      })
+      .subscribe();
+  }catch(_e){ console.warn('[RT] no se pudo suscribir al broadcast', _e); }
+}
 
 // Minimizar/restaurar la bandeja de chat (solo desktop). Persiste en localStorage.
 // Minimizado: el chat se oculta y el main ocupa todo el ancho (mejor vista del historial).
