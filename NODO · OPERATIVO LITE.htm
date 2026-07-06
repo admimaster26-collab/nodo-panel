@@ -11757,9 +11757,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
   // la info de acceso + la marca ⟦INGRESAR⟧ (el portal la convierte en un botón "Ingresar").
   // Devuelve {ok:false,error:"sin-ticket"} si el usuario no tiene una consulta/soporte abierta.
   window.nodoEnviarMensajePortal=async function(usuario,texto){
-    usuario=U(usuario); texto=S(texto);
-    if(!usuario||!texto) return {ok:false,error:"faltan-datos"};
-    const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===usuario);
+    texto=S(texto);
+    if(!texto) return {ok:false,error:"faltan-datos"};
+    // Ruteo: preferimos el ticket ABIERTO (el operador está trabajando sobre esa consulta). En un
+    // alta-nueva el usuario CAMBIA (apodo → usuario real), así que buscar por el usuario NUEVO no
+    // encontraría el ticket (que sigue bajo el apodo) y el ⟦INGRESAR⟧ no llegaría. Fallback: por usuario.
+    let fresh = window.__nodoChatCurrentTicket
+      ? (ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(window.__nodoChatCurrentTicket.usuario)) || window.__nodoChatCurrentTicket)
+      : null;
+    if(!fresh){ const u=U(usuario); if(u) fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===u); }
     if(!fresh) return {ok:false,error:"sin-ticket"};
     const msgObj={origen:"OPERADOR",tipo:"OPERADOR",usuario:fresh.usuario,operador:(window.operador?.usuario||window.operador?.nombre||"panel"),mensaje:texto,fecha:new Date().toISOString()};
     const saved=getSavedMsgs(fresh); saved.push(msgObj); setSavedMsgs(fresh,saved);
