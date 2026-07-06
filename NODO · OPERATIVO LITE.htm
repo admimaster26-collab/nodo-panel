@@ -9394,6 +9394,10 @@ async function ejecutarSolicitudPortalSimple(ctx){
                   registrarCargaEnChunior(bilPromo.CHUNIOR_UID, bonoMonto, usuario).then(async function(rChu){
                     if(rChu && rChu.ok && rChu.movimientoId && filaBono && filaBono.id){
                       try{ await supabaseClient.from('historial_ops').update({chunior_movimiento_id:rChu.movimientoId}).eq('id', filaBono.id); }catch(_e){}
+                    } else if(rChu && rChu.ok && !rChu.movimientoId && filaBono && filaBono.id){
+                      // Chunior aceptó el bono pero no pudimos leer el N° → marcar [CHUNIOR_OK_SIN_N] para que el
+                      // historial NO lo muestre como "no registrado" (mismo criterio que la carga del jugador).
+                      try{ await supabaseClient.from('historial_ops').update({notas:'Bono primer ingreso '+ctx.bonoPct+'% sobre '+money(montoAbs)+' · solicitud #'+id+' [CHUNIOR_OK_SIN_N]'}).eq('id', filaBono.id); }catch(_e){}
                     }
                   }).catch(function(){});
                 }
