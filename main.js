@@ -386,6 +386,9 @@ function createChuniorWindow() {
       backgroundThrottling: false, // que Chunior siga refrescando aunque no esté enfocado
     }
   });
+  // Chunior 404ea las requests con User-Agent de Electron (bot detection en su CDN). Le ponemos el
+  // mismo UA de Chrome real que usa la ventana de Agentes → el login carga como en un navegador normal.
+  try { configurarSesionAgentesDrex(chuniorWindow); } catch (_e) {}
   chuniorWindow.loadURL(CHUNIOR_URL);
   chuniorWindow.on('closed', () => { chuniorWindow = null; });
   return chuniorWindow;
