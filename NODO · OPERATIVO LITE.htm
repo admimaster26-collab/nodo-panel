@@ -4015,6 +4015,288 @@ const _HISTORIAL_COLS_OPCIONALES = ['saldo_pre', 'saldo_post', 'chunior_movimien
 // Columnas que YA detectamos que no existen → no las mandamos más (evita 400 repetidos).
 const _HISTORIAL_COLS_INEXISTENTES = new Set();
 
+// ══════════════════════════════════════════════════════════════════════════
+// ÁRBOL DE OPERACIONES DEL USUARIO (portado del NODO del colega · NexoBetaChan 1.0.82)
+// Store local de movimientos (localStorage) — guarda titular/CBU/obs que Supabase no siempre
+// persiste y sobrevive reinicios — + merge con _historialData + modal detalle/árbol.
+// Se abre desde el Historial con 🔍 y se alimenta desde registrarEnHistorial.
+// ══════════════════════════════════════════════════════════════════════════
+const MOV_STORE_KEY = 'nodo_movimientos_v1';
+function _movStoreAll(){
+  try{ return JSON.parse(localStorage.getItem(MOV_STORE_KEY)||'{}')||{}; }catch(_e){ return {}; }
+}
+function _movStoreSave(map){
+  try{
+    const keys = Object.keys(map);
+    if(keys.length > 2000){
+      keys.map(function(k){return {k:k,ts:map[k]._ts||0};}).sort(function(a,b){return a.ts-b.ts;})
+        .slice(0, keys.length-2000).forEach(function(x){ delete map[x.k]; });
+    }
+    localStorage.setItem(MOV_STORE_KEY, JSON.stringify(map));
+  }catch(_e){}
+}
+function _movParseNotas(notas){
+  const s = String(notas||'');
+  const grab = function(re){ const m = s.match(re); return m ? m[1].trim() : ''; };
+  return {
+    titular: grab(/Titular:\s*([^·|]+)/i),
+    destino: grab(/Destino:\s*([^·|]+)/i),
+    cbu:     grab(/CBU\/?\s*C?V?U?:\s*([^·|]+)/i),
+    obs:     grab(/Obs:\s*([^·|]+)/i)
+  };
+}
+window.guardarMovimientoLocal = function guardarMovimientoLocal(rec){
+  if(!rec || !rec.usuario) return;
+  try{
+    const map = _movStoreAll();
+    const key = String(rec.id!=null ? rec.id : (rec.usuario+'_'+(rec.ts||Date.now())));
+    const prev = map[key] || {};
+    const parsed = _movParseNotas(rec.notas);
+    const pick = function(a,b){ return (a!==undefined && a!==null && a!=='') ? a : b; };
+    map[key] = {
+      id: pick(rec.id, prev.id!=null?prev.id:null),
+      usuario: String(rec.usuario||prev.usuario||''),
+      tipo: pick(rec.tipo, prev.tipo||''),
+      monto: pick(rec.monto, prev.monto!=null?prev.monto:0),
+      titular: pick(rec.titular, pick(parsed.titular, prev.titular||'')),
+      destino: pick(rec.destino, pick(parsed.destino, prev.destino||'')),
+      cbu: pick(rec.cbu, pick(parsed.cbu, prev.cbu||'')),
+      obs: pick(rec.obs, pick(parsed.obs, prev.obs||'')),
+      saldoPre: pick(rec.saldoPre, prev.saldoPre!=null?prev.saldoPre:null),
+      saldoPost: pick(rec.saldoPost, prev.saldoPost!=null?prev.saldoPost:null),
+      billeteraNombre: pick(rec.billeteraNombre, prev.billeteraNombre||''),
+      operador: pick(rec.operador, prev.operador||''),
+      estado: pick(rec.estado, prev.estado||''),
+      chuniorId: pick(rec.chuniorId, prev.chuniorId||null),
+      solicitudId: pick(rec.solicitudId, prev.solicitudId||null),
+      bonoPct: pick(rec.bonoPct, prev.bonoPct||null),
+      origen: pick(rec.origen, prev.origen||''),
+      notas: pick(rec.notas, prev.notas||''),
+      _ts: rec.ts || prev._ts || Date.now(),
+      _fecha: rec.fecha || prev._fecha || new Date().toISOString()
+    };
+    _movStoreSave(map);
+  }catch(_e){}
+};
+function _capturarMovimientoDesdeHistorial(data, row){
+  try{
+    const src = data || {}, r = row || {};
+    const pick = function(a,b){ return (a!==undefined && a!==null && a!=='') ? a : b; };
+    guardarMovimientoLocal({
+      id: pick(src.id, r.id!=null?r.id:null),
+      usuario: pick(src.usuario, r.usuario),
+      tipo: pick(src.tipo, r.tipo),
+      monto: pick(src.monto, r.monto),
+      saldoPre: pick(src.saldo_pre, r.saldo_pre),
+      saldoPost: pick(src.saldo_post, r.saldo_post),
+      billeteraNombre: pick(src.billetera_nombre, r.billetera_nombre),
+      operador: pick(src.operador, r.operador),
+      estado: pick(src.estado, r.estado),
+      chuniorId: pick(src.chunior_movimiento_id, r.chunior_movimiento_id),
+      solicitudId: pick(src.solicitud_id, r.solicitud_id),
+      origen: pick(src.origen, r.origen),
+      notas: pick(src.notas, r.notas),
+      fecha: src.created_at || new Date().toISOString(),
+      ts: Date.now()
+    });
+    try{
+      if(typeof _archivoHistorialMerge === 'function'){
+        const fila = {
+          id: pick(src.id, r.id!=null ? r.id : ('loc_'+Date.now()+'_'+Math.random().toString(36).slice(2,7))),
+          usuario: pick(src.usuario, r.usuario), tipo: pick(src.tipo, r.tipo), monto: pick(src.monto, r.monto),
+          saldo_pre: pick(src.saldo_pre, r.saldo_pre), saldo_post: pick(src.saldo_post, r.saldo_post),
+          billetera_nombre: pick(src.billetera_nombre, r.billetera_nombre), operador: pick(src.operador, r.operador),
+          estado: pick(src.estado, r.estado), chunior_movimiento_id: pick(src.chunior_movimiento_id, r.chunior_movimiento_id),
+          solicitud_id: pick(src.solicitud_id, r.solicitud_id), origen: pick(src.origen, r.origen),
+          notas: pick(src.notas, r.notas), created_at: src.created_at || new Date().toISOString()
+        };
+        _archivoHistorialMerge([fila]);
+      }
+    }catch(_e){}
+  }catch(_e){}
+}
+// Árbol de operaciones de un usuario: merge de Supabase (_historialData) + store local.
+function arbolUsuario(usuario){
+  const u = normalizar(usuario||'');
+  if(!u) return [];
+  const out = {};
+  (_historialData||[]).forEach(function(h){
+    if(normalizar(h.usuario||'')!==u) return;
+    const k = String(h.id);
+    out[k] = {
+      id:h.id, tipo:String(h.tipo||'').toUpperCase(), monto:Number(h.monto||0),
+      estado:h.estado||'', saldoPre:h.saldo_pre, saldoPost:h.saldo_post,
+      billeteraNombre:h.billetera_nombre||'', operador:h.operador||'',
+      chuniorId:h.chunior_movimiento_id||null, notas:h.notas||'',
+      fecha:h.created_at, origen:h.origen||'', _local:false
+    };
+  });
+  const map = _movStoreAll();
+  Object.keys(map).forEach(function(k){
+    const m = map[k];
+    if(normalizar(m.usuario||'')!==u) return;
+    const kk = String(m.id!=null?m.id:k);
+    const base = out[kk] || {};
+    const pick = function(a,b){ return (a!==undefined && a!==null && a!=='') ? a : b; };
+    out[kk] = {
+      id: pick(m.id, base.id),
+      tipo: String(pick(m.tipo, base.tipo)||'').toUpperCase(),
+      monto: pick(m.monto, base.monto!=null?base.monto:0),
+      estado: pick(m.estado, base.estado||''),
+      titular:m.titular||'', destino:m.destino||'', cbu:m.cbu||'', obs:m.obs||'',
+      saldoPre: pick(m.saldoPre, base.saldoPre),
+      saldoPost: pick(m.saldoPost, base.saldoPost),
+      billeteraNombre: pick(m.billeteraNombre, base.billeteraNombre||''),
+      operador: pick(m.operador, base.operador||''),
+      chuniorId: pick(m.chuniorId, base.chuniorId||null),
+      bonoPct: m.bonoPct||null,
+      notas: pick(m.notas, base.notas||''),
+      fecha: pick(m._fecha, base.fecha), origen: pick(m.origen, base.origen||''),
+      _local: !base.id
+    };
+  });
+  return Object.values(out).sort(function(a,b){ return new Date(b.fecha||0)-new Date(a.fecha||0); });
+}
+window.verDetalleMovimiento = function(histId, usuarioArg){
+  const esc = escapeHtml;
+  const map = _movStoreAll();
+  let mov = map[String(histId)] || null;
+  const hRow = (_historialData||[]).find(function(x){ return String(x.id)===String(histId); });
+  if(!mov && hRow){
+    const p = _movParseNotas(hRow.notas);
+    mov = { id:hRow.id, usuario:hRow.usuario, tipo:hRow.tipo, monto:hRow.monto,
+      titular:p.titular, destino:p.destino, cbu:p.cbu, obs:p.obs,
+      saldoPre:hRow.saldo_pre, saldoPost:hRow.saldo_post, billeteraNombre:hRow.billetera_nombre,
+      operador:hRow.operador, estado:hRow.estado, chuniorId:hRow.chunior_movimiento_id,
+      notas:hRow.notas, _fecha:hRow.created_at, origen:hRow.origen };
+  }
+  const usuario = (mov&&mov.usuario) || usuarioArg || (hRow&&hRow.usuario) || '';
+  if(!usuario){ toast('No se encontró el movimiento', 'red'); return; }
+  if(!mov) mov = { usuario:usuario, tipo:'', monto:0 };
+
+  const esRetiro = String(mov.tipo||'').toUpperCase()==='RETIRO';
+  const acc = esRetiro ? '#fb923c' : '#22c55e';
+  const _estadoOk = ['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'].includes(String(mov.estado||'').toUpperCase());
+  const estadoTxt = mov.estado ? ('<span style="color:'+(_estadoOk?'#22c55e':(String(mov.estado).toUpperCase()==='ERROR'?'#ef4444':'#8b949e'))+';font-weight:800">'+esc(mov.estado)+'</span>') : '—';
+  const fila = function(lbl,val){ return val!==undefined && val!==null && val!=='' && val!=='—'
+    ? '<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0"><span style="color:#8b949e">'+lbl+'</span><span style="color:#e6edf3;font-weight:600;text-align:right">'+val+'</span></div>' : ''; };
+
+  const cbuVal = String(mov.cbu||mov.destino||'').trim();
+  const cbuHtml = (esRetiro && cbuVal)
+    ? '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(cbuVal)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba(251,146,60,.45);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias destino · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cbuVal)+'</span></span><span class="pcopy-ico">📋</span></button>'
+    : '';
+
+  const arbol = arbolUsuario(usuario);
+  let totC=0, totR=0;
+  arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+  const filasArbol = arbol.map(function(o){
+    const t = String(o.tipo||'').toUpperCase();
+    const ico = t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•';
+    const eOk = ['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'].includes(String(o.estado||'').toUpperCase());
+    const eIco = eOk?'<span style="color:#22c55e">✅</span>':String(o.estado||'').toUpperCase()==='ERROR'?'<span style="color:#ef4444">❌</span>':'<span style="color:#8b949e">•</span>';
+    const esActual = String(o.id)===String(histId);
+    const extras = [];
+    if(o.titular) extras.push('👤 '+esc(o.titular));
+    if(o.chuniorId) extras.push('Nº '+esc(String(o.chuniorId)));
+    if(o.billeteraNombre) extras.push(esc(String(o.billeteraNombre).split('·')[0].trim()));
+    if(o.operador) extras.push('op:'+esc(o.operador));
+    return '<div style="padding:7px 9px;border-radius:8px;margin-top:6px;background:'+(esActual?'rgba(245,197,24,.08)':'#0d1117')+';border:1px solid '+(esActual?'rgba(245,197,24,.4)':'#21262d')+'">'
+      + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
+      +   '<span style="font-weight:700">'+ico+' '+esc(t||'—')+' '+eIco+(esActual?' <span style="font-size:10px;color:#f5c518">(este)</span>':'')+'</span>'
+      +   '<span style="font-weight:800;color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</span>'
+      + '</div>'
+      + '<div style="font-size:11px;color:#8b949e;margin-top:2px">'+formatFecha(o.fecha)
+      +   (o.saldoPost!=null?(' · saldo '+money(o.saldoPost)):'')
+      +   (extras.length?(' · '+extras.join(' · ')):'')
+      + '</div></div>';
+  }).join('') || '<div class="small" style="color:#8b949e;padding:8px">Sin otras operaciones registradas para este usuario.</div>';
+
+  const body =
+    '<div style="max-height:66vh;overflow:auto">'
+    + '<div style="border-radius:10px;padding:11px 13px;border:1px solid '+(esRetiro?'rgba(251,146,60,.35)':'rgba(34,197,94,.3)')+';background:'+(esRetiro?'rgba(251,146,60,.06)':'rgba(34,197,94,.06)')+'">'
+    +   '<div style="display:flex;justify-content:space-between;align-items:center;gap:10px">'
+    +     '<b style="font-size:16px;color:'+acc+'">'+(esRetiro?'⬇️ Retiro':'⬆️ Carga')+' · '+esc(usuario)+'</b>'
+    +     '<b style="font-size:18px;color:'+acc+'">'+money(Math.abs(Number(mov.monto||0)))+'</b>'
+    +   '</div>'
+    +   cbuHtml
+    +   '<div style="margin-top:8px;font-size:13px">'
+    +     fila('Titular', esc(mov.titular||''))
+    +     fila('Destino', esc(mov.destino||''))
+    +     fila('Horario', formatFecha(mov._fecha||mov.fecha))
+    +     fila('Saldo antes', mov.saldoPre!=null?money(mov.saldoPre):'')
+    +     fila('Saldo después', mov.saldoPost!=null?money(mov.saldoPost):'')
+    +     fila('Billetera', esc(String(mov.billeteraNombre||'').split('·')[0].trim()))
+    +     fila('Operador', esc(mov.operador||''))
+    +     fila('Nº Chunior', esc(String(mov.chuniorId||'')))
+    +     fila('Bono', mov.bonoPct?('+'+esc(String(mov.bonoPct))+'%'):'')
+    +     fila('Estado', estadoTxt)
+    +     fila('Obs', esc(mov.obs||''))
+    +   '</div>'
+    + '</div>'
+    + '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;padding:8px 11px;background:#161b22;border-radius:9px;font-size:12px">'
+    +   '<span>📊 <b>'+arbol.length+'</b> operación/es</span>'
+    +   '<span style="color:#22c55e">⬆️ '+money(totC)+'</span>'
+    +   '<span style="color:#fb923c">⬇️ '+money(totR)+'</span>'
+    +   '<span style="color:#e6edf3">neto <b>'+money(totC-totR)+'</b></span>'
+    + '</div>'
+    + '<div style="font-weight:800;margin:12px 0 2px;color:#c9d1d9">🌳 Árbol de operaciones de '+esc(usuario)+'</div>'
+    + filasArbol
+    + '</div>';
+
+  abrirModal('🔍 Detalle del movimiento', body, null, '');
+  try{ const b=document.getElementById('modalSaveBtn'); if(b) b.style.display='none'; }catch(_e){}
+};
+const _HIST_FULL_MAX = 5000;
+function _histFullKey(){ return "nodo_historial_full_"+(pcOperativa||"sin_pc"); }
+function _archivoHistorialCargar(){
+  try{ const raw = localStorage.getItem(_histFullKey()); const o = raw?JSON.parse(raw):null; return (o && Array.isArray(o.rows)) ? o.rows : []; }
+  catch(_e){ return []; }
+}
+function _archivoHistorialGuardar(rows){
+  try{ localStorage.setItem(_histFullKey(), JSON.stringify({ ts:Date.now(), rows: rows.slice(0, _HIST_FULL_MAX) })); }
+  catch(_e){
+    try{ localStorage.setItem(_histFullKey(), JSON.stringify({ ts:Date.now(), rows: rows.slice(0, Math.floor(_HIST_FULL_MAX/2)) })); }catch(_e2){}
+  }
+}
+function _movStoreToHistRows(){
+  try{
+    if(typeof _movStoreAll !== 'function') return [];
+    const map = _movStoreAll();
+    return Object.keys(map).map(function(k){
+      const m = map[k] || {};
+      return {
+        id: (m.id!=null ? m.id : ('mov_'+k)),
+        usuario: m.usuario||'', tipo: m.tipo||'', monto: m.monto!=null?m.monto:0,
+        billetera_id: null, billetera_nombre: m.billeteraNombre||null,
+        origen: m.origen||'MANUAL', estado: m.estado||'OK',
+        notas: m.notas||null, chunior_movimiento_id: m.chuniorId||null,
+        saldo_pre: (m.saldoPre!=null?m.saldoPre:null), saldo_post: (m.saldoPost!=null?m.saldoPost:null),
+        operador: m.operador||null, solicitud_id: m.solicitudId||null,
+        created_at: m._fecha || (m._ts?new Date(m._ts).toISOString():null)
+      };
+    }).filter(function(r){ return r.usuario || r.monto; });
+  }catch(_e){ return []; }
+}
+function _archivoHistorialMerge(nuevas){
+  const map = {};
+  _archivoHistorialCargar().forEach(function(r){ if(r && r.id!=null) map[String(r.id)] = r; });
+  (nuevas||[]).forEach(function(r){ if(r && r.id!=null) map[String(r.id)] = r; });
+  const arr = Object.values(map).sort(function(a,b){ return new Date(b.created_at||0)-new Date(a.created_at||0); });
+  _archivoHistorialGuardar(arr);
+  return arr;
+}
+// Copiar CBU/alias al portapapeles (usado por el detalle del árbol).
+function portalCopiarCbu(btn){
+  try{
+    const val = (btn && btn.getAttribute('data-valor')) || '';
+    if(!val) return;
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(val).catch(function(){}); }
+    else { const ta=document.createElement('textarea'); ta.value=val; document.body.appendChild(ta); ta.select(); try{document.execCommand('copy');}catch(_e){} document.body.removeChild(ta); }
+    const ico = btn.querySelector('.pcopy-ico'); if(ico){ const prev=ico.textContent; ico.textContent='✅'; setTimeout(function(){ ico.textContent=prev; }, 1200); }
+    if(typeof toast==='function') toast('Copiado','green');
+  }catch(_e){}
+}
+
 async function registrarEnHistorial(op){
   const {
     usuario, tipo, monto=0, billetera_id=null, billetera_nombre=null,
@@ -4053,7 +4335,7 @@ async function registrarEnHistorial(op){
         .select()
         .single();
 
-      if(!error) return data;
+      if(!error){ try{ _capturarMovimientoDesdeHistorial(baseRow, data); }catch(_e){} return data; }
 
       const msg = (error.message || "") + " " + (error.details || "") + " " + (error.hint || "");
       const colMencionada = _HISTORIAL_COLS_OPCIONALES.find(c => msg.includes(c) && (c in intento));
@@ -4287,7 +4569,8 @@ function renderHistorial(lista){
     const infoBtn = _hayTraza
       ? '<button class="mini-btn" style="font-size:12px;background:#1e293b;color:#93c5fd;padding:4px 8px" onclick="verTrazaHistorial(\x27'+h.id+'\x27)" title="Ver el paso a paso del proceso (dónde falló)">ℹ️</button>'
       : '';
-    const acciones = [infoBtn, retryBtn, chuniorBtn, claveBtn, undoBtn].filter(Boolean).join(' ') || '-';
+    const detalleBtn = '<button class="mini-btn" style="font-size:12px;background:#1e293b;color:#f5c518;padding:4px 8px" onclick="verDetalleMovimiento(\x27'+escapeHtml(String(h.id||''))+'\x27,\x27'+escapeHtml(String(h.usuario||''))+'\x27)" title="Ver detalle del movimiento y el árbol de operaciones del usuario">🔍</button>';
+    const acciones = [infoBtn, detalleBtn, retryBtn, chuniorBtn, claveBtn, undoBtn].filter(Boolean).join(' ') || '-';
     const saldoPreTd = (h.saldo_pre !== null && h.saldo_pre !== undefined && h.saldo_pre !== '')
       ? '<span style="color:#9aa7bd">'+money(h.saldo_pre)+'</span>'
       : '<span class="small">—</span>';
