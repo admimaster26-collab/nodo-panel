@@ -918,6 +918,13 @@ ipcMain.handle('chunior:navigate', async (_event, url) => {
 });
 
 // Recarga la ventana de Chunior
+// Tras un diálogo nativo (confirm), la ventana queda sin input de teclado en TODOS los campos y
+// ni el refresh lo arregla — solo blur+focus de la BrowserWindow lo recupera. (Portado de NexoBetaChan)
+ipcMain.handle('panel:refocus', () => {
+  try { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.blur(); mainWindow.focus(); } } catch (_e) {}
+  return { ok: true };
+});
+
 ipcMain.handle('chunior:reload', async () => {
   const win = getChuniorWindow();
   win.reload();

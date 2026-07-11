@@ -17,6 +17,15 @@ function delay(ms = STEP_DELAY) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// ── Freno REAL de operación (⛔ Cancelar) ─────────────────────────────────────
+// El ⛔ del panel setea este flag (via abortarOperacion). Toda espera (waitFor) lo chequea y
+// corta, y applyAmount frena en el ÚLTIMO punto seguro: ANTES del click en Aplicar. Después de
+// Aplicar se IGNORA (la plata ya pudo moverse — hay que leer el resultado sí o sí).
+let _abortOperacion = false;
+function _chequearFreno(donde) {
+  if (_abortOperacion) throw new Error('⛔ Operación frenada por el operador' + (donde ? ' (' + donde + ')' : '') + '. No se aplicó plata.');
+}
+
 function now() {
   return Date.now();
 }
@@ -39,6 +48,7 @@ function firstVisible(selector, root = document) {
 async function waitFor(predicate, timeout = DEFAULT_TIMEOUT, interval = 120) {
   const started = now();
   while (now() - started < timeout) {
+    _chequearFreno(); // el ⛔ Cancelar corta cualquier espera en curso
     const value = typeof predicate === 'function' ? predicate() : document.querySelector(predicate);
     if (value) return value;
     await delay(interval);
@@ -508,6 +518,105 @@ async function cerrarModalSesionInvalida() {
   return true;
 }
 
+// ── Recuperación de flujo (retoma sin refrescar · portado de NexoBetaChan 1.0.82) ────────────
+async function cerrarOverlaysColgados() {
+  const overlays = visibleElements('.ReactModal__Overlay, .MuiBackdrop-root, .modal-backdrop, .MuiModal-backdrop');
+  for (const ov of overlays) { try { ov.click(); } catch (_) {} }
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+  if (overlays.length) await delay(300);
+  return overlays.length > 0;
+}
+function tapadoPorModal(el) {
+  try {
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) return false;
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    if (x < 0 || y < 0 || x > window.innerWidth || y > window.innerHeight) return false;
+    const top = document.elementFromPoint(x, y);
+    if (!top || top === el || el.contains(top) || top.contains(el)) return false;
+    return !!top.closest('.ReactModal__Overlay, .ReactModal__Content, .MuiBackdrop-root, .MuiModal-root, .modal-backdrop, [role="dialog"]');
+  } catch (_) { return false; }
+}
+function leerCartelesVisibles() {
+  const sels = '.card-alert, .card-title-alert, [role="alert"], .alert, .Toastify__toast, .MuiAlert-root, ' +
+               '.ReactModal__Content h1, .ReactModal__Content h2, .ReactModal__Content h3, .ReactModal__Content h4, .ReactModal__Content h5, .modal-title';
+  const textos = [];
+  for (const el of visibleElements(sels)) {
+    const t = (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 160);
+    if (t && !textos.includes(t)) textos.push(t);
+    if (textos.length >= 4) break;
+  }
+  return textos;
+}
+function tipoDeModalMonto() {
+  const input = firstVisible(SELECTORS.amountInput);
+  if (!input) return null;
+  const modal = input.closest('.ReactModal__Content, .MuiDialog-root, .MuiModal-root, [role="dialog"]');
+  if (!modal) return null;
+  const sello = modal.getAttribute('data-nodo-tipo');
+  if (sello === 'deposito' || sello === 'retiro') return sello;
+  const titulo = modal.querySelector('h1, h2, h3, h4, h5, .modal-title, .card-title, .card-title-alert');
+  const texto = ((titulo && titulo.textContent) || modal.textContent || '').toLowerCase();
+  const esRetiro   = /retir|withdraw|extraer|d[eé]bito/.test(texto);
+  const esDeposito = /dep[oó]sit|carga|cr[eé]dito/.test(texto) || !!modal.querySelector('#btn_deposit');
+  if (esRetiro && !esDeposito) return 'retiro';
+  if (esDeposito && !esRetiro) return 'deposito';
+  return null;
+}
+// Clasifica dónde quedó parado el flujo, para RETOMAR sin refrescar (cada refresh suma tráfico
+// que el CDN castiga con 403).
+function detectarEstadoFlujo() {
+  if (pageIsBlocked()) return 'error';
+  if (detectarModalSesionInvalida()) return 'sesion-invalida';
+  if (_detectarModalResultado()) return 'modal-resultado';
+  if (firstVisible(SELECTORS.amountInput)) return 'modal-monto';
+  if (pageNeedsLogin()) return 'login';
+  if (/\/new_user/i.test(window.location.href) && firstVisible('input[name="alias"]')) return 'alta-usuario';
+  if (document.querySelector(SELECTORS.searchButton) || findSearchInput()) return 'busqueda';
+  return 'desconocido';
+}
+// Retoma sobre la página YA cargada: cierra lo colgado de una operación anterior (resultado
+// viejo, carga/retiro a medias, sesión inválida). Escala a Escape+Cancelar+backdrop si insiste.
+async function recuperarFlujoPendiente() {
+  let anterior = null;
+  for (let i = 0; i < 4; i++) {
+    const estado = detectarEstadoFlujo();
+    const insistiendo = estado === anterior;
+    anterior = estado;
+    if (estado === 'modal-resultado') {
+      const res = _detectarModalResultado();
+      try {
+        const btn = Array.from(res.querySelectorAll('button, [role="button"]'))
+          .find(b => /^\s*aceptar\s*$/i.test((b.textContent || '').trim()));
+        if (btn) clickElement(btn);
+      } catch (_) {}
+      if (insistiendo) { await cerrarModalActual(); await cerrarOverlaysColgados(); }
+      await delay(400);
+      continue;
+    }
+    if (estado === 'modal-monto') {
+      await cerrarModalActual();
+      if (insistiendo) await cerrarOverlaysColgados();
+      await delay(200);
+      continue;
+    }
+    if (estado === 'sesion-invalida') {
+      await cerrarModalSesionInvalida();
+      continue;
+    }
+    if (estado === 'busqueda') {
+      const input = findSearchInput();
+      if (input && tapadoPorModal(input)) {
+        if (await cerrarOverlaysColgados()) continue;
+        console.warn('[agent] input de búsqueda tapado por overlay no cerrable · carteles:', leerCartelesVisibles().join(' | '));
+      }
+      return estado;
+    }
+    return estado;
+  }
+  return detectarEstadoFlujo();
+}
+
 function status(extra = {}) {
   const pageError = pageIsBlocked();
   const needsLogin = !pageError && pageNeedsLogin();
@@ -515,6 +624,8 @@ function status(extra = {}) {
     ok: !needsLogin && !pageError,
     needsLogin,
     pageError,
+    flujo: detectarEstadoFlujo(),
+    carteles: leerCartelesVisibles(),
     url: window.location.href,
     message: pageError
       ? 'La página de agentes respondió con un error del servidor (403/404/CDN). No se operó. Reintentá.'
@@ -528,8 +639,10 @@ function status(extra = {}) {
 async function ensureUserSearchReady() {
   // Página de error del servidor/CDN → abortar antes de operar (no correr el script contra basura)
   if (pageIsBlocked()) return status();
-  // Cierra el modal de sesión inválida antes de evaluar el estado
-  await cerrarModalSesionInvalida();
+  // RETOMA sobre la página cargada: cierra modales colgados de una operación anterior (resultado
+  // viejo, carga/retiro a medias, sesión inválida) en vez de exigir un refresh. Sinérgico con
+  // el reduce-refresh: una op perdida ya no obliga a recargar la página.
+  await recuperarFlujoPendiente();
   if (pageNeedsLogin()) return status();
   try {
     await waitFor(() => document.querySelector(SELECTORS.searchButton) || firstVisible(SELECTORS.playerAlias));
@@ -723,6 +836,7 @@ async function applyAmount(iconName, amount, actionName, options = {}) {
     } catch (_) {}
   }
 
+  _chequearFreno('antes de aplicar'); // ÚLTIMO punto seguro: si el operador abortó, frena ANTES de mover plata
   clickElement(applyButton);
 
   // Tras Aplicar, el casino muestra el modal "Resultado de la operación" con el Balance
@@ -1011,8 +1125,14 @@ const api = {
   obtenerSaldoAgente,
   irABusquedaUsuarios,
   iniciarSesion,
-  estadoPagina: status
+  estadoPagina: status,
+  // ⛔ Cancelar real + recuperación de flujo (portado de NexoBetaChan 1.0.82)
+  recuperarFlujo: async () => { const flujo = await recuperarFlujoPendiente(); return status({ flujo }); },
+  abortarOperacion: () => { _abortOperacion = true; return { ok: true, message: 'Freno solicitado.' }; }
 };
+// Métodos de operación: al arrancar uno se limpia un freno viejo (para que un ⛔ anterior no mate
+// la operación siguiente). recuperarFlujo/abortarOperacion/estadoPagina/obtenerSaldoAgente NO limpian.
+const METODOS_OPERACION = new Set(['buscarUsuario', 'cargarSaldo', 'retirarSaldo', 'crearUsuario', 'cambiarClave']);
 
 contextBridge.exposeInMainWorld('drexAutomation', api);
 
@@ -1022,6 +1142,7 @@ ipcRenderer.on('drex:automation:run', async (event, request = {}) => {
     if (!Object.prototype.hasOwnProperty.call(api, method)) {
       throw new Error(`Método no permitido: ${method}`);
     }
+    if (METODOS_OPERACION.has(method)) _abortOperacion = false; // limpiar freno viejo al arrancar una operación
     const result = await api[method](...args);
     ipcRenderer.send('drex:automation:result', { requestId, ok: true, result });
   } catch (error) {

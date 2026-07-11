@@ -9,7 +9,9 @@ const ALLOWED_AUTOMATION_METHODS = new Set([
   'cambiarClave',
   'crearUsuario',
   'obtenerSaldoAgente',
-  'iniciarSesion'
+  'iniciarSesion',
+  'recuperarFlujo',
+  'abortarOperacion'
 ]);
 
 contextBridge.exposeInMainWorld('ctrlElectron', {
@@ -26,7 +28,9 @@ contextBridge.exposeInMainWorld('ctrlElectron', {
   drexAutoLogin: (pcCodigo) => ipcRenderer.invoke('drex:auto-login', { pcCodigo }),
   verifyUser: (usuario) => ipcRenderer.invoke('drex:verify-user', { usuario }),
   // Aplica el proxy de la oficina (la config/clave se resuelve en main, no acá).
-  proxyApply: (pcCodigo) => ipcRenderer.invoke('proxy:apply', { pcCodigo })
+  proxyApply: (pcCodigo) => ipcRenderer.invoke('proxy:apply', { pcCodigo }),
+  // Recupera el foco de teclado tras un confirm() nativo (bug Electron: la ventana queda sin input).
+  refocus: () => ipcRenderer.invoke('panel:refocus')
 });
 
 // Acceso a la ventana separada de Chunior (visible, backoffice secundario)
