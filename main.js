@@ -688,6 +688,7 @@ const PANEL_RPC_ALLOW = new Set([
   'panel_nodo_send_chat_message',
   'panel_v15_5_listar_solicitudes_portal',
   'panel_v15_5_actualizar_solicitud_portal',
+  'landing_retiro_registrar_parcial',
   'panel_core_get_chat_sesiones_json',
   'panel_v154_plus_listar_chat_sesiones',
   'panel_core_get_chat_mensajes_json',
