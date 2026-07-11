@@ -4285,6 +4285,24 @@ function _archivoHistorialMerge(nuevas){
   _archivoHistorialGuardar(arr);
   return arr;
 }
+// Resumen compacto del árbol de un usuario (para embeber en el modal de retiro parcial):
+// totales + últimas operaciones. Devuelve '' si no hay historial.
+function _arbolResumenHtml(usuario){
+  try{
+    if(typeof arbolUsuario!=='function') return '';
+    const arbol = arbolUsuario(usuario);
+    if(!arbol.length) return '';
+    let totC=0, totR=0;
+    arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+    const ult = arbol.slice(0,6).map(function(o){
+      const t=String(o.tipo||'').toUpperCase(); const ico=t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•';
+      return '<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;color:#94a3b8"><span>'+ico+' '+escapeHtml(t||'—')+' · '+formatFecha(o.fecha)+'</span><span style="font-weight:700;color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</span></div>';
+    }).join('');
+    return '<div style="margin-top:10px;padding:8px 10px;background:#0d1117;border:1px solid #21262d;border-radius:9px">'
+      + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;margin-bottom:4px;flex-wrap:wrap"><b style="color:#c9d1d9">🌳 '+arbol.length+' ops</b><span style="color:#22c55e">⬆️ '+money(totC)+'</span><span style="color:#fb923c">⬇️ '+money(totR)+'</span><span style="color:#e6edf3">neto <b>'+money(totC-totR)+'</b></span></div>'
+      + ult + '</div>';
+  }catch(_e){ return ''; }
+}
 // Copiar CBU/alias al portapapeles (usado por el detalle del árbol).
 function portalCopiarCbu(btn){
   try{
@@ -9162,7 +9180,8 @@ async function cargarSolicitudesPortal(silencioso=false){
     abrirModal("Pago parcial · Retiro #"+id,
       '<div class="small" style="margin-bottom:8px">Usuario <b>'+esc(usuario)+'</b> · Total del retiro <b>'+money(total)+'</b>.<br>Se van a <b>RETIRAR estas fichas de la plataforma</b> y se le avisa al usuario por notificación.</div>'+
       '<label>Monto a retirar ahora</label>'+
-      '<input id="v154pParcialMonto" type="number" inputmode="numeric" min="1" placeholder="Ej: 500000">',
+      '<input id="v154pParcialMonto" type="number" inputmode="numeric" min="1" placeholder="Ej: 500000">'+
+      _arbolResumenHtml(usuario),
       async function(){
         const monto = Math.abs(Number((document.getElementById("v154pParcialMonto")||{}).value||0));
         if(!monto || monto<=0){ alert("Ingresá un monto válido mayor a cero."); return; }
