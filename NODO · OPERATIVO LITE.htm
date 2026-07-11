@@ -8866,37 +8866,70 @@ async function cargarSolicitudesPortal(silencioso=false){
         }catch(e){ alert(e.message||"Error al rechazar"); }
       }, "Rechazar");
   };
-  // Retiros parciales (punto 3): registra un pago parcial de un retiro grande. Suma en la RPC
-  // atómica landing_retiro_registrar_parcial (metadata.retiro_parcial), setea EN_PROCESO/PAGADA,
-  // avisa al usuario por el chat (barra de progreso + notificación en el portal) y refresca.
+  // Retiros parciales (punto 3, opción 2 · "se retiran las fichas"): "Parcial" EJECUTA el retiro
+  // real por el monto parcial (descuenta las fichas en casinodrex, mismos primitivos blindados que
+  // retirarSaldoRapido) y SOLO si salió bien registra el progreso (landing_retiro_registrar_parcial)
+  // y avisa al usuario por PUSH (el chat no siempre llega).
   window.v154pRegistrarParcial = function(id){
     const s = (V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
-    if(s && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="RETIRO"){ alert("El pago parcial es solo para retiros."); return; }
-    const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
+    if(!s){ alert("No encuentro la solicitud."); return; }
+    if(String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="RETIRO"){ alert("El pago parcial es solo para retiros."); return; }
+    const usuario = s.USUARIO || s.USUARIO_JUGADOR || "";
+    const total = Number(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO||0);
     abrirModal("Pago parcial · Retiro #"+id,
-      '<div class="small" style="margin-bottom:8px">Total del retiro: <b>'+money(total)+'</b>. Ingresá el monto que estás pagando ahora.</div>'+
-      '<label>Monto de este pago</label>'+
-      '<input id="v154pParcialMonto" type="number" inputmode="numeric" min="1" placeholder="Ej: 300000">',
+      '<div class="small" style="margin-bottom:8px">Usuario <b>'+esc(usuario)+'</b> · Total del retiro <b>'+money(total)+'</b>.<br>Se van a <b>RETIRAR estas fichas de la plataforma</b> y se le avisa al usuario por notificación.</div>'+
+      '<label>Monto a retirar ahora</label>'+
+      '<input id="v154pParcialMonto" type="number" inputmode="numeric" min="1" placeholder="Ej: 500000">',
       async function(){
         const monto = Math.abs(Number((document.getElementById("v154pParcialMonto")||{}).value||0));
         if(!monto || monto<=0){ alert("Ingresá un monto válido mayor a cero."); return; }
+        if(window._v154pParcialBusy){ return; }
+        if(!window.ctrlElectron){ alert("El retiro se ejecuta desde la app de escritorio."); return; }
         cerrarModal();
+        window._v154pParcialBusy = true;
         try{
-          const op = window.operador?.usuario || window.operador?.nombre
-                  || (typeof operador!=='undefined' ? (operador?.usuario||operador?.nombre||'') : '') || '';
-          const r = await rpc("landing_retiro_registrar_parcial", { p_id:Number(id), p_monto_parcial:monto, p_operador:op });
-          if(r?.error){ alert("Error registrando parcial: "+(r.error.message||JSON.stringify(r.error))); return; }
-          const d = (r.data && (Array.isArray(r.data)?r.data[0]:r.data)) || {};
-          const usuario = s&&(s.USUARIO||s.USUARIO_JUGADOR||"");
-          const cuerpo = d.completado
-            ? ("✅ ¡Retiro completado! Te transferimos "+money(monto)+". Total pagado: "+money(d.pagado||0)+".")
-            : ("💸 Pago parcial de tu retiro: "+money(monto)+". Van "+money(d.pagado||0)+" de "+money(d.total||total)+" ("+(d.pct||0)+"%).");
-          if(usuario){ try{ await notificarUsuarioEnChat(usuario, cuerpo); }catch(_e){} }
-          toast(d.completado?("✅ Retiro completado ("+money(d.pagado||0)+")"):("💸 Parcial · van "+money(d.pagado||0)+" de "+money(d.total||total)), "green");
+          // 1) RETIRO REAL — descuenta las fichas (mismos pasos que retirarSaldoRapido)
+          toast("Retirando "+money(monto)+" de "+usuario+"…","blue");
+          if(!await ensureDrexSession()){ toast("Sesión de backoffice requerida.","red"); return; }
+          const b = await callDrex("buscarUsuario", usuario);
+          if(!b || !b.exists){ toast('Usuario "'+usuario+'" no encontrado en la plataforma.',"red"); return; }
+          const saldoRaw=String(b.balance?.raw||""); const saldo=b.balance?.value ?? null;
+          const saldoConfiable=/\d/.test(saldoRaw) && typeof saldo==="number" && Number.isFinite(saldo);
+          if(saldoConfiable && saldo>=0 && saldo<monto){ toast("Saldo insuficiente en la plataforma: "+String(b.balance.raw).trim(),"red"); try{await window.ctrlElectron.navigateAgent();}catch(_e){} return; }
+          const r = await callDrex("retirarSaldo", monto);
+          if(r && r.ok===false){ toast("No se pudo retirar: "+(r.message||"falló")+". No registro el parcial.","red"); return; }
+
+          // 2) REGISTRAR el progreso — solo porque el retiro salió bien
+          const op = window.operador?.usuario || window.operador?.nombre || (typeof operador!=='undefined'?(operador?.usuario||operador?.nombre||''):'') || '';
+          const rp = await rpc("landing_retiro_registrar_parcial", { p_id:Number(id), p_monto_parcial:monto, p_operador:op });
+          if(rp?.error){ alert("⚠️ El retiro SÍ se hizo, pero falló registrar el progreso:\n"+(rp.error.message||"")+"\nAvisale/registralo manualmente."); }
+          const d = (rp && rp.data && (Array.isArray(rp.data)?rp.data[0]:rp.data)) || {pagado:monto,total:total,completado:false};
+
+          // 3) AVISAR al usuario por PUSH
+          try{ notificarRetiroParcialPush(usuario, monto, Number(d.pagado||monto), Number(d.total||total), !!d.completado); }catch(_e){}
+
+          // 4) Historial (best-effort) para que quede auditado en el panel
+          try{ if(typeof registrarEnHistorial==="function") await registrarEnHistorial({usuario:usuario, tipo:"RETIRO", monto:monto, origen:"PORTAL", estado:"PAGADA", notas:"Parcial retiro #"+id+" · "+money(d.pagado||monto)+"/"+money(d.total||total), pc_codigo:(pcOperativa||window.pcOperativa||"")}); }catch(_e){}
+
+          toast(d.completado?("✅ Retiro COMPLETO ("+money(d.pagado||0)+")"):("💸 Parcial OK · van "+money(d.pagado||0)+" de "+money(d.total||total)),"green");
           try{ await cargarSolicitudesPortal(true); }catch(_e){}
-        }catch(e){ alert("No se pudo registrar el parcial: "+(e.message||e)); }
-      }, "Registrar pago");
+        }catch(e){ alert("Error en el retiro parcial: "+(e.message||e)); }
+        finally{ window._v154pParcialBusy = false; }
+      }, "Retirar y registrar");
   };
+  // Aviso de retiro parcial al usuario por PUSH (si tiene push suscripto). Reemplaza el chat, que no siempre llega.
+  function notificarRetiroParcialPush(usuario, montoParcial, pagado, total, completado){
+    if(!usuario || !window.PUSH_API_URL) return;
+    const title = completado ? "BET300 · ¡Retiro completado! 🎉" : "BET300 · Pago de tu retiro 💸";
+    const body = completado
+      ? ("¡Listo! Te pagamos "+money(montoParcial)+". Total: "+money(pagado)+". Revisá tu cuenta.")
+      : ("Te transferimos "+money(montoParcial)+". Vas "+money(pagado)+" de "+money(total)+".");
+    try{
+      fetch(window.PUSH_API_URL,{ method:"POST",
+        headers:{"Content-Type":"application/json","x-push-secret":window.PUSH_SECRET||""},
+        body:JSON.stringify({usuario:usuario, title:title, body:body, url:"/", tag:"bet300-retiro-parcial"}) }).catch(function(){});
+    }catch(_e){}
+  }
   // Exponer globalmente para que abrirAprobarSolicitud y otros flujos puedan marcar el estado final
   window.actualizarSolicitudPortal = actualizarSolicitudPortal;
   /* === PORTAL SAFE V2: solicitud portal con modal, historial inmediato y flujo no bloqueante extra === */
