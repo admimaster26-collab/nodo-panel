@@ -2456,12 +2456,17 @@ function comprimirImagenChat(file, cb){
 // "Puesto SANCHEZPLATA" → "SANCHEZPLATA"
 // "Puesto Sánchez-Plata 1" → "SANCHEZPLATA1"
 function normalizarPcCodigo(textPuesto){
-  return String(textPuesto||'')
+  const base = String(textPuesto||'')
     .normalize('NFD')
     .replace(new RegExp('[\\u0300-\\u036f]','g'), '')   // diacríticos
     .replace(/^\s*puesto\s+/i, '')                      // saca "Puesto " del prefijo
     .replace(/[^A-Za-z0-9]/g, '')                       // solo alfanumérico
     .toUpperCase();
+  // Canónico: el sistema entero usa P1..P5 (el admi, el snapshot, el proxy, las promos).
+  // Si el puesto viene como "PC5", lo dejamos como "P5"; de lo contrario las billeteras y
+  // todo lo demás quedan colgados en una oficina fantasma "PC5" que el admi (que filtra por
+  // P5) nunca ve. Espeja el normPc del admi.
+  return base.replace(/^PC(\d+)$/, 'P$1');
 }
 
 // Busca / crea la oficina en Supabase. Devuelve {pc_codigo, nombre, chunior_pt_id, esNueva}.
@@ -7474,7 +7479,9 @@ async function _chuniorConfirmarPuesto(value, text){
     try{
       const rr = await supabaseClient.rpc('panel_resolver_puesto', { p_nombre: text });
       const row = rr && rr.data && rr.data[0];
-      if(row && row.pc_codigo){ pcCodigoNuevo = row.pc_codigo; oficinaIdNueva = row.oficina_id || row.pc_codigo; }
+      // Canonicalizar PCx→Px también acá: si el alias en el server devuelve "PC5", igual lo
+      // dejamos como "P5" para no volver a stampear billeteras en la oficina fantasma.
+      if(row && row.pc_codigo){ pcCodigoNuevo = String(row.pc_codigo).toUpperCase().replace(/^PC(\d+)$/, 'P$1'); oficinaIdNueva = row.oficina_id || pcCodigoNuevo; }
     }catch(_e){ console.warn('resolver puesto falló, uso normalizado:', _e); }
     window.oficinaId = oficinaIdNueva;
     try{ localStorage.setItem('nodo_oficina_id', oficinaIdNueva); }catch(_e){}
@@ -8648,6 +8655,7 @@ if(window.ctrlElectron){
           <div class="v154p-actions">
             ${tomada?`<button class="v154p-btn yellow" disabled>Tomada</button>`:`<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
             <button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
+            ${String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO"?`<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
             <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
             <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
           </div>
@@ -8683,6 +8691,7 @@ if(window.ctrlElectron){
         ? `<button class="mini-btn blue" onclick="v154pDetalleSolicitud(${id})">Ver</button>`
         : `${tomada?`<button class="mini-btn yellow" disabled>Tomada</button>`:`<button class="mini-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
           <button class="mini-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
+          ${String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO"?`<button class="mini-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
           <button class="mini-btn blue" onclick="v154pDetalleSolicitud(${id})">Ver</button>
           <button class="mini-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>`;
       return `<tr>
@@ -8856,6 +8865,37 @@ async function cargarSolicitudesPortal(silencioso=false){
           try{ await cargarSolicitudesPortal(true); }catch(_e){}
         }catch(e){ alert(e.message||"Error al rechazar"); }
       }, "Rechazar");
+  };
+  // Retiros parciales (punto 3): registra un pago parcial de un retiro grande. Suma en la RPC
+  // atómica landing_retiro_registrar_parcial (metadata.retiro_parcial), setea EN_PROCESO/PAGADA,
+  // avisa al usuario por el chat (barra de progreso + notificación en el portal) y refresca.
+  window.v154pRegistrarParcial = function(id){
+    const s = (V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+    if(s && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="RETIRO"){ alert("El pago parcial es solo para retiros."); return; }
+    const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
+    abrirModal("Pago parcial · Retiro #"+id,
+      '<div class="small" style="margin-bottom:8px">Total del retiro: <b>'+money(total)+'</b>. Ingresá el monto que estás pagando ahora.</div>'+
+      '<label>Monto de este pago</label>'+
+      '<input id="v154pParcialMonto" type="number" inputmode="numeric" min="1" placeholder="Ej: 300000">',
+      async function(){
+        const monto = Math.abs(Number((document.getElementById("v154pParcialMonto")||{}).value||0));
+        if(!monto || monto<=0){ alert("Ingresá un monto válido mayor a cero."); return; }
+        cerrarModal();
+        try{
+          const op = window.operador?.usuario || window.operador?.nombre
+                  || (typeof operador!=='undefined' ? (operador?.usuario||operador?.nombre||'') : '') || '';
+          const r = await rpc("landing_retiro_registrar_parcial", { p_id:Number(id), p_monto_parcial:monto, p_operador:op });
+          if(r?.error){ alert("Error registrando parcial: "+(r.error.message||JSON.stringify(r.error))); return; }
+          const d = (r.data && (Array.isArray(r.data)?r.data[0]:r.data)) || {};
+          const usuario = s&&(s.USUARIO||s.USUARIO_JUGADOR||"");
+          const cuerpo = d.completado
+            ? ("✅ ¡Retiro completado! Te transferimos "+money(monto)+". Total pagado: "+money(d.pagado||0)+".")
+            : ("💸 Pago parcial de tu retiro: "+money(monto)+". Van "+money(d.pagado||0)+" de "+money(d.total||total)+" ("+(d.pct||0)+"%).");
+          if(usuario){ try{ await notificarUsuarioEnChat(usuario, cuerpo); }catch(_e){} }
+          toast(d.completado?("✅ Retiro completado ("+money(d.pagado||0)+")"):("💸 Parcial · van "+money(d.pagado||0)+" de "+money(d.total||total)), "green");
+          try{ await cargarSolicitudesPortal(true); }catch(_e){}
+        }catch(e){ alert("No se pudo registrar el parcial: "+(e.message||e)); }
+      }, "Registrar pago");
   };
   // Exponer globalmente para que abrirAprobarSolicitud y otros flujos puedan marcar el estado final
   window.actualizarSolicitudPortal = actualizarSolicitudPortal;
