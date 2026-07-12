@@ -2173,6 +2173,13 @@ function renderTablaJugadores(lista){
 }
 
 // ── Control de retiros: 1 cada 24hs por usuario ──────────────────────────────
+// Helpers de la blacklist de retiros dobles (portados de NexoBetaChan).
+// _blEsParcial: un retiro PARCIAL (tramo de un retiro grande) NO cuenta como un retiro separado
+// → sin esto, los parciales inflaban el chequeo 24h y la blacklist (falsos dobles).
+function _blEsParcial(r){ return /PARCIAL/i.test(String((r&&r.notas)||'')); }
+function _blFmtGap(ms){ if(ms==null) return ''; const h=Math.floor(ms/3600000), m=Math.floor((ms%3600000)/60000); return (h>0?h+'h':'')+(m>0?(h>0?' ':'')+m+'min':'')||'0min'; }
+function _blIsoDay(offset){ const d=new Date(); d.setDate(d.getDate()-(offset||0)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+
 async function verificarRetiro24h(usuario) {
   const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).getTime();
   const ahora   = Date.now();
@@ -2198,15 +2205,18 @@ async function verificarRetiro24h(usuario) {
   try {
     const { data: dataH } = await supabaseClient
       .from("historial_ops")
-      .select("id, created_at, monto, billetera_nombre")
+      .select("id, created_at, monto, billetera_nombre, notas")
       .eq("usuario", usuario)
       .eq("tipo", "RETIRO")
       .eq("estado", "OK")
       .gte("created_at", new Date(hace24h).toISOString())
       .order("created_at", { ascending: false })
-      .limit(1);
-    if(dataH && dataH.length)
-      candidatos.push({ created_at: dataH[0].created_at, monto: dataH[0].monto, billetera_nombre: dataH[0].billetera_nombre || null, origen: "HISTORIAL" });
+      .limit(8);
+    // Excluir PARCIALES (tramos de un retiro grande) y los marcados [BL_EXCLUIDO]: no son un
+    // retiro separado → tomamos el retiro REAL más reciente (no parcial, no excluido).
+    const dhReal = (dataH||[]).find(function(r){ return !_blEsParcial(r) && !/\[BL_EXCLUIDO\]/.test(String(r.notas||'')); });
+    if(dhReal)
+      candidatos.push({ created_at: dhReal.created_at, monto: dhReal.monto, billetera_nombre: dhReal.billetera_nombre || null, origen: "HISTORIAL" });
   } catch(_){}
 
   // 3. Buscar en CSV importado (últimas 24h)
@@ -5197,6 +5207,7 @@ async function mostrarBlacklist24h(){
     data = (data || []).filter(function(r){
       if(/\[BL_EXCLUIDO\]/.test(String(r.notas||''))) return false;
       if(String(r.estado||'').toUpperCase() === 'REVERTIDA') return false;
+      if(_blEsParcial(r)) return false; // parciales = tramos de UN retiro grande → no cuentan como retiro separado/doble
       return true;
     });
 
