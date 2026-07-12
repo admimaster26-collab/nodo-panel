@@ -5098,14 +5098,16 @@ function tablaHistorialUnificadoHTML(lista){
           ? `<button class="mini-btn gray" onclick="reincluirRetiroBlacklist('${escapeHtml(selId)}')" style="font-size:10px" title="Volver a contar en blacklist">↩ En blacklist</button>`
           : `<button class="mini-btn yellow" onclick="excluirRetiroBlacklist('${escapeHtml(selId)}')" style="font-size:10px" title="No contar en blacklist 24hs">🚫 Quitar BL</button>`)
       : '';
+    // Diferenciación visual retiro/carga (como el nodo hermano): 🟠 naranja retiro · 🟢 verde carga
+    const _accU = it.tipo==='RETIRO' ? '#fb923c' : it.tipo==='CARGA' ? '#22c55e' : '';
     html += `<tr${rowAttrs}>`+
       `<td style="text-align:center">${chk}</td>`+
       `<td style="font-size:12px;white-space:nowrap">${formatFecha(it.fecha)}</td>`+
       `<td>${fuentePill(it.fuente)}</td>`+
-      `<td style="white-space:nowrap">${tipoIco(it.tipo)} ${escapeHtml(it.tipo||'—')}${yaExcluido?' <span class="small" style="color:#e6a028">🚫</span>':''}</td>`+
+      `<td style="white-space:nowrap${_accU?';color:'+_accU+';font-weight:800':''}">${tipoIco(it.tipo)} ${escapeHtml(it.tipo||'—')}${yaExcluido?' <span class="small" style="color:#e6a028">🚫</span>':''}</td>`+
       `<td><b>${escapeHtml(it.usuario||'—')}</b>${it.nombre?'<br><span class="small">'+escapeHtml(it.nombre)+'</span>':''}</td>`+
       `<td style="font-size:12px">${escapeHtml(it.billetera_nombre||'—')}</td>`+
-      `<td style="font-weight:700">${it.monto?money(it.monto):'—'}</td>`+
+      `<td style="font-weight:700${_accU?';color:'+_accU:''}">${it.monto?money(it.monto):'—'}</td>`+
       `<td style="font-size:12px">${movTd}</td>`+
       `<td>${estadoBadge(it.estado)}</td>`+
       `<td style="white-space:nowrap">${blBtn}</td>`+
