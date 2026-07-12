@@ -945,6 +945,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
               </div>
               <div style="display:flex;gap:8px">
                 <button class="btn btn-primary" onclick="ejecutarOperacionManual()" style="flex:2">Ejecutar</button>
+                <button class="mini-btn red" id="btnAbortarOp" onclick="abortarOperacionActual()" title="Frenar la operación en curso (solo corta ANTES de aplicar plata)" style="padding:10px 14px;display:none">⛔ Cancelar</button>
                 <button class="mini-btn yellow" onclick="blanquearClaveManual()" title="Resetear clave del usuario a 12345a" style="padding:10px 14px">🔑 Blanquear clave</button>
                 <button class="mini-btn blue" onclick="abrirModalCrearUsuario()" title="Crear nuevo usuario en el casino" style="padding:10px 14px">➕ Crear</button>
               </div>
@@ -3239,6 +3240,17 @@ function verTrazaHistorial(histId){
 }
 
 // ── Operación manual automatizada ─────────────────────────────────────────────
+// ⛔ Cancelar (freno real): pide al agent-preload que corte la operación en curso. El freno solo
+// actúa ANTES de "Aplicar" (nunca después — la plata ya se movió). Portado de NexoBetaChan.
+function _mostrarBtnAbort(show){ try{ const b=document.getElementById('btnAbortarOp'); if(b) b.style.display = show ? 'inline-block' : 'none'; }catch(_e){} }
+async function abortarOperacionActual(){
+  try{
+    if(window.ctrlElectron && ctrlElectron.drexAutomation){
+      await ctrlElectron.drexAutomation('abortarOperacion');
+      toast('⛔ Freno solicitado — si la operación no aplicó plata, se corta.','yellow');
+    }
+  }catch(_e){}
+}
 let _operacionManualEnCurso = false;
 async function ejecutarOperacionManual(){
   // Anti-doble-click: si ya hay una operación corriendo, ignorar
@@ -3262,6 +3274,7 @@ async function ejecutarOperacionManual(){
   // Activar el lock + deshabilitar el botón visualmente
   _operacionManualEnCurso = true;
   if(btnEjecutar){ btnEjecutar.disabled = true; btnEjecutar.style.opacity = '0.6'; btnEjecutar.textContent = 'Procesando...'; }
+  _mostrarBtnAbort(true);
 
   let _lockLiberado = false;
   // Timeout de seguridad SOLO para un cuelgue real (un await que nunca resuelve / IPC muerto).
@@ -3276,6 +3289,7 @@ async function ejecutarOperacionManual(){
     _drexGlobalUnlock();
     _wdForceUnlock(); // reset duro: por si quedó el watchdog bloqueado (no importa cuántos _wdLock anidados)
     if(btnEjecutar){ btnEjecutar.disabled = false; btnEjecutar.style.opacity = ''; btnEjecutar.textContent = 'Ejecutar'; }
+    _mostrarBtnAbort(false);
     if(res) res.innerHTML = '<div class="err-box">⏱️ La operación no respondió a tiempo.<br>Revisá que la ventana de agentes esté abierta y verificá en el casino antes de reintentar.</div>';
     toast('⏱️ Operación sin respuesta · verificá antes de reintentar', 'red');
   }, 90000);
@@ -3289,6 +3303,7 @@ async function ejecutarOperacionManual(){
     _drexGlobalUnlock();
     _wdForceUnlock(); // libera el candado del watchdog que se tomó al arrancar (ver más abajo)
     if(btnEjecutar){ btnEjecutar.disabled = false; btnEjecutar.style.opacity = ''; btnEjecutar.textContent = 'Ejecutar'; }
+    _mostrarBtnAbort(false);
   };
 
   if(!montoRaw){
@@ -4181,7 +4196,23 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
   const fila = function(lbl,val){ return val!==undefined && val!==null && val!=='' && val!=='—'
     ? '<div style="display:flex;justify-content:space-between;gap:12px;padding:3px 0"><span style="color:#8b949e">'+lbl+'</span><span style="color:#e6edf3;font-weight:600;text-align:right">'+val+'</span></div>' : ''; };
 
-  const cbuVal = String(mov.cbu||mov.destino||'').trim();
+  // CBU/alias DECLARADO en la solicitud del retiro: si no vino en las notas del movimiento, lo
+  // buscamos en la solicitud del portal (V154P) por usuario + tipo RETIRO → SIEMPRE aparece.
+  let cbuVal = String(mov.cbu||mov.destino||'').trim();
+  let titularDecl = String(mov.titular||'').trim();
+  if (esRetiro && (!cbuVal || !titularDecl)) {
+    try {
+      const _sols = (window.V154P && window.V154P.solicitudes) || [];
+      const _sol = _sols.find(function(s){
+        return String(s.USUARIO||s.USUARIO_JUGADOR||'').toLowerCase()===String(usuario).toLowerCase()
+          && String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()==='RETIRO';
+      });
+      if (_sol) {
+        if (!cbuVal)      cbuVal      = String(_sol.DESTINO||_sol.CBU||_sol.RETIRO_ALIAS_CBU||_sol.ALIAS_CBU||'').trim();
+        if (!titularDecl) titularDecl = String(_sol.TITULAR||_sol.RETIRO_TITULAR||'').trim();
+      }
+    } catch(_e){}
+  }
   const cbuHtml = (esRetiro && cbuVal)
     ? '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(cbuVal)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba(251,146,60,.45);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias destino · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cbuVal)+'</span></span><span class="pcopy-ico">📋</span></button>'
     : '';
@@ -4220,7 +4251,7 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
     +   '</div>'
     +   cbuHtml
     +   '<div style="margin-top:8px;font-size:13px">'
-    +     fila('Titular', esc(mov.titular||''))
+    +     fila('Titular', esc(titularDecl||mov.titular||''))
     +     fila('Destino', esc(mov.destino||''))
     +     fila('Horario', formatFecha(mov._fecha||mov.fecha))
     +     fila('Saldo antes', mov.saldoPre!=null?money(mov.saldoPre):'')

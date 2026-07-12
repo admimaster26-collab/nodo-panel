@@ -614,7 +614,15 @@ async function recuperarFlujoPendiente() {
     }
     return estado;
   }
-  return detectarEstadoFlujo();
+  // Safeguard (nuestro): si tras 4 vueltas seguimos trabados en un modal que NO cierra, UN reload
+  // controlado a user_search (diferido, como el fallback de sesión inválida) → pizarra limpia para
+  // el reintento. El "sin refresh" se mantiene en el 99% de los casos (solo entra si quedó trabado).
+  const _finalFlujo = detectarEstadoFlujo();
+  if (_finalFlujo === 'modal-monto' || _finalFlujo === 'modal-resultado') {
+    console.warn('[agent] flujo trabado en', _finalFlujo, '— reload de rescate a user_search');
+    setTimeout(function () { try { window.location.assign(USER_SEARCH_URL); } catch (_) {} }, 150);
+  }
+  return _finalFlujo;
 }
 
 function status(extra = {}) {
