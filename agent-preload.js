@@ -345,7 +345,28 @@ function _leerBalancesEnModalDeposito() {
 async function abrirModalDepositoYLeerSaldo() {
   clickButtonByIcon('circle-plus');
   await delay(800);
-  const balances = _leerBalancesEnModalDeposito();
+  // Sello propio: el modal recién abierto es de DEPÓSITO (lo abrimos nosotros).
+  try {
+    const inp = firstVisible(SELECTORS.amountInput);
+    const modal = inp && inp.closest('.ReactModal__Content, .MuiDialog-root, .MuiModal-root, [role="dialog"]');
+    if (modal) modal.setAttribute('data-nodo-tipo', 'deposito');
+  } catch (_) {}
+  // Saldo PRE exacto, sin demorar de más (portado de NexoBetaChan — fix del auto-rechazo falso):
+  //  - valor REAL (>0) pintado → se toma al INSTANTE
+  //  - 0 PINTADO → se acepta a los 3s (casi siempre es un 0 real; 3s descartan el 0 transitorio)
+  //  - campo VACÍO (sin pintar, proxy lento) → reintenta hasta 7s
+  // ANTES leíamos UNA sola vez a los 800ms → en proxy lento leía 0 y auto-rechazaba retiros con saldo.
+  let balances = _leerBalancesEnModalDeposito();
+  const tCero = now() + 3000;
+  const tFin  = now() + 7000;
+  while (now() < tFin) {
+    const pre = balances.pre;
+    const pintado = pre && /\d/.test(pre.raw || '');
+    if (pintado && pre.value > 0) break;
+    if (pintado && pre.value === 0 && now() > tCero) break;
+    await delay(250);
+    balances = _leerBalancesEnModalDeposito();
+  }
   return balances.pre || _leerSaldoJugadorEnModalAbierto();
 }
 
