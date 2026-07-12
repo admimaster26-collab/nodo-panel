@@ -9313,16 +9313,21 @@ async function cargarSolicitudesPortal(silencioso=false){
         cerrarModal();
         window._v154pParcialBusy = true;
         try{
+          try{ _trazaInit('Retiro parcial · '+usuario+' · '+money(monto)+' (#'+id+')'); }catch(_e){}
           // 1) RETIRO REAL — descuenta las fichas (mismos pasos que retirarSaldoRapido)
           toast("Retirando "+money(monto)+" de "+usuario+"…","blue");
-          if(!await ensureDrexSession()){ toast("Sesión de backoffice requerida.","red"); return; }
+          try{ _trazaPaso('Conectando al backoffice…'); }catch(_e){}
+          if(!await ensureDrexSession()){ toast("Sesión de backoffice requerida.","red"); try{_trazaPaso('Sesión requerida','err'); _trazaFin('err');}catch(_e){} return; }
+          try{ _trazaPaso('Buscando '+usuario+'…'); }catch(_e){}
           const b = await callDrex("buscarUsuario", usuario);
-          if(!b || !b.exists){ toast('Usuario "'+usuario+'" no encontrado en la plataforma.',"red"); return; }
+          if(!b || !b.exists){ toast('Usuario "'+usuario+'" no encontrado en la plataforma.',"red"); try{_trazaPaso('Usuario no encontrado','err'); _trazaFin('err');}catch(_e){} return; }
           const saldoRaw=String(b.balance?.raw||""); const saldo=b.balance?.value ?? null;
           const saldoConfiable=/\d/.test(saldoRaw) && typeof saldo==="number" && Number.isFinite(saldo);
-          if(saldoConfiable && saldo>=0 && saldo<monto){ toast("Saldo insuficiente en la plataforma: "+String(b.balance.raw).trim(),"red"); try{await window.ctrlElectron.navigateAgent();}catch(_e){} return; }
+          if(saldoConfiable && saldo>=0 && saldo<monto){ toast("Saldo insuficiente en la plataforma: "+String(b.balance.raw).trim(),"red"); try{_trazaPaso('Saldo insuficiente','err'); _trazaFin('err');}catch(_e){} try{await window.ctrlElectron.navigateAgent();}catch(_e){} return; }
+          try{ _trazaPaso('Retirando '+money(monto)+'…'); }catch(_e){}
           const r = await callDrex("retirarSaldo", monto);
-          if(r && r.ok===false){ toast("No se pudo retirar: "+(r.message||"falló")+". No registro el parcial.","red"); return; }
+          if(r && r.ok===false){ toast("No se pudo retirar: "+(r.message||"falló")+". No registro el parcial.","red"); try{_trazaPaso('No se aplicó: '+(r.message||'falló'),'err'); _trazaFin('err');}catch(_e){} return; }
+          try{ _trazaPaso('Retiro aplicado en el casino','ok'); }catch(_e){}
 
           // 2) REGISTRAR el progreso — solo porque el retiro salió bien
           const op = window.operador?.usuario || window.operador?.nombre || (typeof operador!=='undefined'?(operador?.usuario||operador?.nombre||''):'') || '';
@@ -9333,8 +9338,33 @@ async function cargarSolicitudesPortal(silencioso=false){
           // 3) AVISAR al usuario por PUSH
           try{ notificarRetiroParcialPush(usuario, monto, Number(d.pagado||monto), Number(d.total||total), !!d.completado); }catch(_e){}
 
-          // 4) Historial (best-effort) para que quede auditado en el panel
-          try{ if(typeof registrarEnHistorial==="function") await registrarEnHistorial({usuario:usuario, tipo:"RETIRO", monto:monto, origen:"PORTAL", estado:"PAGADA", notas:"Parcial retiro #"+id+" · "+money(d.pagado||monto)+"/"+money(d.total||total), pc_codigo:(pcOperativa||window.pcOperativa||"")}); }catch(_e){}
+          // 4) CONTABILIDAD COMPLETA (igual que un retiro normal): saldo pre/post + billetera + Chunior + historial + traza
+          const saldoPreP  = (typeof r?.previousBalance?.value==='number') ? r.previousBalance.value : (b.balance?.value ?? null);
+          const saldoPostP = (typeof r?.newBalance?.value==='number')      ? r.newBalance.value      : (saldoPreP!==null ? saldoPreP - monto : null);
+          const bilP = getBilleraLanding();
+          let movChuniorP = null;
+          if(bilP && bilP.CHUNIOR_UID){
+            try{ _trazaPaso('Anotando el retiro en Chunior…'); }catch(_e){}
+            try{
+              const rChu = await registrarRetiroEnChunior(bilP.CHUNIOR_UID, monto, usuario);
+              if(rChu && rChu.ok && rChu.movimientoId){ movChuniorP = rChu.movimientoId; try{_trazaPaso('Chunior N° '+rChu.movimientoId,'ok');}catch(_e){} }
+              else if(rChu && rChu.error){ toast('⚠️ Retiro OK pero falló en Chunior: '+rChu.error,'red'); try{_trazaPaso('Chunior falló: '+rChu.error,'err');}catch(_e){} }
+            }catch(e){ toast('⚠️ Error en Chunior: '+(e.message||''),'red'); try{_trazaPaso('Chunior error: '+(e.message||''),'err');}catch(_e){} }
+          } else { try{ _trazaPaso('Sin billetera con Chunior asignada','warn'); }catch(_e){} }
+          let _filaHistP = null;
+          try{
+            _filaHistP = await registrarEnHistorial({
+              usuario, tipo:'RETIRO', monto,
+              billetera_id:     bilP ? bilP.ID_BILLETERA   : null,
+              billetera_nombre: bilP ? bilP.NOMBRE_VISIBLE : null,
+              origen:'PORTAL', estado:'OK',
+              notas:'Retiro parcial #'+id+' · '+money(d.pagado||monto)+'/'+money(d.total||total),
+              solicitud_id:id, chunior_movimiento_id:movChuniorP,
+              saldo_pre:saldoPreP, saldo_post:saldoPostP
+            });
+          }catch(_e){}
+          try{ _trazaFin(movChuniorP?'ok':'warn', _filaHistP && _filaHistP.id); }catch(_e){}
+          if(movChuniorP){ try{ _watchdogTrigger(1500); }catch(_e){} }
 
           toast(d.completado?("✅ Retiro COMPLETO ("+money(d.pagado||0)+")"):("💸 Parcial OK · van "+money(d.pagado||0)+" de "+money(d.total||total)),"green");
           try{ await cargarSolicitudesPortal(true); }catch(_e){}
