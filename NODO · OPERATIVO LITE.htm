@@ -4346,6 +4346,98 @@ function portalCopiarCbu(btn){
   }catch(_e){}
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// COLA DE PENDIENTES (portado de NexoBetaChan 1.0.82) — una carga que quedó incierta
+// (timeout/error) NO se pierde en un toast: queda en una tarjeta arriba de las solicitudes,
+// sobrevive reinicios (localStorage), con Ver saldo / Descartar / Reintentar.
+// ══════════════════════════════════════════════════════════════════════════
+(function(){
+  const COLA_PEND_KEY = 'nodo_cola_pendientes_v1';
+  function colaPendientesAll(){ try{ return JSON.parse(localStorage.getItem(COLA_PEND_KEY)||'[]')||[]; }catch(_e){ return []; } }
+  function colaPendientesSave(items){ try{ localStorage.setItem(COLA_PEND_KEY, JSON.stringify((items||[]).slice(0,60))); }catch(_e){} }
+  window.colaPendientesAdd = function colaPendientesAdd(item){
+    try{
+      const items = colaPendientesAll();
+      item.qid = 'q'+Date.now()+Math.random().toString(16).slice(2,6);
+      item.creado = new Date().toISOString(); item.intentos = 0;
+      items.unshift(item); colaPendientesSave(items); renderColaPendientes();
+      toast('⏳ Quedó en la cola de pendientes: '+money(item.monto)+' a '+item.usuario, 'yellow');
+    }catch(e){ console.warn('[cola]', e); }
+  };
+  function colaPendientesRemove(qid){ colaPendientesSave(colaPendientesAll().filter(function(x){ return x.qid !== qid; })); renderColaPendientes(); }
+  function colaPendientesGet(qid){ return colaPendientesAll().find(function(x){ return x.qid === qid; }) || null; }
+  function colaPendientesPatch(qid, patch){ const items=colaPendientesAll(); const it=items.find(function(x){ return x.qid===qid; }); if(it){ Object.assign(it, patch); colaPendientesSave(items); } renderColaPendientes(); }
+  function colaEnsureBox(){
+    let box = document.getElementById('colaPendientesBox'); if(box) return box;
+    const anchor = document.getElementById('tablaSolicitudesInicio'); if(!anchor || !anchor.parentElement) return null;
+    box = document.createElement('div'); box.id='colaPendientesBox'; box.style.cssText='margin-bottom:10px';
+    anchor.parentElement.insertBefore(box, anchor); return box;
+  }
+  window.renderColaPendientes = function renderColaPendientes(){
+    const box = colaEnsureBox(); if(!box) return;
+    const items = colaPendientesAll();
+    if(!items.length){ box.innerHTML=''; box.style.display='none'; return; }
+    box.style.display='block';
+    const filas = items.map(function(it){
+      const esBono = it.clase === 'BONO';
+      const badge = esBono
+        ? '<span style="background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.35);border-radius:999px;padding:2px 9px;font-size:10px;font-weight:900">🎁 BONO '+(it.bonoPct||'')+'%</span>'
+        : '<span style="background:rgba(245,197,24,.12);color:#f5c518;border:1px solid rgba(245,197,24,.35);border-radius:999px;padding:2px 9px;font-size:10px;font-weight:900">CARGA</span>';
+      const aviso = it.posibleAplicada ? '<div style="margin-top:5px;font-size:11px;font-weight:800;color:#fbbf24">⚠ Pudo haberse aplicado (cortó por timeout) — usá "Ver saldo" antes de reintentar</div>' : '';
+      const saldoLeido = (it.saldoLeido!==undefined && it.saldoLeido!==null) ? '<div style="margin-top:4px;font-size:11px;color:#7cc4ff">Saldo actual leído: <b>'+esc(String(it.saldoLeido))+'</b> ('+esc(it.saldoLeidoHora||'')+')</div>' : '';
+      return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #f5c518;border-radius:10px;padding:10px 12px;margin-top:8px">'
+        + '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">'
+        +   '<div style="display:flex;align-items:center;gap:8px">'+badge+'<b style="font-size:15px;color:#f0f6fc">'+esc(it.usuario||'—')+'</b><b style="font-size:16px;color:#f5c518">'+money(it.monto||0)+'</b></div>'
+        +   '<span style="font-size:11px;color:#8b949e">'+fecha(it.creado)+(it.intentos?(' · '+it.intentos+' reintento/s'):'')+'</span>'
+        + '</div>'
+        + (it.titular ? '<div style="margin-top:4px;font-size:12px;color:#c9d1d9"><span style="color:#8b949e">A nombre de:</span> <b>'+esc(it.titular)+'</b></div>' : '')
+        + (it.solicitudId ? '<div style="margin-top:2px;font-size:12px;color:#c9d1d9"><span style="color:#8b949e">Solicitud:</span> #'+esc(String(it.solicitudId))+'</div>' : '')
+        + '<div style="margin-top:5px;font-size:11px;color:#fca5a5">Falló: '+esc(it.motivo||'sin detalle')+'</div>'
+        + aviso + saldoLeido
+        + '<div style="display:flex;gap:7px;justify-content:flex-end;margin-top:8px">'
+        +   '<button class="mini-btn" style="background:transparent;border:1px solid #30363d;color:#c9d1d9;font-size:11px" onclick="verSaldoPendienteCola(\''+it.qid+'\')">👁 Ver saldo</button>'
+        +   '<button class="mini-btn" style="background:transparent;border:1px solid #7f1d1d;color:#fca5a5;font-size:11px" onclick="descartarPendienteCola(\''+it.qid+'\', this)">Descartar</button>'
+        +   '<button class="mini-btn" style="background:#b45309;color:#fff;font-weight:800;font-size:11px" onclick="reintentarPendienteCola(\''+it.qid+'\')">↻ Reintentar</button>'
+        + '</div></div>';
+    }).join('');
+    box.innerHTML = '<div style="background:#0d1117;border:1px solid rgba(245,197,24,.35);border-radius:12px;padding:11px 13px">'
+      + '<div style="display:flex;justify-content:space-between;align-items:center"><b style="color:#f5c518;font-size:13px">⏳ Cargas pendientes de reintento ('+items.length+')</b><span style="font-size:11px;color:#8b949e">quedan guardadas aunque se reinicie el panel</span></div>'
+      + filas + '</div>';
+  };
+  window.descartarPendienteCola = function(qid, btn){
+    if(btn && btn.dataset.armado === '1'){ colaPendientesRemove(qid); toast('Pendiente descartado', 'yellow'); return; }
+    if(btn){ btn.dataset.armado='1'; btn.textContent='¿Seguro?'; btn.style.background='#7f1d1d'; btn.style.color='#fff';
+      setTimeout(function(){ try{ btn.dataset.armado=''; btn.textContent='Descartar'; btn.style.background='transparent'; btn.style.color='#fca5a5'; }catch(_e){} }, 3000); }
+  };
+  window.verSaldoPendienteCola = async function(qid){
+    const it = colaPendientesGet(qid); if(!it) return;
+    if(!_drexGlobalLock('cola-saldo')){ toast('Hay otra operación en curso en Agentes. Esperá.', 'yellow'); return; }
+    _wdLock();
+    try{
+      toast('Leyendo saldo de '+it.usuario+'...', 'blue');
+      const b = await callDrex('buscarUsuario', it.usuario, { skipBalance:false });
+      if(b && b.exists && b.balance && b.balance.raw){
+        colaPendientesPatch(qid, { saldoLeido: b.balance.raw.trim(), saldoLeidoHora: new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) });
+        toast('Saldo de '+it.usuario+': '+b.balance.raw.trim(), 'blue');
+      } else { toast('No se pudo leer el saldo'+(b&&b.needsLogin?' (sesión caída)':''), 'red'); }
+    }catch(e){ toast('Error leyendo saldo: '+(e.message||''), 'red'); }
+    finally{ _wdUnlock(); _drexGlobalUnlock(); }
+  };
+  // Reintentar SEGURO (nuestro): en vez de re-ejecutar la carga a ciegas, PRECARGA el formulario
+  // de "Operación manual" (usuario + monto) y hace scroll → el operador revisa y toca "Ejecutar"
+  // (que ya maneja billetera/Chunior/historial). Evita el riesgo de un auto-reintento money-op.
+  window.reintentarPendienteCola = function(qid){
+    const it = colaPendientesGet(qid); if(!it) return;
+    try{
+      const u = document.getElementById('manualUsuario'); if(u) u.value = it.usuario||'';
+      const m = document.getElementById('manualMonto');   if(m) m.value = String(it.monto||'');
+      if(u){ u.scrollIntoView({behavior:'smooth', block:'center'}); u.focus(); }
+      toast('↻ Cargué '+it.usuario+' · '+money(it.monto)+' en la operación manual. Revisá y tocá Ejecutar.', 'blue');
+    }catch(e){ toast('No pude precargar: '+(e.message||''), 'red'); }
+  };
+  setTimeout(function(){ try{ renderColaPendientes(); }catch(_e){} }, 3500); // pendientes de una sesión anterior
+})();
+
 async function registrarEnHistorial(op){
   const {
     usuario, tipo, monto=0, billetera_id=null, billetera_nombre=null,
@@ -9819,6 +9911,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
         setTimeout(()=>{ cerrarPortalJobModal(); }, 450);
       }else{
         await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_ERROR_AGENTES', monto_aprobado:montoAbs, historial_id:filaHist?.id||null, error:resultado?.message||'error'});
+        try{ if(typeof colaPendientesAdd==='function') colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
         if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Error en Agentes: '+esc(resultado?.message||'sin detalle')+'</div>';
         _trazaPaso('Agentes: no se pudo aplicar · '+(resultado?.message||'error'),'err'); _trazaFin('err', filaHist&&filaHist.id);
         toast('Portal con error · revisar', 'red');
@@ -9832,6 +9925,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
     }catch(e){
       const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'LANDING', estado:'ERROR', notas:'Solicitud portal #'+id+' · '+(e.message||'excepción'), solicitud_id:id});
       await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_EXCEPCION', error:e.message||String(e), monto_aprobado:montoAbs});
+      try{ if(typeof colaPendientesAdd==='function' && tipo==='CARGA') colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:e.message||'excepción', solicitudId:id, posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(e.message||'')) }); }catch(_e){}
       if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Error: '+esc(e.message||String(e))+'</div>';
       _trazaPaso('Error inesperado: '+(e.message||String(e)),'err'); _trazaFin('err', _fh&&_fh.id);
       await cargarHistorial();
