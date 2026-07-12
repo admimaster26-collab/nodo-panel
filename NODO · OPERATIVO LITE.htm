@@ -8617,7 +8617,28 @@ async function verificarSaldoRetiroOcioso(){
         const suficiente = saldo + 0.5 >= monto;
         window._retiroSaldoCheck[usuario.toLowerCase()] = { saldo:saldo, monto:monto, suficiente:suficiente, ts:Date.now(), raw:(b.balance.raw||'').trim() };
         try{ if(typeof window.v154pRenderSolicitudesPortalEnInicio==='function') window.v154pRenderSolicitudesPortalEnInicio(); }catch(_e){}
-        toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(b.balance.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · no alcanza, ajustá el retiro'), suficiente?'blue':'red');
+        // Auto-rechazo ANTI-FRAUDE: si el usuario pide MÁS de lo que tiene en fichas reales Y su saldo
+        // es casi nulo (< $5.000), el retiro es FALSO → se rechaza solo y se le avisa por chat. Si tiene
+        // ≥ $5.000 pero menos que lo pedido, NO se rechaza (queda para un retiro PARCIAL / ajuste manual).
+        const _PISO_AUTORECHAZO = 5000;
+        if(!suficiente && saldo < _PISO_AUTORECHAZO){
+          const sid = objetivo.ID || objetivo.SOLICITUD_ID || objetivo.ID_SOLICITUD;
+          const _sinFichas = saldo <= 0.5;
+          const _saldoTxt = (b.balance.raw||money(saldo)).trim();
+          try{
+            await window.actualizarSolicitudPortal(sid, 'RECHAZADA', {
+              etapa: _sinFichas ? 'AUTO_RECHAZO_SIN_SALDO' : 'AUTO_RECHAZO_SALDO_INSUF',
+              motivo: _sinFichas ? 'Sin fichas para retirar (saldo 0)' : ('Saldo insuficiente ('+_saldoTxt+') para el retiro de '+money(monto))
+            });
+            const _msg = _sinFichas
+              ? '❌ No pudimos procesar tu retiro: no figurás con fichas disponibles para retirar. Si creés que es un error, escribinos por acá.'
+              : '❌ No pudimos procesar tu retiro: tu saldo disponible ('+_saldoTxt+') no alcanza para el monto solicitado. Si creés que es un error, escribinos por acá.';
+            try{ await notificarUsuarioEnChat(usuario, _msg); }catch(_e){}
+            toast('❌ Retiro de '+usuario+' rechazado automáticamente · saldo '+_saldoTxt+' (< $5.000, es falso)', 'red');
+          }catch(_e){}
+        } else {
+          toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(b.balance.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · solo tiene esto → hacé retiro parcial'), suficiente?'blue':'red');
+        }
       }
     }catch(_e){}
     finally{ _wdUnlock(); _drexGlobalUnlock(); }
