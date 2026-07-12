@@ -922,6 +922,8 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
                 <div style="display:flex;gap:6px;flex-wrap:wrap">
                   <button class="mini-btn gray" onclick="sincronizarBilleterasChunior()" style="font-size:11px" title="Leer saldos y nombres desde Chunior">🔄 Sincronizar</button>
                   <button class="mini-btn purple" onclick="abrirModalTransferirBilleteras()" style="font-size:11px" title="Transferir entre billeteras en Chunior">🔀 Transferir</button>
+                  <button class="mini-btn gray" onclick="abrirModalAdminChunior('propina')" style="font-size:11px" title="Anotar una propina en Chunior">🎁 Propina</button>
+                  <button class="mini-btn gray" onclick="abrirModalAdminChunior('deposito')" style="font-size:11px" title="Anotar un depósito sin reclamar en Chunior">💜 Depo s/reclamar</button>
                   <button class="mini-btn gray" onclick="mostrarVista('billeteras')" style="font-size:11px">Administrar</button>
                 </div>
               </div>
@@ -8423,6 +8425,208 @@ async function _transferirEntreBilleterasChunior(origenUid, destinoUid, monto, n
 }
 
 // Modal NODO para transferir entre billeteras.
+// ══════════════════════════════════════════════════════════════════════════
+// MOVIMIENTOS CHUNIOR (portado de NexoBetaChan): propina / depósito sin reclamar / anular.
+// Operator-triggered (NO autónomo). Usa la ventana de Chunior (window.chunior).
+// ══════════════════════════════════════════════════════════════════════════
+function _adminChuParseMonto(v){
+  let s=String(v||'').replace(/[^\d,.-]/g,'');
+  if(s.includes(',')&&s.includes('.')) s=s.replace(/\./g,'').replace(',', '.');
+  else if(s.includes(',')) s=s.replace(',', '.');
+  else if(/^\d{1,3}(\.\d{3})+$/.test(s)) s=s.replace(/\./g,'');
+  const n=Number(s); return Number.isFinite(n)?Math.abs(n):0;
+}
+async function _registrarAdminChunior(addUrl, chunior_uid, monto, notas){
+  if(!window.chunior) return { ok:false, movimientoId:null, error:'Ventana de Chunior no disponible' };
+  if(!chunior_uid) return { ok:false, movimientoId:null, error:'La billetera no tiene chunior_uid configurado' };
+  await window.chunior.navigate(addUrl);
+  const t0 = Date.now(); let ready = false;
+  while(Date.now() - t0 < 10000){
+    ready = await window.chunior.exec('(function(){return !!(document.getElementById("id_cuenta_destino")&&document.getElementById("id_monto")&&document.getElementById("id_notas"));})()').catch(function(){return false;});
+    if(ready) break; await new Promise(function(r){ setTimeout(r,300); });
+  }
+  if(!ready) return { ok:false, movimientoId:null, error:'Formulario no apareció en 10s (¿cambió la página de Chunior?)' };
+  let injectRes;
+  try{
+    injectRes = await window.chunior.exec(
+      '(function(){' +
+      'var s=document.getElementById("id_cuenta_destino");' +
+      'var m=document.getElementById("id_monto");' +
+      'var n=document.getElementById("id_notas");' +
+      'var b=document.querySelector("input[name=\'_addanother\']")||document.querySelector("input[name=\'_save\']")||document.querySelector("input[type=\'submit\'],button[type=\'submit\']");' +
+      'if(!s||!m||!n||!b) return {ok:false,err:"campos faltantes",hasS:!!s,hasM:!!m,hasN:!!n,hasB:!!b};' +
+      's.value='+JSON.stringify(String(chunior_uid))+'; s.dispatchEvent(new Event("change",{bubbles:true}));' +
+      'm.value='+JSON.stringify(String(monto))+'; m.dispatchEvent(new Event("input",{bubbles:true})); m.dispatchEvent(new Event("change",{bubbles:true}));' +
+      'n.value='+JSON.stringify(String(notas||""))+'; n.dispatchEvent(new Event("input",{bubbles:true})); n.dispatchEvent(new Event("change",{bubbles:true}));' +
+      'var snap={ok:true, valS:s.value, valM:m.value, valN:n.value}; b.click(); return snap;' +
+      '})()'
+    );
+  }catch(e){ return { ok:false, movimientoId:null, error:e.message||'Error inyectando datos' }; }
+  if(!injectRes || !injectRes.ok) return { ok:false, movimientoId:null, error:'Inyección falló: '+JSON.stringify(injectRes) };
+  await new Promise(function(r){ setTimeout(r,500); });
+  let movimientoId=null, errorMsg=null, dbgTxt=null;
+  const _tParse = Date.now();
+  while(Date.now() - _tParse < 4500){
+    let res=null;
+    try{
+      res = await window.chunior.exec(
+        '(function(){' +
+        'var ok=document.querySelector("li.success")||document.querySelector(".messagelist .success")||document.querySelector(".success");' +
+        'if(!ok){var ml=document.querySelector("ul.messagelist li"); if(ml&&/[eé]xito/i.test(ml.textContent||"")) ok=ml;}' +
+        'if(ok){ var txt=ok.textContent||""; var a=ok.querySelector("a[href]");' +
+        '  if(a){var mh=(a.getAttribute("href")||"").match(/(\\d{3,})/); if(mh) return {ok:true, id:mh[1]};}' +
+        '  var mt=txt.match(/n[\\sº°o\\.]{0,4}(\\d{4,})/i) || txt.match(/(\\d{5,})/); if(mt) return {ok:true, id:mt[1]};' +
+        '  return {ok:true, id:null, dbg:txt.trim().substring(0,180)}; }' +
+        'var err=document.querySelector("ul.errorlist")||document.querySelector(".errornote");' +
+        'if(err) return {ok:false, error:(err.textContent||"Error en formulario").trim().substring(0,200)};' +
+        'return {pending:true};' +
+        '})()'
+      );
+    }catch(e){ errorMsg=e.message||'Error leyendo respuesta'; break; }
+    if(res && res.ok){ movimientoId=res.id; dbgTxt=res.dbg||null; break; }
+    if(res && res.error){ errorMsg=res.error; break; }
+    await new Promise(function(r){ setTimeout(r,250); });
+  }
+  return { ok: !!movimientoId || (!errorMsg && !!dbgTxt), movimientoId:movimientoId, error:errorMsg, dbg:dbgTxt };
+}
+async function registrarPropinaEnChunior(chunior_uid, monto, notas){
+  return _registrarAdminChunior(CHUNIOR_BASE + '/transacciones/propina/add/', chunior_uid, monto, notas);
+}
+async function registrarDepoSinReclamarEnChunior(chunior_uid, monto, notas){
+  return _registrarAdminChunior(CHUNIOR_BASE + '/transacciones/depositossinreclamar/add/', chunior_uid, monto, notas);
+}
+window.abrirModalAdminChunior = function(tipo){
+  const esPropina = tipo==='propina';
+  const titulo = esPropina ? '🎁 Anotar propina' : '💜 Depósito sin reclamar';
+  const bilsConUid = (billeteras||[]).filter(function(b){ return b.CHUNIOR_UID; });
+  if(!bilsConUid.length){ abrirModal(titulo, '<div class="err-box">No hay billeteras con UID de Chunior. Sincronizá billeteras primero.</div>', function(){ cerrarModal(); }, 'Entendido'); return; }
+  const opts = bilsConUid.map(function(b){ return '<option value="'+escapeHtml(String(b.ID_BILLETERA))+'">'+escapeHtml(b.NOMBRE_VISIBLE||'—')+' · '+money(b.SALDO||0)+'</option>'; }).join('');
+  const ayuda = esPropina
+    ? 'Suma el monto a la billetera como propina (no descuenta fichas).'
+    : 'Anota una transferencia que llegó sin usuario. Suma el monto a la billetera; después se puede reclamar convirtiéndola en fichas desde el propio movimiento en Chunior. Es una "carga en pausa".';
+  const body =
+    '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">'+ayuda+'</div>'
+    + '<label>Billetera</label><select id="adminChuBil" style="width:100%">'+opts+'</select>'
+    + '<label style="margin-top:8px;display:block">Monto</label><input id="adminChuMonto" type="text" inputmode="decimal" placeholder="Ej: 1500" style="width:100%">'
+    + '<label style="margin-top:8px;display:block">Notas</label><input id="adminChuNotas" type="text" placeholder="'+(esPropina?'Ej: propina turno tarde':'Ej: titular / referencia de la transferencia')+'" style="width:100%">';
+  abrirModal(titulo, body, async function(){
+    const bilId = document.getElementById('adminChuBil') ? document.getElementById('adminChuBil').value : '';
+    const bil = billeteras.find(function(b){ return String(b.ID_BILLETERA)===String(bilId); });
+    const monto = _adminChuParseMonto(document.getElementById('adminChuMonto') ? document.getElementById('adminChuMonto').value : '');
+    const notas = (document.getElementById('adminChuNotas') ? document.getElementById('adminChuNotas').value : '').trim();
+    if(!bil || !bil.CHUNIOR_UID){ toast('Elegí una billetera con Chunior.', 'red'); return; }
+    if(!monto || monto<=0){ toast('Monto inválido.', 'red'); return; }
+    cerrarModal();
+    toast((esPropina?'🎁 Anotando propina':'💜 Anotando depósito')+' de '+money(monto)+'...', 'blue');
+    _wdLock();
+    let r;
+    try{
+      r = esPropina ? await registrarPropinaEnChunior(bil.CHUNIOR_UID, monto, notas)
+                    : await registrarDepoSinReclamarEnChunior(bil.CHUNIOR_UID, monto, notas);
+    }catch(e){ r = { ok:false, error:e.message||'error' }; }
+    finally{ _wdUnlock(); }
+    if(r && r.ok){
+      if(!esPropina){ try{ await ajustarSaldoBilletera(bil.ID_BILLETERA, monto); }catch(_e){} }
+      try{
+        await registrarEnHistorial({
+          usuario: notas || (esPropina?'PROPINA':'DEPO S/RECLAMAR'),
+          tipo: esPropina ? 'PROPINA' : 'DEPOSITO_SR',
+          monto: monto, billetera_id: bil.ID_BILLETERA, billetera_nombre: bil.NOMBRE_VISIBLE,
+          origen: 'ADMIN', estado:'OK',
+          notas: (esPropina?'Propina':'Depósito sin reclamar')+(notas?(' · '+notas):'')+(r.movimientoId?(' · Chunior N° '+r.movimientoId):' [CHUNIOR_OK_SIN_N]'),
+          chunior_movimiento_id: r.movimientoId || null
+        });
+      }catch(_e){}
+      toast((esPropina?'🎁 Propina':'💜 Depósito')+' anotado'+(r.movimientoId?(' · N° '+r.movimientoId):'')+' en '+bil.NOMBRE_VISIBLE, 'green');
+      try{ await cargarHistorial(); }catch(_e){}
+      try{ await sincronizarBilleterasChunior(true); }catch(_e){}
+      try{ renderBillerasInicio(); }catch(_e){}
+      _watchdogTrigger(1500);
+    }else{
+      toast('⚠️ No se pudo anotar: '+((r&&r.error)||'sin detalle'), 'red');
+    }
+  }, esPropina?'Anotar propina':'Anotar depósito');
+};
+async function _anularMovimientoChunior(tipoUrl, movId){
+  if(!window.chunior) return { ok:false, error:'Ventana de Chunior no disponible' };
+  if(!movId) return { ok:false, error:'Falta el N° de movimiento de Chunior' };
+  const changeUrl = CHUNIOR_BASE + '/transacciones/' + tipoUrl + '/' + encodeURIComponent(movId) + '/change/';
+  try{ await window.chunior.navigate(changeUrl); }catch(e){ return { ok:false, error:'No se pudo navegar a Chunior: '+(e.message||'') }; }
+  const t0 = Date.now(); let ready = false;
+  while(Date.now() - t0 < 10000){
+    ready = await window.chunior.exec('(function(){return !!document.getElementById("id_monto");})()').catch(function(){return false;});
+    if(ready) break; await new Promise(function(r){ setTimeout(r,300); });
+  }
+  if(!ready) return { ok:false, error:'Formulario de Chunior no apareció (¿el movimiento existe?)' };
+  let inj;
+  try{
+    inj = await window.chunior.exec(
+      '(function(){' +
+        'var m=document.getElementById("id_monto");' +
+        'var b=document.querySelector("input[name=\'_save\']")||document.querySelector("input[name=\'_addanother\']")||document.querySelector("input[type=\'submit\'],button[type=\'submit\']");' +
+        'if(!m||!b) return {ok:false,err:"campos faltantes",hasM:!!m,hasB:!!b};' +
+        'm.value="0.1"; m.dispatchEvent(new Event("input",{bubbles:true})); m.dispatchEvent(new Event("change",{bubbles:true}));' +
+        'var snap={ok:true,val:m.value}; b.click(); return snap;' +
+      '})()'
+    );
+  }catch(e){ return { ok:false, error:e.message||'Error inyectando' }; }
+  if(!inj || !inj.ok) return { ok:false, error:'Inyección falló: '+JSON.stringify(inj) };
+  await new Promise(function(r){ setTimeout(r,2500); });
+  const conf = await window.chunior.exec(
+    '(function(){var li=document.querySelector("li.success"); if(li&&/modific/i.test(li.textContent||"")) return {ok:true, mensaje:(li.textContent||"").trim()};' +
+    'var err=document.querySelector(".errorlist,.errornote"); if(err) return {ok:false, error:(err.textContent||"").trim().substring(0,200)};' +
+    'if((location.href||"").indexOf("/change/")<0) return {ok:true, mensaje:"redirigió"}; return {ok:false, error:"Sin confirmación visible"};})()'
+  ).catch(function(){ return { ok:false, error:'No se pudo leer confirmación' }; });
+  return conf || { ok:false, error:'Sin respuesta' };
+}
+async function anularPropinaChunior(movId){ return _anularMovimientoChunior('propina', movId); }
+
+// ── Verificar saldo de un retiro pendiente en OCIO (portado de NexoBetaChan · versión SEGURA) ──
+// Cuando NO hay ninguna operación en curso, lee el saldo del usuario de UN retiro pendiente y lo
+// muestra (badge en la solicitud + toast). NO auto-rechaza (esa decisión de plata la toma el
+// operador). Re-chequea cada usuario máx. cada 5 min. Se desactiva con localStorage 'nodo_saldo_ocioso_off'.
+window._retiroSaldoCheck = window._retiroSaldoCheck || {};
+async function verificarSaldoRetiroOcioso(){
+  try{
+    try{ if(localStorage.getItem('nodo_saldo_ocioso_off')==='1') return; }catch(_e){}
+    if(window._drexGlobalBusy) return; // candado maestro: cualquier operación lo toma
+    if(typeof _loteEnCurso!=='undefined' && _loteEnCurso) return;
+    if(typeof _operacionManualEnCurso!=='undefined' && _operacionManualEnCurso) return;
+    if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0) return;
+    if(window._v154pParcialBusy) return;
+    if(typeof colaPendientesAll==='function' && colaPendientesAll().length>0) return;
+    if(!window.ctrlElectron) return;
+    const pend = ((window.V154P&&window.V154P.solicitudes)||[]).filter(function(s){
+      const tipo = String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase();
+      return tipo==='RETIRO' && (typeof estadoCerrado==='function' ? !estadoCerrado(s.ESTADO) : true);
+    });
+    const objetivo = pend.find(function(s){
+      const u = String(s.USUARIO||'').toLowerCase();
+      const prev = window._retiroSaldoCheck[u];
+      return u && (!prev || (Date.now()-prev.ts) > 5*60*1000);
+    });
+    if(!objetivo) return;
+    const usuario = String(objetivo.USUARIO||'');
+    const monto = Math.abs(Number(objetivo.MONTO_REAL||objetivo.MONTO_DECLARADO||0));
+    if(!_drexGlobalLock('retiro-saldo-check')) return;
+    _wdLock();
+    try{
+      const b = await callDrex('buscarUsuario', usuario, { skipBalance:false });
+      if(b && b.exists && typeof b.balance?.value === 'number'){
+        const saldo = b.balance.value;
+        const suficiente = saldo + 0.5 >= monto;
+        window._retiroSaldoCheck[usuario.toLowerCase()] = { saldo:saldo, monto:monto, suficiente:suficiente, ts:Date.now(), raw:(b.balance.raw||'').trim() };
+        try{ if(typeof window.v154pRenderSolicitudesPortalEnInicio==='function') window.v154pRenderSolicitudesPortalEnInicio(); }catch(_e){}
+        toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(b.balance.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · no alcanza, ajustá el retiro'), suficiente?'blue':'red');
+      }
+    }catch(_e){}
+    finally{ _wdUnlock(); _drexGlobalUnlock(); }
+  }catch(_e){}
+}
+window.verificarSaldoRetiroOcioso = verificarSaldoRetiroOcioso;
+// Trigger conservador cada 90s (gated por TODOS los guards + 5 min por usuario).
+try{ setInterval(function(){ try{ verificarSaldoRetiroOcioso(); }catch(_e){} }, 90000); }catch(_e){}
+
 function abrirModalTransferirBilleteras(){
   if(!window.chunior){ toast("Chunior no disponible", "red"); return; }
   const bilsConUid = billeteras.filter(function(b){ return b.CHUNIOR_UID && normalizar(b.ACTIVA)==='SI' && normalizar(b.ESTADO||'ACTIVA') !== 'FUSIONADA'; });
@@ -9067,6 +9271,9 @@ if(window.ctrlElectron){
       html = `<div class="small" style="margin:0 0 8px;color:#98a2b3">Mostrando ${pendientes.length} solicitud/es pendiente/s del portal.</div>` + visibles.map(s => {
         const id = Number(s.ID || s.SOLICITUD_ID || 0);
         const tomada = ["EN_REVISION","EN_PROCESO"].includes(String(s.ESTADO||"").toUpperCase());
+        const _saldoChk = (window._retiroSaldoCheck||{})[String(s.USUARIO||"").toLowerCase()];
+        const _esRetiroS = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
+        const _saldoBadge = (_esRetiroS && _saldoChk) ? `<div style="font-size:10px;font-weight:800;margin-top:2px;color:${_saldoChk.suficiente?'#22c55e':'#ef4444'}">saldo ${esc(_saldoChk.raw||"")}${_saldoChk.suficiente?' ✓':' ⚠ no alcanza'}</div>` : "";
         return `<div class="v154p-card">
           <div>
             <div class="v154p-main">${esc(s.USUARIO || "-")}</div>
@@ -9074,7 +9281,7 @@ if(window.ctrlElectron){
             ${s.TITULAR ? `<div class="v154p-small" style="color:#fde68a">Titular: ${esc(s.TITULAR)}</div>` : ""}
           </div>
           <div><span class="v154p-badge">${esc(s.TIPO || "-")}</span></div>
-          <div class="v154p-main">${money(s.MONTO_REAL || s.MONTO_DECLARADO || 0)}</div>
+          <div class="v154p-main">${money(s.MONTO_REAL || s.MONTO_DECLARADO || 0)}${_saldoBadge}</div>
           <div><span class="v154p-badge">${esc(s.ESTADO || "-")}</span></div>
           <div class="v154p-actions">
             ${tomada?`<button class="v154p-btn yellow" disabled>Tomada</button>`:`<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
