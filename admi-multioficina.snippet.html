@@ -1,0 +1,162 @@
+<script>
+/* ============================================================
+   NODO · ADMI · Encargado multi-oficina (UI completa) — v2
+   Backend: panel_validar_admin_session (pcs) + admin_set_active_pc + admin_get_scope
+            + admin_operador_set_pcs + admin_operador_get_pcs.
+   A: selector global muestra SOLO las oficinas del encargado + cambia la activa.
+   B: campo (checkboxes) en el form de operador para asignarle oficinas al encargado.
+      (v2: el listado de oficinas sale del catálogo `pcs` + los <select> existentes, y
+       carga `pcs` si está vacío → así aparecen oficinas nuevas como P7 sin datos aún.)
+   Autocontenido: pisa fillPcSelects / cambiarOficinaAdmin / editOperador / resetOperadorForm
+   y el submit del form, sin tocar el resto.
+   ============================================================ */
+(function(){
+  // ===================== PARTE A · selector global =====================
+  function esMulti(){
+    return !!(window.adminScope && adminScope.puede_todas === false
+      && Array.isArray(adminScope.pcs) && adminScope.pcs.length > 1);
+  }
+  function codsMulti(){
+    return adminScope.pcs.map(normPc).filter(Boolean).sort(function(a,b){ return pcNum(a)-pcNum(b); });
+  }
+  var _fill = window.fillPcSelects;
+  window.fillPcSelects = function(){
+    try{ if(_fill) _fill(); }catch(_e){}
+    if(!esMulti()) return;
+    try{
+      var cods = codsMulti();
+      var opts = cods.map(function(c){ return '<option value="'+safe(c)+'">'+safe(pcLabel(c))+'</option>'; }).join("");
+      var g = $("globalPc");
+      if(g){
+        g.innerHTML = opts;
+        g.value = normPc(adminScope.pc_codigo) || cods[0] || "";
+        g.disabled = false; g.style.display = "";
+        if(g.parentElement) g.parentElement.style.display = "";
+      }
+    }catch(_e){}
+  };
+  var _cambiar = window.cambiarOficinaAdmin;
+  window.cambiarOficinaAdmin = async function(){
+    if(esMulti()){
+      var pc = normPc(val("globalPc"));
+      if(pc){
+        try{
+          var r = await supabaseClient.rpc('admin_set_active_pc', { p_session_token: requireAdminToken(), p_pc: pc });
+          if(r && r.error){ toast('No pude cambiar de oficina: ' + r.error.message, 'err'); return; }
+          adminScope.pc_codigo = pc;
+        }catch(e){ toast('Error cambiando oficina: ' + (e.message || e), 'err'); return; }
+      }
+    }
+    return _cambiar ? _cambiar() : (typeof reloadAll === 'function' ? reloadAll(true) : null);
+  };
+  try{ if(esMulti()) window.fillPcSelects(); }catch(_e){}
+
+  // ===================== PARTE B · campo en el form de operador =====================
+  var ROW_ID = 'op_multiofi_row', BOX_ID = 'op_multiofi';
+  function esEncargadoRol(r){ r = (r||'').toUpperCase(); return r === 'ENCARGADO' || r === 'SUPERVISOR_PC'; }
+
+  // Lista de oficinas = catálogo `pcs` UNION lo que ya tengan los <select> del admi.
+  function officeCodes(){
+    var s = {};
+    (window.pcs || []).forEach(function(p){ var c = normPc(p && p.pc_codigo); if(c) s[c] = 1; });
+    ['op_pc_codigo','globalPc'].forEach(function(id){
+      var sel = $(id); if(sel) Array.prototype.forEach.call(sel.options, function(o){ var c = normPc(o.value); if(c) s[c] = 1; });
+    });
+    return Object.keys(s).sort(function(a,b){ return pcNum(a)-pcNum(b); });
+  }
+  // Carga el catálogo si está vacío y suma al select "Oficina" las que falten (ej: P7 nueva).
+  async function ensureOffices(){
+    if((!window.pcs || !window.pcs.length) && typeof loadPcs === 'function'){
+      try{ await loadPcs(false); }catch(_e){}
+    }
+    try{
+      var sel = $("op_pc_codigo");
+      if(sel){
+        var have = {}; Array.prototype.forEach.call(sel.options, function(o){ have[normPc(o.value)] = 1; });
+        officeCodes().forEach(function(c){
+          if(!have[c]){ var op = document.createElement('option'); op.value = c; op.textContent = pcLabel(c); sel.appendChild(op); }
+        });
+      }
+    }catch(_e){}
+  }
+
+  function ensureField(){
+    if($(ROW_ID)) return;
+    var anchor = $("op_pc_codigo"); if(!anchor) return;
+    var row = anchor.closest('.row'); if(!row || !row.parentElement) return;
+    var div = document.createElement('div');
+    div.className = 'row'; div.id = ROW_ID; div.style.display = 'none';
+    div.innerHTML = '<label>Oficinas del encargado (además de la principal)</label>' +
+      '<div id="'+BOX_ID+'" style="display:flex;flex-wrap:wrap;gap:10px;max-height:130px;overflow:auto;padding:4px 0"></div>';
+    row.parentElement.insertBefore(div, row.nextSibling);
+  }
+  async function buildChecks(){
+    var box = $(BOX_ID); if(!box) return;
+    await ensureOffices();
+    var offs = officeCodes();
+    if(!offs.length){ box.innerHTML = '<span class="small" style="color:#8b949e">No hay oficinas cargadas</span>'; return; }
+    box.innerHTML = offs.map(function(c){
+      return '<label style="display:inline-flex;align-items:center;gap:5px;font-weight:400;cursor:pointer">' +
+        '<input type="checkbox" class="op_mo_chk" value="'+safe(c)+'"> '+safe(pcLabel(c))+'</label>';
+    }).join("");
+  }
+  function setChecks(list){
+    var set = {}; (list||[]).forEach(function(c){ set[normPc(c)] = true; });
+    document.querySelectorAll('.op_mo_chk').forEach(function(chk){ chk.checked = !!set[normPc(chk.value)]; });
+  }
+  function getChecks(){
+    var out = []; document.querySelectorAll('.op_mo_chk:checked').forEach(function(chk){ out.push(normPc(chk.value)); });
+    return out;
+  }
+  async function syncField(){
+    ensureField();
+    var show = esEncargadoRol(val("op_rol"));
+    var row = $(ROW_ID); if(row) row.style.display = show ? '' : 'none';
+    if(show) await buildChecks();
+  }
+
+  document.addEventListener('change', function(e){ if(e.target && e.target.id === 'op_rol') setTimeout(syncField, 0); });
+
+  var _edit = window.editOperador;
+  window.editOperador = function(id){
+    try{ if(_edit) _edit(id); }catch(_e){}
+    setTimeout(async function(){
+      await syncField();
+      if(!esEncargadoRol(val("op_rol"))) return;
+      try{
+        var r = await supabaseClient.rpc('admin_operador_get_pcs', { p_session_token: requireAdminToken(), p_operador_id: Number(id) });
+        if(r && !r.error && Array.isArray(r.data)) setChecks(r.data);
+      }catch(_e){}
+    }, 80);
+  };
+
+  var _reset = window.resetOperadorForm;
+  window.resetOperadorForm = function(){
+    try{ if(_reset) _reset(); }catch(_e){}
+    setChecks([]); syncField();
+  };
+
+  function hookSave(){
+    var form = $("operadorForm"); var _save = window.saveOperador;
+    if(!form || !_save || form.__moHooked) return;
+    form.__moHooked = true;
+    form.removeEventListener('submit', _save);
+    form.addEventListener('submit', async function(e){
+      var rol = val("op_rol");
+      var usuario = (val("op_usuario") || '').toLowerCase().trim();
+      var extras = getChecks();
+      await _save(e);
+      if(!esEncargadoRol(rol) || !usuario) return;
+      var o = (window.operadores || []).find(function(x){ return String(x.usuario||'').toLowerCase().trim() === usuario; });
+      if(!o){ return; }
+      try{
+        var r = await supabaseClient.rpc('admin_operador_set_pcs', { p_session_token: requireAdminToken(), p_operador_id: Number(o.id), p_pcs: extras });
+        if(r && r.error) toast('Oficinas del encargado: ' + r.error.message, 'err');
+        else toast('Oficinas del encargado guardadas', 'okb');
+      }catch(_e){}
+    });
+  }
+  if(document.readyState !== 'loading') setTimeout(hookSave, 900);
+  else document.addEventListener('DOMContentLoaded', function(){ setTimeout(hookSave, 900); });
+})();
+</script>

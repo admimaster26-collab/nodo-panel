@@ -53,3 +53,6 @@ icons/
 panel.html
 blq8_restore.txt
 extract_blq8.js
+
+# Repos clonados para análisis (no versionar)
+_colega_repo_tmp/

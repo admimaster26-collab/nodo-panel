@@ -1,0 +1,174 @@
+<script>
+/* ============================================================
+   NODO ADMIN · Contactos / Vínculos usuario↔teléfono (Whaticket)
+   Import de CSV por oficina → usuarios_portal_vinculos (VINCULADO).
+   Autocontenido: usa helpers globales, no toca el resto del admi.
+   ============================================================ */
+(function(){
+  function canonTel(raw){
+    let t=String(raw||'').replace(/\D/g,'');
+    if(t.length>10){ if(t.startsWith('54'))t=t.slice(2); if(t.startsWith('9'))t=t.slice(1); if(t.startsWith('0'))t=t.slice(1); }
+    if(t.length>10) t=t.slice(-10);
+    return t;
+  }
+  function parseName(name){
+    name=String(name||'').trim(); let u='',ti='';
+    if(name.includes('//')){
+      const p=name.split('//').map(s=>s.trim());
+      if(/\d/.test(p[0])&&!/\d/.test(p[1]||'')){u=p[0];ti=p[1]||'';}
+      else if(/\d/.test(p[1]||'')&&!/\d/.test(p[0])){u=p[1];ti=p[0];}
+      else {u=p[0];ti=p[1]||'';}
+    } else {
+      const toks=name.split(/\s+/).filter(Boolean);
+      const uT=toks.find(t=>/\d/.test(t)&&/[a-z]/i.test(t))||toks.find(t=>/\d/.test(t))||'';
+      u=uT; ti=toks.filter(t=>t!==uT).join(' ');
+    }
+    return {usuario:u.toLowerCase().trim(), titular:ti.trim()};
+  }
+  function parseCsvLine(line){
+    const out=[]; let cur='', inQ=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(inQ){ if(c==='"'){ if(line[i+1]==='"'){cur+='"';i++;} else inQ=false; } else cur+=c; }
+      else { if(c==='"') inQ=true; else if(c===',') {out.push(cur);cur='';} else cur+=c; }
+    }
+    out.push(cur); return out;
+  }
+  // Detecta dos formatos: Whaticket simple (number,name) y Filtrado activo (usuarios,...,telefono,...)
+  function parseCsv(text){
+    const lines=text.split(/\r?\n/).filter(l=>l.trim());
+    if(!lines.length) return [];
+    const header=parseCsvLine(lines[0]).map(h=>h.trim().toLowerCase());
+    const iUsuarios=header.indexOf('usuarios'), iTel=header.indexOf('telefono');
+    const iNumber=header.indexOf('number'),    iName=header.indexOf('name');
+    const filtrado = iUsuarios>=0;
+    const out=[];
+    for(let k=1;k<lines.length;k++){
+      const cols=parseCsvLine(lines[k]);
+      let usuario='', tel='', titular='';
+      if(filtrado){
+        usuario=(cols[iUsuarios]||'').trim().toLowerCase();
+        tel=(cols[iTel>=0?iTel:3]||'').trim();
+        titular=usuario;
+      } else {
+        tel=(cols[iNumber>=0?iNumber:0]||'').trim();
+        const p=parseName(cols[iName>=0?iName:1]||''); usuario=p.usuario; titular=p.titular;
+      }
+      if(usuario) out.push({usuario, telefono_raw:tel, titular});
+    }
+    return out;
+  }
+
+  function ensureSection(){
+    if($("section-vinculos")) return;
+    const nav=document.querySelector(".nav");
+    if(nav && !document.querySelector('[data-section="vinculos"]')){
+      nav.insertAdjacentHTML("beforeend",`<button class="navBtn" data-section="vinculos" onclick="showSection('vinculos')">Contactos / Vínculos <span class="badge" id="badgeVinculos">CSV</span></button>`);
+    }
+    const html=`<section id="section-vinculos" class="section"><div class="grid2">
+      <div class="card"><div class="card-h"><h3>Importar contactos (Whaticket)</h3></div><div class="card-b">
+        <div class="notice">CSV de Whaticket (<b>number,name</b>). Se cargan como vínculos <b>VINCULADO</b> de la oficina seleccionada arriba. Idempotente (no duplica). El portal los usa al instante.</div>
+        <div class="row"><label>Oficina destino</label><input id="vincPcView" readonly></div>
+        <div class="row"><label>Archivo CSV</label><input id="vincFile" type="file" accept=".csv,text/csv"></div>
+        <div class="actions"><button class="primary" id="vincBtn" onclick="vincImportar()">Importar CSV</button></div>
+        <div id="vincResultado" style="margin-top:12px"></div>
+      </div></div>
+      <div class="card"><div class="card-h"><h3>Vínculos de la oficina</h3><button class="blue small" onclick="vincCargar()">Actualizar</button></div><div class="card-b">
+        <div class="row"><input id="vincBuscar" placeholder="Buscar usuario o teléfono..." oninput="vincRender()"></div>
+        <div class="tableWrap"><table><thead><tr><th>Usuario</th><th>Teléfono</th><th>Titular</th><th>Estado</th><th>Fuente</th><th>App / Push</th><th></th></tr></thead><tbody id="vincBody"></tbody></table></div>
+      </div></div>
+    </div></section>`;
+    const ref=$("section-config")||$("section-historial");
+    if(ref) ref.insertAdjacentHTML("beforebegin", html);
+    else document.querySelector("main")?.insertAdjacentHTML("beforeend", html);
+  }
+
+  let _vinc=[];
+  window.vincImportar=async function(){
+    const pc=normPc(pcSeleccionada());
+    if(!pc) return toast("Seleccioná una oficina arriba primero","warn");
+    const f=$("vincFile")?.files?.[0];
+    if(!f) return toast("Elegí un archivo CSV","warn");
+    const btn=$("vincBtn"); if(btn){btn.disabled=true;btn.textContent="Importando...";}
+    try{
+      const rows=parseCsv(await f.text());
+      const objs=[];
+      for(const r of rows){
+        const tel=canonTel(r.telefono_raw);
+        if(r.usuario && tel.length>=6) objs.push({pc_codigo:pc, usuario:r.usuario, telefono_canon:tel, telefono_raw:r.telefono_raw, titular:r.titular, estado_vinculo:'VINCULADO', fuente:'CSV_WHATICKET', verificado_por:(adminScope?.usuario||'admi'), updated_at:new Date().toISOString()});
+      }
+      let ok=0, err=0;
+      const _tok=(typeof requireAdminToken==='function')?requireAdminToken():adminSessionToken;
+      for(let i=0;i<objs.length;i+=400){
+        const batch=objs.slice(i,i+400);
+        const {error}=await supabaseClient.rpc('admin_vinculos_importar',{p_session_token:_tok,p_pc_codigo:pc,p_rows:batch});
+        if(error){ err+=batch.length; console.warn('[vinc import]',error.message); } else ok+=batch.length;
+      }
+      $("vincResultado").innerHTML=`<div class="notice">Importados: <b>${ok}</b> · Errores: <b>${err}</b> · Saltados: <b>${rows.length-objs.length}</b> (sin usuario/tel válido)</div>`;
+      toast(`Vínculos importados: ${ok}`,"okb");
+      await vincCargar();
+    }catch(e){ toast("Error importando: "+(e.message||e),"err"); }
+    finally{ if(btn){btn.disabled=false;btn.textContent="Importar CSV";} }
+  };
+  window.vincCargar=async function(){
+    const pc=normPc(pcSeleccionada());
+    if($("vincPcView")) $("vincPcView").value = pc ? pcLabel(pc) : "Seleccioná oficina arriba";
+    if(!pc){ _vinc=[]; return vincRender(); }
+    const {data,error}=await supabaseClient.rpc('admin_vinculos_listar',{p_session_token:requireAdminToken(),p_pc_codigo:pc});
+    _vinc = error? [] : (data||[]);
+    if(error) toast("Error cargando vínculos: "+error.message,"err");
+    // Flags push/app por usuario (RPC admin). Si la RPC no existe todavía, queda vacío (no rompe).
+    try{
+      const fr=await supabaseClient.rpc('admin_crm_flags',{p_session_token:requireAdminToken(),p_pc_codigo:pc});
+      window._admiFlags={};
+      if(!fr.error && Array.isArray(fr.data)) fr.data.forEach(f=>{ window._admiFlags[String(f.usuario||'').toLowerCase()]={push:!!f.push,app:!!f.app}; });
+    }catch(_e){ window._admiFlags=window._admiFlags||{}; }
+    vincRender();
+  };
+  window.vincRender=function(){
+    if(!$("vincBody")) return;
+    const q=norm(val("vincBuscar"));
+    const rows=_vinc.filter(v=>!q||norm([v.usuario,v.telefono_canon,v.telefono_raw,v.titular].join(" ")).includes(q));
+    if(!rows.length) return empty("vincBody",7,"Sin vínculos para esta oficina.");
+    const _fl=window._admiFlags||{};
+    $("vincBody").innerHTML=rows.slice(0,600).map(v=>{
+      const f=_fl[String(v.usuario||'').toLowerCase()]||{};
+      const app=!!(f.app||v.app_instalada), push=!!f.push;
+      return `<tr>
+      <td><strong>${safe(v.usuario)}</strong></td>
+      <td>${safe(v.telefono_canon)}</td>
+      <td>${safe(v.titular||'-')}</td>
+      <td>${pill(v.estado_vinculo, v.estado_vinculo==='VINCULADO'?'ok':v.estado_vinculo==='BLOQUEADO'?'off':'warn')}</td>
+      <td>${safe(v.fuente||'-')}</td>
+      <td><span title="App instalada: ${app?'sí':'no'}" style="opacity:${app?1:.28}">📱</span> <span title="Push: ${push?'sí':'no'}" style="opacity:${push?1:.28}">🔔</span></td>
+      <td><div class="rowActions">
+        <button class="small ${v.estado_vinculo==='BLOQUEADO'?'primary':'warning'}" onclick="vincToggleBloqueo('${safe(v.id)}',${v.estado_vinculo!=='BLOQUEADO'})">${v.estado_vinculo==='BLOQUEADO'?'Desbloquear':'Bloquear'}</button>
+        <button class="small off" onclick="vincBorrar('${safe(v.id)}')">Borrar</button>
+      </div></td></tr>`;}).join("");
+  };
+  window.vincToggleBloqueo=async function(id,bloquear){
+    const {error}=await supabaseClient.rpc('admin_vinculos_set_estado',{p_session_token:requireAdminToken(),p_id:Number(id),p_estado:bloquear?'BLOQUEADO':'VINCULADO'});
+    if(error) return toast("Error: "+error.message,"err");
+    toast(bloquear?"Vínculo bloqueado":"Vínculo desbloqueado","okb"); vincCargar();
+  };
+  window.vincBorrar=async function(id){
+    if(!confirm("¿Borrar este vínculo?")) return;
+    const {error}=await supabaseClient.rpc('admin_vinculos_borrar',{p_session_token:requireAdminToken(),p_id:Number(id)});
+    if(error) return toast("Error: "+error.message,"err");
+    toast("Vínculo borrado","okb"); vincCargar();
+  };
+
+  function init(){
+    try{ ensureSection(); }catch(_e){}
+    const _orig=window.showSection;
+    if(typeof _orig==="function" && !_orig.__vincWrapped){
+      window.showSection=function(name){
+        _orig(name);
+        if(name==="vinculos"){ try{vincCargar();}catch(_e){} try{setText({pageTitle:"Contactos / Vínculos",pageSub:"Base usuario↔teléfono por oficina (Whaticket + portal)."});}catch(_e){} }
+      };
+      window.showSection.__vincWrapped=true;
+    }
+  }
+  if(document.readyState!=="loading") setTimeout(init,400); else document.addEventListener("DOMContentLoaded",()=>setTimeout(init,400));
+})();
+</script>

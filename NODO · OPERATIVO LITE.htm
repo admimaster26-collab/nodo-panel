@@ -49,6 +49,14 @@ textarea{resize:vertical;min-height:80px}
 .btn{width:100%;border:none;border-radius:12px;padding:12px;cursor:pointer;font-weight:bold}
 .btn-primary{background:var(--blue);color:#fff}.btn-green{background:var(--green);color:#fff}.btn-red{background:var(--red);color:#fff}.btn-gray{background:#667085;color:#fff}.btn-yellow{background:var(--yellow);color:#111}
 .mini-btn{border:none;border-radius:10px;padding:8px 10px;cursor:pointer;font-size:12px;font-weight:bold}
+/* Toolbar del chat expandido (botones más prolijos y con jerarquía) */
+.chat-tb-btn{display:inline-flex;align-items:center;gap:5px;border:1px solid #334155;border-radius:10px;padding:8px 13px;font-size:12.5px;font-weight:700;cursor:pointer;background:#1f2937;color:#cbd5e1;transition:background .12s,border-color .12s,transform .06s;line-height:1}
+.chat-tb-btn:hover{background:#273449;border-color:#3f5170}
+.chat-tb-btn:active{transform:translateY(1px)}
+.chat-tb-btn.primary{background:#2563eb;border-color:#2563eb;color:#fff;font-weight:800}
+.chat-tb-btn.primary:hover{background:#1d4ed8;border-color:#1d4ed8}
+.chat-tb-btn.ok{color:#86efac;border-color:#1e5631}
+.chat-tb-btn.ok:hover{background:#14311f;border-color:#2a7a44}
 .green{background:var(--green);color:#fff}.red{background:var(--red);color:#fff}.blue{background:var(--blue);color:#fff}.yellow{background:var(--yellow);color:#111}.gray{background:#667085;color:#fff}.purple{background:var(--purple);color:#fff}
 table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #2d3342;text-align:left;font-size:13px;vertical-align:top}th{background:#202635;position:sticky;top:0;z-index:1}tr:hover{background:#1c2230}
 .table-wrap{max-height:520px;overflow:auto;border-radius:14px;border:1px solid #2d3342}
@@ -82,6 +90,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 .chat-msg.user .chat-bubble{background:#1d2939;color:#f4f7fb;border-bottom-left-radius:4px}
 .chat-msg.op .chat-bubble{background:linear-gradient(135deg,#3d5afe,#6d7dff);color:#fff;border-bottom-right-radius:4px}
 .chat-bubble img{width:100%;max-width:260px;border-radius:12px;margin-top:6px;display:block}
+/* Editar mensaje del operador */
+.wq2-edit{background:transparent;border:0;color:inherit;opacity:.45;cursor:pointer;font-size:11px;margin-left:6px;padding:0;line-height:1}
+.wq2-edit:hover{opacity:1}
+.wq2-edited{opacity:.6;font-style:italic;margin-left:5px}
 .chat-meta{color:#98a2b3;font-size:11px;margin-top:4px;padding:0 4px}
 .chat-compose{padding:12px;border-top:1px solid var(--line);background:#151821;position:relative}
 .chat-preview{display:none;align-items:center;justify-content:space-between;gap:10px;padding:8px;border-radius:14px;background:rgba(255,255,255,.08);margin-bottom:10px}
@@ -134,6 +146,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 .bil-mini-nombre{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bil-mini-tipo{font-size:11px;color:var(--muted);margin-top:2px}
 .bil-landing-badge{position:absolute;top:8px;right:8px;font-size:9px;background:rgba(61,90,254,.2);color:#7d8dff;border-radius:5px;padding:2px 5px;font-weight:700;letter-spacing:.4px}
+/* Discrepancia billetera (esperado por ops vs real de Chunior): sutil pero visible */
+.bil-mini-card.bil-mini-dif-on{border-color:rgba(253,176,34,.6);box-shadow:0 0 0 1px rgba(253,176,34,.25)}
+.bil-mini-dif{font-size:10.5px;font-weight:800;color:#fdb022;margin-top:4px;letter-spacing:.2px}
 .manual-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .manual-label{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px;display:block}
 .manual-input-wrap{display:flex;flex-direction:column}
@@ -839,6 +854,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 <body>
 <div id="updaterBox" style="position:fixed;top:10px;right:12px;z-index:100000;display:flex;align-items:center;gap:8px;background:#151a24;border:1px solid #272b36;border-radius:999px;padding:6px 12px;font-size:11px;color:#8b949e;box-shadow:0 2px 10px rgba(0,0,0,.45)">
   <span id="updaterVersionTxt" style="font-weight:700;color:#c8d2e0">—</span>
+  <select id="updaterCanal" onchange="nodoSetCanal(this.value)" title="Canal de actualización · alpha = oficial (nuestro) · beta = repo del colega (pruebas)" style="background:#0d1117;border:1px solid #272b36;color:#c8d2e0;border-radius:8px;font-size:10px;padding:2px 4px;font-weight:700;cursor:pointer">
+    <option value="alpha">α oficial</option>
+    <option value="beta">β beta</option>
+  </select>
   <button class="mini-btn gray" style="padding:4px 10px;font-size:11px" onclick="nodoBuscarActualizacion()" title="Buscar e instalar la última versión">🔄 Actualizar</button>
   <button class="mini-btn gray" id="updaterRollbackBtn" style="padding:4px 10px;font-size:11px;display:none" onclick="nodoVolverVersionAnterior()" title="Volver a la versión anterior si esta falla">↩ Volver</button>
   <span id="updaterStatusTxt"></span>
@@ -907,7 +926,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
           <div class="stat-card stat-mini"><span class="stat-mini-ico">📋</span><div class="stat-mini-body"><span class="stat-mini-num" id="statPendientes">0</span><span class="stat-mini-lbl">Solicitudes</span><span class="stat-mini-sub" id="statRetiros">Retiros: 0</span></div></div>
           <div class="stat-card stat-mini"><span class="stat-mini-ico" id="statChatsIco">✉️</span><div class="stat-mini-body"><span class="stat-mini-num" id="statChats">0</span><span class="stat-mini-lbl">Chats sin leer</span><span class="stat-mini-sub">Consultas portal</span></div></div>
           <div class="stat-card"><div class="stat-title">Billetera en portal</div><div class="stat-value" id="statBilletera">-</div><div class="stat-sub" id="statBilleteraTipo">-</div></div>
-          <div class="stat-card fichas-card" id="statFichasCard"><div class="stat-title">Fichas Drex / Chunior</div><div class="fichas-line"><span>Drex</span><b id="statDrexFichas">—</b></div><div class="fichas-line"><span>Chunior</span><b id="statChuniorFichas">—</b></div><div class="fichas-line"><span>Diferencia</span><b id="statDiffFichas" class="fichas-diff">—</b></div><div class="fichas-note" id="statFichasEstado">Esperando lectura...</div></div>
+          <div class="stat-card fichas-card" id="statFichasCard"><div class="stat-title" style="display:flex;justify-content:space-between;align-items:center;gap:6px">Fichas Drex / Chunior <button class="mini-btn gray" style="padding:2px 8px;font-size:10px" onclick="rechequearFichas()" title="Releer los dos saldos (Drex y Chunior) y comparar AHORA">↻ Rechequear</button></div><div class="fichas-line"><span>Drex</span><b id="statDrexFichas">—</b></div><div class="fichas-line"><span>Chunior</span><b id="statChuniorFichas">—</b></div><div class="fichas-line"><span>Diferencia</span><b id="statDiffFichas" class="fichas-diff">—</b></div><div class="fichas-note" id="statFichasEstado">Esperando lectura...</div></div>
         </div>
 
         <!-- Grid: manual form + solicitudes -->
@@ -924,6 +943,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
                   <button class="mini-btn purple" onclick="abrirModalTransferirBilleteras()" style="font-size:11px" title="Transferir entre billeteras en Chunior">🔀 Transferir</button>
                   <button class="mini-btn gray" onclick="abrirModalAdminChunior('propina')" style="font-size:11px" title="Anotar una propina en Chunior">🎁 Propina</button>
                   <button class="mini-btn gray" onclick="abrirModalAdminChunior('deposito')" style="font-size:11px" title="Anotar un depósito sin reclamar en Chunior">💜 Depo s/reclamar</button>
+                  <button class="mini-btn purple" onclick="verDepositosSinReclamar()" style="font-size:11px" title="Ver y reclamar los depósitos sin reclamar cargados en Chunior">💜 Ver depósitos s/reclamar</button>
+                  <button class="mini-btn red" onclick="liberarLockAgentes()" style="font-size:11px" title="Si el agente quedó trabado (candado tomado), destrabalo para reintentar">🔓 Destrabar agente</button>
+                  <button class="mini-btn gray" onclick="reiniciarChunior(false)" style="font-size:11px" title="Si Chunior muestra 403/CSRF, esto navega a la base (no recarga el POST) y recupera la sesión">🔄 Reiniciar Chunior</button>
+                  <button class="mini-btn gray" onclick="reiniciarChunior(true)" style="font-size:11px" title="Reinicio DURO: limpia las cookies de Chunior y fuerza un login nuevo (usar si el simple no alcanza)">🧹 Chunior login limpio</button>
                   <button class="mini-btn gray" onclick="mostrarVista('billeteras')" style="font-size:11px">Administrar</button>
                 </div>
               </div>
@@ -950,6 +973,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
                 <button class="mini-btn red" id="btnAbortarOp" onclick="abortarOperacionActual()" title="Frenar la operación en curso (solo corta ANTES de aplicar plata)" style="padding:10px 14px;display:none">⛔ Cancelar</button>
                 <button class="mini-btn yellow" onclick="blanquearClaveManual()" title="Resetear clave del usuario a 12345a" style="padding:10px 14px">🔑 Blanquear clave</button>
                 <button class="mini-btn blue" onclick="abrirModalCrearUsuario()" title="Crear nuevo usuario en el casino" style="padding:10px 14px">➕ Crear</button>
+                <button class="mini-btn" onclick="abrirModalVincular('', '', false)" title="Validar un usuario y vincularlo a su teléfono" style="padding:10px 14px;background:#12b76a;color:#fff;border:none">✔️ Validar</button>
               </div>
               <div id="manualResultado" style="margin-top:10px"></div>
             </div>
@@ -1109,7 +1133,12 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
             <h1 style="font-size:26px">Chat interno</h1>
             <div class="small">Consultas desde landing. Podés pegar texto o imágenes con Ctrl + V.</div>
           </div>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="mini-btn gray chat-full-back" onclick="cerrarChatExpandido()">← Bandeja / Esc</button><button class="mini-btn gray" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú · (Esc en la bandeja también minimiza)">⟩ Minimizar</button><button class="mini-btn blue" onclick="cargarChats(true)">🔄 Actualizar chats</button><button class="mini-btn gray" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button></div>
+          <div class="chat-toolbar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="chat-tb-btn chat-full-back" onclick="cerrarChatExpandido()" title="Volver a la bandeja (Esc)">← Bandeja <span style="opacity:.55;font-weight:700;font-size:10px;border:1px solid currentColor;border-radius:5px;padding:0 4px;margin-left:3px">Esc</span></button>
+            <button class="chat-tb-btn" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú">⟩ Minimizar</button>
+            <button class="chat-tb-btn primary" onclick="cargarChats(true)" title="Recargar las conversaciones">🔄 Actualizar</button>
+            <button class="chat-tb-btn ok" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button>
+          </div>
         </div>
 
         <div class="chat-layout">
@@ -1317,7 +1346,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
             <h1 style="font-size:26px">⚡ Automatización</h1>
             <div class="small">Panel de prueba — cargas y retiros automáticos en el backoffice del casino.</div>
           </div>
-          <button id="abrirBackofficeBtn" class="mini-btn purple" onclick="abrirBackoffice()">🖥 Abrir backoffice</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button id="agentBackendBtn" class="mini-btn gray" onclick="nodoCambiarBackendAgentes()" title="Cambiar el backoffice de agentes (Casinodrex ⇄ BET300). Relanza la ventana de agentes; el proxy de la oficina NO cambia. Tocá para alternar.">🎰 Backoffice: …</button>
+            <button id="abrirBackofficeBtn" class="mini-btn purple" onclick="abrirBackoffice()">🖥 Abrir backoffice</button>
+          </div>
         </div>
 
         <div class="top-grid" style="margin-bottom:18px">
@@ -2528,8 +2560,22 @@ async function login(){
   try {
     okBackoffice = await validarLoginChunior(usuario, clave);
   } catch(e){
-    setBox("loginMsg",`<div class="err-box">No se pudo conectar con Chunior. ${escapeHtml(e.message||"")}</div>`);
-    return;
+    // Chunior en 403/CSRF → no aparece el formulario de login. Reset DURO (limpia cookies + GET a la
+    // base) y reintentamos una vez, así el operador no queda trabado en el login.
+    const _esCsrf = /formulario de login|403|csrf|forbidden/i.test(String((e&&e.message)||""));
+    if(_esCsrf && window.chunior && window.chunior.reset){
+      setBox("loginMsg",`<div class="alert-box">Chunior estaba trabado (CSRF) — reiniciándolo y reintentando…</div>`);
+      try{ await window.chunior.reset({hard:true}); }catch(_e){}
+      await new Promise(function(r){ setTimeout(r,1400); });
+      try{ okBackoffice = await validarLoginChunior(usuario, clave); }
+      catch(e2){
+        setBox("loginMsg",`<div class="err-box">No se pudo conectar con Chunior tras reiniciarlo. ${escapeHtml(e2.message||"")}<br><span class="small">Cerrá la ventana de Chunior y reabrí la app si persiste.</span></div>`);
+        return;
+      }
+    } else {
+      setBox("loginMsg",`<div class="err-box">No se pudo conectar con Chunior. ${escapeHtml(e.message||"")}</div>`);
+      return;
+    }
   }
   if(!okBackoffice){
     setBox("loginMsg",`<div class="err-box">Usuario o clave incorrectos (rechazado por Chunior).</div>`);
@@ -2798,7 +2844,7 @@ function mostrarVista(vista){
   if(vista==="billeteras")cargarBilleteras();
   if(vista==="chat")cargarChats();
   if(vista==="jugadores")cargarJugadores();
-  if(vista==="auto")verificarEstadoBackoffice();
+  if(vista==="auto"){ verificarEstadoBackoffice(); try{ nodoCargarBackendAgentes(); }catch(_e){} }
   if(vista==="verificaciones")cargarVerificaciones();
   cerrarMenuMobile();
 }
@@ -2859,12 +2905,21 @@ async function cargarBilleteras(render=true){
     try{ push(localStorage.getItem('nodo_oficina_id')); }catch(_e){}
     try{ push(localStorage.getItem('nodo_puesto_chunior')); }catch(_e){}
 
-    // Compatibilidad real de esta oficina: Chunior muestra XGENERALENUSO / XPLATA,
-    // y las billeteras históricas quedaron en P1 con oficina_id XPLATA.
-    push('XGENERALENUSO');
-    push('XPLATA');
-    push('P1');
+    // Compatibilidad histórica de P1: Chunior muestra XGENERALENUSO / XPLATA y las billeteras
+    // viejas quedaron en P1 con oficina_id XPLATA. PERO este fallback SOLO debe aplicar si ESTA
+    // oficina ES P1. Antes se agregaba SIEMPRE → una oficina NUEVA (P6) sin billeteras propias
+    // cargaba las de P1 (mostraba billeteras ajenas y el sync nunca creaba las suyas → _nuevas vacío).
+    if(_esOficinaP1(pcOperativa)){
+      push('XGENERALENUSO');
+      push('XPLATA');
+      push('P1');
+    }
     return out;
+  }
+  // ¿Esta oficina es la histórica P1? (única que debe heredar el fallback XPLATA/XGENERALENUSO/P1)
+  function _esOficinaP1(pc){
+    const c = String(pc||'').trim().toUpperCase().replace(/[\s_\-]+/g,'');
+    return c==='' || ['P1','PC1','XGENERALENUSO','XGENERAL','GENERAL','XPLATA','OFI_1'].includes(c);
   }
 
   // 1) RPC oficial. Puede devolver {rows:[...]} o string JSON, según cache/API.
@@ -2894,10 +2949,14 @@ async function cargarBilleteras(render=true){
           // abajo agregamos condiciones concretas no normalizadas
         }
       });
+      // Mismo criterio que _candidateCodes: el OR con P1/XPLATA/XGENERALENUSO SOLO si esta oficina es P1.
+      const _orFiltro = _esOficinaP1(pcOperativa)
+        ? 'pc_codigo.eq.'+(pcOperativa||'')+',pc_codigo.eq.P1,oficina_id.eq.XPLATA,oficina_id.eq.XGENERALENUSO'
+        : 'pc_codigo.eq.'+(pcOperativa||'');
       const r = await supabaseClient
         .from('billeteras')
         .select('*')
-        .or('pc_codigo.eq.'+(pcOperativa||'')+',pc_codigo.eq.P1,oficina_id.eq.XPLATA,oficina_id.eq.XGENERALENUSO')
+        .or(_orFiltro)
         .order('seleccionada_manual',{ascending:false})
         .order('orden',{ascending:true})
         .order('nombre_visible',{ascending:true});
@@ -3013,7 +3072,9 @@ function renderInicio(){
   const portalPendientes = fuentePortal.filter(function(s){ return esPendiente(s) && String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()!=='SOPORTE'; });
   const pendientes = portalPendientes;
   const retiros=pendientes.filter(s=>normalizar(s.TIPO_SOLICITUD||s.TIPO)==="RETIRO");
-  const unread=chats.reduce((a,c)=>a+Number(c.SIN_LEER||0),0);
+  // "Sin leer": usar la cuenta ACTUAL del chat nuevo (tickets en espera). El viejo chats[].SIN_LEER
+  // era del sistema legacy y quedaba desfasado (mostraba un número viejo que no coincidía con la lista).
+  const unread=(typeof window.__wq2EnEspera==='number')?window.__wq2EnEspera:chats.reduce((a,c)=>a+Number(c.SIN_LEER||0),0);
   const bil=billeteras.find(b=>normalizar(b.SELECCIONADA_MANUAL)==="SI") || billeteras.find(b=>normalizar(b.ACTIVA)==="SI") || {};
   setBox("statPendientes",pendientes.length);
   setBox("statRetiros","Retiros: "+retiros.length);
@@ -3080,17 +3141,22 @@ function renderBillerasInicio(){
     renderEstadoLanding();
     return;
   }
+  const difsMap={}; try{ (window.__bilDifs||[]).forEach(function(d){ difsMap[String(d.id)]=d; }); }catch(_e){}
   el.innerHTML = lista.map(function(b){
     const enLanding = normalizar(b.SELECCIONADA_MANUAL)==="SI";
     const saldo = Number(b.SALDO||0);
     const tipo = b.TIPO || b.BANCO || (b.CHUNIOR_UID ? 'Chunior' : '—');
     const subt = (enLanding ? 'EN PORTAL · ' : '') + tipo;
     const nombreMostrar = b.NOMBRE_CHUNIOR || b.NOMBRE_VISIBLE || b.BILLETERA_NOMBRE || '—';
-    return '<div class="bil-mini-card'+(enLanding?' en-landing':'')+'" title="'+escapeHtml(nombreMostrar+' · '+money(saldo))+'">'+
+    const dif = difsMap[String(b.ID_BILLETERA)];
+    const difHtml = dif ? '<div class="bil-mini-dif">⚠ dif '+(dif.diff>0?'+':'')+money(dif.diff)+'</div>' : '';
+    const difTitle = dif ? ' · ⚠ Chunior '+money(dif.actual)+' vs esperado '+money(dif.esperado)+' (dif '+(dif.diff>0?'+':'')+money(dif.diff)+') — ¿faltó anotar una operación?' : '';
+    return '<div class="bil-mini-card'+(enLanding?' en-landing':'')+(dif?' bil-mini-dif-on':'')+'" title="'+escapeHtml(nombreMostrar+' · '+money(saldo)+difTitle)+'">'+
       (enLanding?'<span class="bil-landing-badge">LANDING</span>':'')+
       '<div class="bil-mini-nombre">'+escapeHtml(nombreMostrar)+'</div>'+
       '<div class="bil-mini-tipo">'+escapeHtml(subt)+'</div>'+
       '<div class="bil-mini-saldo">'+money(saldo)+'</div>'+
+      difHtml+
       '</div>';
   }).join('');
   renderEstadoLanding();
@@ -3328,7 +3394,10 @@ async function ejecutarOperacionManual(){
 
   const tipo    = monto > 0 ? "CARGA" : "RETIRO";
   const montoAbs= Math.abs(monto);
-  const bil     = billeteras.find(function(b){ return b.ID_BILLETERA===bilId; }) || getBilleraLanding();
+  // Respetar la billetera ELEGIDA en el selector (comparar como String: el value del <select> es
+  // string y ID_BILLETERA es número → con === no matcheaba nunca y caía a la del portal). Si no se
+  // eligió ninguna, por defecto va la del portal (getBilleraLanding).
+  const bil     = (bilId ? billeteras.find(function(b){ return String(b.ID_BILLETERA)===String(bilId); }) : null) || getBilleraLanding();
 
   _trazaInit((tipo==="CARGA"?"Carga":"Retiro")+' manual · '+usuario+' · '+money(montoAbs));
   if(res) res.innerHTML = '<div class="alert-box">Procesando...</div>';
@@ -3857,9 +3926,25 @@ function nodoUpdaterStatus(payload){
   else if(st==="downloaded") el.innerHTML="✅ Lista v"+escapeHtml(payload.version||"")+" — <a href=\"javascript:void 0\" onclick=\"nodoInstalarActualizacion()\" style=\"color:#3fb950;font-weight:700\">Reiniciar e instalar</a>";
   else if(st==="error") el.innerHTML='<span style="color:#f85149">Error: '+escapeHtml(payload.message||"")+"</span>";
 }
+// Canal de actualización (portado de NexoBetaChan): alpha = repo oficial nuestro · beta = repo del colega (pruebas).
+function nodoGetCanal(){ try{ return localStorage.getItem("nodo_update_channel")==="beta" ? "beta" : "alpha"; }catch(_e){ return "alpha"; } }
+function nodoAplicarIconoCanal(){
+  try{
+    const beta = nodoGetCanal()==="beta";
+    const box = document.getElementById("updaterBox"); if(box) box.style.borderColor = beta ? "rgba(34,197,94,.6)" : "#272b36"; // verde = beta
+    const sel = document.getElementById("updaterCanal"); if(sel) sel.value = nodoGetCanal();
+  }catch(_e){}
+}
+function nodoSetCanal(c){
+  const canal = c==="beta" ? "beta" : "alpha";
+  try{ localStorage.setItem("nodo_update_channel", canal); }catch(_e){}
+  nodoAplicarIconoCanal();
+  try{ toast("Canal: "+(canal==="beta"?"β Beta (repo del colega · pruebas)":"α Alpha (oficial · nuestro)")+" · tocá 🔄 para buscar en ese canal", "blue"); }catch(_e){}
+}
 async function nodoInitUpdater(){
   try{
     if(!window.updaterAPI){ const b=document.getElementById("updaterBox"); if(b) b.style.display="none"; return; }
+    nodoAplicarIconoCanal();
     const v = await window.updaterAPI.getVersion();
     const el=document.getElementById("updaterVersionTxt");
     if(el && v && v.version) el.textContent = "v"+v.version;
@@ -3887,7 +3972,7 @@ async function nodoVolverVersionAnterior(){
 async function nodoBuscarActualizacion(){
   const el=document.getElementById("updaterStatusTxt");
   if(!window.updaterAPI){ if(el) el.textContent="No disponible en este entorno."; return; }
-  const r = await window.updaterAPI.check();
+  const r = await window.updaterAPI.check({ channel: nodoGetCanal() });
   if(!r || !r.ok){
     if(el) el.textContent = (r&&r.reason==="dev-mode") ? "Solo disponible en la app instalada." : "No se pudo buscar actualización.";
   }
@@ -4103,6 +4188,15 @@ window.guardarMovimientoLocal = function guardarMovimientoLocal(rec){
       _fecha: rec.fecha || prev._fecha || new Date().toISOString()
     };
     _movStoreSave(map);
+    // Auto-alimenta la base local de JUGADORES (CBUs/titulares) desde cada movimiento.
+    try{
+      const _m = map[key];
+      if(window.jugadorRegistrarDato && _m && _m.usuario){
+        const _esRet = String(_m.tipo||'').toUpperCase()==='RETIRO';
+        if((_esRet && (_m.cbu||_m.destino)) || _m.titular)
+          window.jugadorRegistrarDato(_m.usuario, { cbu:_esRet?(_m.cbu||_m.destino):'', titular:_m.titular, fecha:_m._fecha });
+      }
+    }catch(_e){}
   }catch(_e){}
 };
 function _capturarMovimientoDesdeHistorial(data, row){
@@ -4142,12 +4236,347 @@ function _capturarMovimientoDesdeHistorial(data, row){
     }catch(_e){}
   }catch(_e){}
 }
-// Árbol de operaciones de un usuario: merge de Supabase (_historialData) + store local.
+// ── Base local de JUGADORES (CRM-lite · portado de NexoBetaChan 1.0.85) ──────────
+// Modelo PAM (KYC-lite): por jugador guarda teléfonos (verificación), INSTRUMENTOS DE PAGO
+// (cbu/alias; verificado = ya cobró ahí de verdad) y TITULARES + estado de bonos. Todo LOCAL
+// (localStorage) — NO carga Supabase (los movimientos ya viven en Chunior). Se auto-alimenta
+// desde guardarMovimientoLocal (manual + portal) y se siembra una vez desde el store de movimientos.
+const JUG_STORE_KEY = 'nodo_jugadores_local_v2';
+function _jugStoreAll(){
+  try{ return JSON.parse(localStorage.getItem(JUG_STORE_KEY)||'{}')||{}; }catch(_e){ return {}; }
+}
+function _jugStoreSave(map){
+  try{ localStorage.setItem(JUG_STORE_KEY, JSON.stringify(map)); }catch(_e){}
+}
+// Normaliza un CBU/CVU/alias para comparar (case/espacios/puntos no cambian el destino).
+function _jugNormCbu(v){ return String(v||'').toLowerCase().replace(/[\s.\-]/g,'').trim(); }
+window.jugadorRegistrarDato = function(usuario, dato){
+  const u = String(usuario||'').toLowerCase().trim();
+  if(!u || !dato) return;
+  try{
+    const map = _jugStoreAll();
+    const j = map[u] || { usuario:u, telefonos:{}, cbus:{}, titulares:{}, bonos:[], creado:new Date().toISOString() };
+    const fecha = dato.fecha || new Date().toISOString();
+    if(dato.telefono){
+      const t = String(dato.telefono).replace(/\D/g,'');
+      if(t){ const p = j.telefonos[t]||{veces:0,primera:fecha}; p.veces++; p.ultima=fecha; if(dato.verificado) p.verificado=true; j.telefonos[t]=p; }
+    }
+    const cbuN = _jugNormCbu(dato.cbu);
+    if(cbuN){
+      const c = j.cbus[cbuN] || { raw:String(dato.cbu).trim(), veces:0, primera:fecha };
+      c.veces++; c.ultima = fecha;
+      if(dato.titular) c.titular = String(dato.titular).trim();
+      if(dato.instrumentoVerificado) c.verificado = true; // retiro OK real a ese destino
+      j.cbus[cbuN] = c;
+    }
+    if(dato.bono){
+      j.bonos = Array.isArray(j.bonos) ? j.bonos : [];
+      j.bonos.push({ estado:String(dato.bono.estado||''), pct:dato.bono.pct||null, monto:dato.bono.monto||null, fecha:fecha });
+      if(j.bonos.length>20) j.bonos = j.bonos.slice(-20);
+    }
+    if(dato.titular){
+      const tt = String(dato.titular).trim().toLowerCase();
+      if(tt){ const p = j.titulares[tt]||{raw:String(dato.titular).trim(),veces:0,primera:fecha}; p.veces++; p.ultima=fecha; j.titulares[tt]=p; }
+    }
+    j.ultimaAct = fecha;
+    map[u] = j;
+    _jugStoreSave(map);
+  }catch(_e){}
+};
+// ¿Este destino es conocido para el usuario? → para resaltar destinos NUEVOS en el retiro.
+// También compara el TITULAR: si el usuario siempre retiró a cuentas de un titular y ahora
+// llega otro nombre → advertencia (posible cuenta ajena). Cruza MANUAL + PORTAL porque la
+// base se alimenta de guardarMovimientoLocal, que captura ambos flujos.
+window.jugadorCbuCheck = function(usuario, cbu, titular){
+  try{
+    const u = String(usuario||'').toLowerCase().trim();
+    const j = _jugStoreAll()[u];
+    const cbuN = _jugNormCbu(cbu);
+    if(!j || !cbuN) return { datos:false };
+    const conocidos = Object.values(j.cbus||{});
+    const este = (j.cbus||{})[cbuN];
+    const titN = String(titular||'').trim().toLowerCase();
+    const titsConocidos = Object.keys(j.titulares||{});
+    const ultimo = conocidos.slice().sort(function(a,b){ return String(b.ultima||'').localeCompare(String(a.ultima||'')); })[0] || null;
+    return {
+      datos: conocidos.length>0,
+      conocido: !!este,
+      veces: este ? este.veces : 0,
+      otros: conocidos.filter(function(c){ return _jugNormCbu(c.raw)!==cbuN; }).map(function(c){ return c.raw; }),
+      ultimo: ultimo,
+      titularNuevo: !!(titN && titsConocidos.length && !titsConocidos.includes(titN)),
+      titularesConocidos: titsConocidos.map(function(k){ return (j.titulares[k]||{}).raw || k; })
+    };
+  }catch(_e){ return { datos:false }; }
+};
+// Semilla one-shot: si la base está vacía, reconstruirla desde el store de movimientos
+// (que ya venía guardando titular/cbu/destino por operación) — así arranca con historia.
+try{
+  if(!localStorage.getItem(JUG_STORE_KEY)){
+    const all = _movStoreAll();
+    Object.keys(all).forEach(function(k){
+      const m = all[k]||{};
+      const esRet = String(m.tipo||'').toUpperCase()==='RETIRO';
+      if(m.usuario && ((esRet && (m.cbu||m.destino)) || m.titular))
+        jugadorRegistrarDato(m.usuario, { cbu: esRet ? (m.cbu||m.destino) : '', titular:m.titular, fecha:m._fecha });
+    });
+  }
+}catch(_e){}
+
+// ── UI de la base de jugadores + PERFIL (portado de NexoBetaChan 1.0.85) ─────────
+window.mostrarBaseLocalJugadores = function(filtro){
+  const map = _jugStoreAll();
+  const q = String(filtro||'').toLowerCase().trim();
+  let lista = Object.values(map);
+  const total = lista.length;
+  if(q) lista = lista.filter(function(j){
+    return (j.usuario+' '+Object.keys(j.telefonos||{}).join(' ')+' '
+      +Object.values(j.cbus||{}).map(function(c){return c.raw;}).join(' ')+' '
+      +Object.values(j.titulares||{}).map(function(t){return t.raw;}).join(' ')).toLowerCase().includes(q);
+  });
+  lista.sort(function(a,b){ return String(b.ultimaAct||'').localeCompare(String(a.ultimaAct||'')); });
+  const filas = lista.slice(0,400).map(function(j){
+    const tels = Object.keys(j.telefonos||{});
+    const cbus = Object.values(j.cbus||{});
+    const tits = Object.values(j.titulares||{});
+    const bonos = Array.isArray(j.bonos)?j.bonos:[];
+    const ultBono = bonos.length?bonos[bonos.length-1]:null;
+    const bonosTxt = !bonos.length ? '<span style="color:#5a6474">—</span>'
+      : (ultBono.estado==='APLICADO'
+          ? '<span style="color:#22c55e;font-weight:700">🎁 aplicado'+(ultBono.pct?(' '+ultBono.pct+'%'):'')+'</span>'
+          : '<span style="color:#f5c518;font-weight:700">⏳ pendiente'+(ultBono.pct?(' '+ultBono.pct+'%'):'')+'</span>')
+        + '<div class="small" style="color:#8b949e">'+bonos.length+' bono/s</div>';
+    return '<tr style="border-top:1px solid rgba(255,255,255,.07)">'
+      + '<td style="padding:7px 8px;vertical-align:top"><b>'+escapeHtml(j.usuario)+'</b>'
+      +   '<div class="small" style="color:#8b949e">'+escapeHtml(formatFecha(j.ultimaAct||''))+'</div></td>'
+      + '<td style="padding:7px 8px;vertical-align:top;font-family:ui-monospace,monospace;font-size:12px">'+(tels.length?tels.map(function(t){ return escapeHtml(t)+((j.telefonos[t]||{}).verificado?' <span title="Verificado al vincular" style="color:#22c55e">✓</span>':''); }).join('<br>'):'<span style="color:#5a6474">—</span>')+'</td>'
+      + '<td style="padding:7px 8px;vertical-align:top;font-size:12px">'+(cbus.length?cbus.map(function(c){ return '<div style="font-family:ui-monospace,monospace">'+escapeHtml(c.raw)+' <span style="color:#8b949e">×'+c.veces+'</span>'+(c.verificado?' <span title="Ya cobró en este destino (retiro OK)" style="color:#22c55e">✓</span>':'')+'</div>'; }).join(''):'<span style="color:#5a6474">—</span>')+'</td>'
+      + '<td style="padding:7px 8px;vertical-align:top;font-size:12px">'+(tits.length?tits.map(function(t){ return escapeHtml(t.raw); }).join('<br>'):'<span style="color:#5a6474">—</span>')+'</td>'
+      + '<td style="padding:7px 8px;vertical-align:top;font-size:12px">'+bonosTxt+'</td>'
+      + '<td style="padding:7px 8px;vertical-align:top"><button class="mini-btn blue" style="font-size:10px" onclick="abrirPerfilJugador(\''+escapeHtml(j.usuario)+'\')" title="Perfil completo del jugador">🌳</button></td>'
+      + '</tr>';
+  }).join('');
+  const body =
+      '<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
+    +   '<input id="jugLocalBuscar" placeholder="Buscar usuario / teléfono / CBU / titular…" value="'+escapeHtml(q)+'" oninput="mostrarBaseLocalJugadoresRefiltrar(this.value)" style="flex:1;min-width:200px">'
+    +   '<span class="small">👥 <b>'+lista.length+'</b>'+(q?(' de '+total):'')+' jugador/es con datos</span>'
+    + '</div>'
+    + '<div style="max-height:56vh;overflow:auto;border:1px solid rgba(255,255,255,.08);border-radius:10px">'
+    +   '<table style="width:100%;border-collapse:collapse;font-size:13px"><thead>'
+    +     '<tr style="position:sticky;top:0;background:#161b26;z-index:1"><th style="padding:8px;text-align:left">Usuario</th><th style="padding:8px;text-align:left">Teléfonos</th><th style="padding:8px;text-align:left">Destinos (CBU/alias)</th><th style="padding:8px;text-align:left">Titulares</th><th style="padding:8px;text-align:left">Bonos</th><th></th></tr>'
+    +   '</thead><tbody>'+(filas||'<tr><td colspan="6" style="padding:14px;color:#8b949e">Sin datos todavía. La base se llena sola: verificaciones (teléfono) y retiros (destino/titular), tanto manuales como del portal.</td></tr>')+'</tbody></table>'
+    + '</div>';
+  // "abierto" = el buscador existe Y es visible (si el modal se cerró, el nodo puede quedar
+  // en el DOM oculto → antes el botón actualizaba un modal invisible y parecía roto).
+  const _inpPrev = document.getElementById('jugLocalBuscar');
+  const yaAbierto = !!(_inpPrev && _inpPrev.offsetParent !== null);
+  if(yaAbierto){
+    const mb = document.getElementById('modalBody') || document.querySelector('#modal .modal-body');
+    if(mb){ mb.innerHTML = body; const inp=document.getElementById('jugLocalBuscar'); if(inp){ inp.focus(); inp.setSelectionRange(inp.value.length,inp.value.length); } }
+  } else {
+    abrirModal('📇 Base local de jugadores', body, null, 'Cerrar');
+    try{ const b=document.getElementById('modalSaveBtn'); if(b) b.style.display='none'; }catch(_e){}
+  }
+};
+// Modal de DESTINOS del usuario: todos sus cbu/alias en tarjetas copiables (un toque = copiar),
+// ordenados por último uso — para transferir cómodo y revisar el último usado si metió uno nuevo
+// por error (y cerrar el retiro ANTES de transferir).
+window.mostrarDestinosUsuario = function(usuario){
+  const u = String(usuario||'').toLowerCase().trim();
+  const j = _jugStoreAll()[u] || {};
+  const cbus = Object.values(j.cbus||{}).sort(function(a,b){ return String(b.ultima||'').localeCompare(String(a.ultima||'')); });
+  const titsSet = Object.values(j.titulares||{}).map(function(t){ return String(t.raw).toLowerCase().trim(); });
+  const filas = cbus.map(function(c,i){
+    const ajeno = c.titular && titsSet.length && titsSet.indexOf(String(c.titular).toLowerCase().trim())===-1;
+    return '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+escapeHtml(c.raw)+'" title="Tocá para copiar" '
+      + 'style="display:flex;align-items:center;justify-content:space-between;gap:10px;width:100%;text-align:left;cursor:pointer;background:#161b22;border:1.5px solid '+(ajeno?'rgba(239,68,68,.55)':(i===0?'rgba(245,197,24,.5)':'#30363d'))+';border-radius:10px;padding:9px 12px;color:#e6edf3;margin-bottom:7px">'
+      + '<span style="min-width:0;flex:1">'
+      +   '<span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">'+(i===0?'⭐ último usado':'destino')+(c.verificado?' · ✓ ya cobró acá':' · ● nunca cobró')+(ajeno?' · 🚨 TITULAR DISTINTO':'')+'</span>'
+      +   '<span style="display:block;font-family:ui-monospace,monospace;font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:'+(ajeno?'#fca5a5':'#e6edf3')+'">'+escapeHtml(c.raw)+'</span>'
+      +   '<span class="small" style="color:#8b949e">'+(c.titular?escapeHtml(c.titular)+' · ':'')+'×'+c.veces+(c.ultima?(' · últ. '+escapeHtml(formatFecha(c.ultima))):'')+'</span>'
+      + '</span><span class="pcopy-ico" style="flex-shrink:0;font-size:16px">📋</span></button>';
+  }).join('');
+  abrirModal('📇 Destinos de '+escapeHtml(usuario),
+    (filas || '<div class="small" style="color:#8b949e;padding:10px">Sin destinos registrados para este usuario.</div>')
+    + '<div class="small" style="color:#8b949e;margin-top:6px">Un toque copia el CBU/alias. Si el que llegó en el retiro no coincide con estos, revisá con el usuario y cerrá el retiro ANTES de transferir.</div>',
+    null, 'Cerrar');
+  try{ const b=document.getElementById('modalSaveBtn'); if(b) b.style.display='none'; }catch(_e){}
+};
+
+let _jugRefiltroT = null;
+window.mostrarBaseLocalJugadoresRefiltrar = function(v){
+  clearTimeout(_jugRefiltroT);
+  _jugRefiltroT = setTimeout(function(){ mostrarBaseLocalJugadores(v); }, 250);
+};
+
+// ══════════════════════════════════════════════════════════════════════════
+// PERFIL DE JUGADOR — layout de "record page" copiado de los CRM probados
+// (Twenty/Attio/HubSpot): carril IZQUIERDO de identidad/campos + timeline de
+// actividad a la DERECHA. Mismos tokens dark (Primer/shadcn) que el resto del
+// panel: #0d1117 / #161b22 / #30363d / acento #f5c518.
+// ══════════════════════════════════════════════════════════════════════════
+function _perfilCss(){
+  if(document.getElementById('nodoPerfilCss')) return;
+  const st=document.createElement('style'); st.id='nodoPerfilCss';
+  st.textContent=`
+  #perfilJugadorOverlay{position:fixed;inset:0;z-index:99998;background:rgba(1,4,9,.62);display:flex;align-items:center;justify-content:center;padding:18px}
+  .pj-panel{width:min(1080px,97vw);height:min(760px,92vh);background:#0d1117;border:1px solid #30363d;border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.6);display:flex;flex-direction:column;overflow:hidden;color:#e6edf3}
+  .pj-head{display:flex;align-items:center;gap:14px;padding:14px 18px;border-bottom:1px solid #21262d;background:#161b22}
+  .pj-avatar{width:44px;height:44px;border-radius:12px;background:#1f2937;border:1px solid #30363d;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:17px;color:#f5c518;flex-shrink:0}
+  .pj-chip{display:inline-flex;align-items:center;border-radius:999px;padding:3px 9px;font-size:10.5px;font-weight:900;margin-left:6px}
+  .pj-body{flex:1;display:grid;grid-template-columns:310px 1fr;min-height:0}
+  .pj-rail{border-right:1px solid #21262d;overflow:auto;padding:13px;background:#0e1420}
+  .pj-card{background:#161b22;border:1px solid #262d3a;border-radius:11px;padding:11px 12px;margin-bottom:11px}
+  .pj-card h4{font-size:10.5px;font-weight:900;text-transform:uppercase;letter-spacing:.05em;color:#8b949e;margin:0 0 8px}
+  .pj-field{display:flex;justify-content:space-between;gap:8px;padding:3px 0;font-size:12.5px}
+  .pj-field .k{color:#8b949e}
+  .pj-field .v{font-weight:700;text-align:right;min-width:0;overflow:hidden;text-overflow:ellipsis}
+  .pj-mono{font-family:ui-monospace,monospace}
+  .pj-main{overflow:auto;padding:14px 18px}
+  .pj-tl-row{display:flex;gap:11px;align-items:center;padding:8px 10px;border-radius:10px;background:#10151f;border:1px solid #1f2733;margin-bottom:7px;cursor:pointer;transition:border-color .12s}
+  .pj-tl-row:hover{border-color:#f5c518}
+  .pj-tl-hora{flex-shrink:0;min-width:56px;text-align:center;background:#161b26;border:1px solid #2a3344;border-radius:8px;padding:4px 6px}
+  .pj-tl-hora b{display:block;font-size:17px;font-weight:900;color:#f5c518;font-family:ui-monospace,monospace;line-height:1.1}
+  .pj-tl-hora span{font-size:10px;color:#8b949e}
+  .pj-day{font-size:11px;font-weight:900;color:#8b949e;text-transform:uppercase;letter-spacing:.05em;margin:13px 0 7px;display:flex;align-items:center;gap:8px}
+  .pj-day::after{content:'';flex:1;height:1px;background:#21262d}`;
+  document.head.appendChild(st);
+}
+window.cerrarPerfilJugador = function(){ const o=document.getElementById('perfilJugadorOverlay'); if(o) o.remove(); };
+window.abrirPerfilJugador = function(usuario){
+  const u = String(usuario||'').trim(); if(!u) return;
+  _perfilCss();
+  const uLow = u.toLowerCase();
+  const esc = escapeHtml;
+  const local = _jugStoreAll()[uLow] || {};
+  const crm = (window._crmJugadoresData||[]).find(function(x){ return String(x.usuario||'').toLowerCase()===uLow; }) || (window._crmWtkBuscados||{})[uLow] || {};
+  const fl = (window._crmFlags||{})[uLow] || {};
+  const ops = (typeof arbolUsuario==='function') ? arbolUsuario(u) : [];
+  const uEsc = u.replace(/'/g,"\\'");
+
+  // ── carril izquierdo (identidad / instrumentos / bonos / resumen) ──
+  const tels = Object.keys(local.telefonos||{});
+  const cbus = Object.values(local.cbus||{});
+  const tits = Object.values(local.titulares||{});
+  const bonos = Array.isArray(local.bonos)?local.bonos.slice().reverse():[];
+  // Respaldo desde el CRM (vínculo de whaticket): si el usuario nunca operó/validó en ESTA máquina,
+  // la base local no tiene su teléfono/titular, pero el CRM sí lo trae del registro (panel_crm_vinculos).
+  const crmTel = String(crm.telefono||'').replace(/\D/g,'');
+  const crmTit = String(crm.titular||'').trim();
+  const crmEst = String(crm.estadoVinculo||'').trim().toUpperCase();
+  const railIdent =
+      '<div class="pj-card"><h4>👤 Identidad</h4>'
+    + (tits.length
+        ? tits.map(function(t){ return '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(t.raw)+' <span style="color:#8b949e;font-weight:600">×'+t.veces+'</span></span></div>'; }).join('')
+        : (crmTit
+            ? '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(crmTit)+' <span title="Del registro/whaticket" style="color:#8b949e;font-weight:600;font-size:10px">·reg</span></span></div>'
+            : '<div class="pj-field"><span class="k">Titular</span><span class="v" style="color:#5a6474">sin datos</span></div>'))
+    + (tels.length
+        ? tels.map(function(t){ const v=(local.telefonos[t]||{}); return '<div class="pj-field"><span class="k">Teléfono</span><span class="v pj-mono">'+esc(t)+(v.verificado?' <span title="Verificado al vincular" style="color:#22c55e">✓</span>':'')+'</span></div>'; }).join('')
+        : (crmTel
+            ? '<div class="pj-field"><span class="k">Teléfono</span><span class="v pj-mono">'+esc(crmTel)+' <span title="Del registro/whaticket (aún no operó en el panel)" style="color:#8b949e;font-weight:600;font-size:10px">·reg</span></span></div>'
+            : '<div class="pj-field"><span class="k">Teléfono</span><span class="v" style="color:#5a6474">—</span></div>'))
+    + (crmEst ? '<div class="pj-field"><span class="k">Vínculo</span><span class="v" style="color:'+(crmEst==='VINCULADO'?'#22c55e':crmEst==='BLOQUEADO'?'#ef4444':'#f5c518')+';font-weight:700">'+esc(crmEst)+'</span></div>' : '')
+    + '</div>';
+  // TODOS los cbu/alias que el usuario usó o ingresó, en un solo lugar (puede tener varias
+  // cuentas propias — eso es normal). 🚨 = el titular de ESE instrumento no coincide con los
+  // titulares conocidos del usuario (posible cuenta ajena). Tocá uno para copiarlo.
+  const titsSet = tits.map(function(t){ return String(t.raw).toLowerCase().trim(); });
+  const railInstr =
+      '<div class="pj-card"><h4>💳 Instrumentos de retiro (todos)</h4>'
+    + (cbus.length?cbus.slice().sort(function(a,b){ return String(b.ultima||'').localeCompare(String(a.ultima||'')); }).map(function(c){
+        const ajeno = c.titular && titsSet.length && titsSet.indexOf(String(c.titular).toLowerCase().trim())===-1;
+        return '<div style="padding:4px 0;border-bottom:1px dashed #21262d;cursor:pointer" title="Tocá para copiar" data-valor="'+esc(c.raw)+'" onclick="event.stopPropagation();portalCopiarCbu(this)">'
+          + '<div class="pj-mono" style="font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;color:'+(ajeno?'#fca5a5':'#e6edf3')+'">'+esc(c.raw)
+          + (c.verificado?' <span title="Ya cobró acá (retiro OK)" style="color:#22c55e">✓</span>':' <span title="Ingresado pero nunca cobró acá" style="color:#f5c518">●</span>')
+          + (ajeno?' <span title="Titular DISTINTO a los conocidos del usuario — posible cuenta ajena" style="color:#ef4444">🚨</span>':'')+'</div>'
+          + '<div class="small" style="color:'+(ajeno?'#e6a0a0':'#8b949e')+'">'+(c.titular?esc(c.titular)+' · ':'')+'×'+c.veces+(c.ultima?(' · últ. '+esc(formatFecha(c.ultima))):'')+(ajeno?' · 🚨 titular distinto':'')+'</div></div>';
+      }).join(''):'<div class="small" style="color:#5a6474">Sin destinos registrados aún.</div>')
+    + '</div>';
+  const railBonos =
+      '<div class="pj-card"><h4>🎁 Bonos</h4>'
+    + (bonos.length?bonos.slice(0,5).map(function(b){ const ap=b.estado==='APLICADO'; return '<div class="pj-field"><span class="k">'+esc(formatFecha(b.fecha||''))+'</span><span class="v" style="color:'+(ap?'#22c55e':'#f5c518')+'">'+(ap?'🎁 aplicado':'⏳ pendiente')+(b.pct?(' '+b.pct+'%'):'')+'</span></div>'; }).join(''):'<div class="small" style="color:#5a6474">Sin bonos registrados.</div>')
+    + '</div>';
+  let totC=0, totR=0; ops.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+  const railResumen =
+      '<div class="pj-card"><h4>📊 Resumen</h4>'
+    + '<div class="pj-field"><span class="k">Cargas</span><span class="v" style="color:#22c55e">'+(crm.cargas!=null?crm.cargas:'—')+' · '+money(crm.montoCargas||totC)+'</span></div>'
+    + '<div class="pj-field"><span class="k">Retiros</span><span class="v" style="color:#fb923c">'+(crm.retiros!=null?crm.retiros:'—')+' · '+money(crm.montoRetiros||totR)+'</span></div>'
+    + '<div class="pj-field"><span class="k">Neto</span><span class="v" style="color:'+((crm.neto||totC-totR)>=0?'#22c55e':'#ef4444')+'">'+money(crm.neto!=null?crm.neto:(totC-totR))+'</span></div>'
+    + '<div class="pj-field"><span class="k">Turno frecuente</span><span class="v">'+esc(crm.turnoFrecuente||'—')+'</span></div>'
+    + '<div class="pj-field"><span class="k">Última carga</span><span class="v">'+(crm.ultimaCarga?esc(new Date(crm.ultimaCarga).toLocaleDateString('es-AR')):'—')+'</span></div>'
+    + '</div>';
+
+  // ── timeline (derecha): operaciones agrupadas por día, hora protagonista ──
+  let tl='', diaPrev='';
+  ops.forEach(function(o){
+    const d = new Date(o.fecha);
+    const diaK = isNaN(d)?'—':d.toLocaleDateString('es-AR',{weekday:'long',day:'2-digit',month:'2-digit'});
+    if(diaK!==diaPrev){ tl += '<div class="pj-day">'+esc(diaK)+'</div>'; diaPrev=diaK; }
+    const hora = isNaN(d)?'—':String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+    const t = String(o.tipo||'').toUpperCase();
+    const eOk = ['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'].includes(String(o.estado||'').toUpperCase());
+    const destTxt = String(o.cbu||o.destino||'').trim();
+    tl += '<div class="pj-tl-row" onclick="cerrarPerfilJugador();verDetalleMovimiento(\''+esc(String(o.id||''))+'\',\''+uEsc+'\')">'
+      + '<div class="pj-tl-hora"><b>'+hora+'</b><span>'+(isNaN(d)?'':String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'))+'</span></div>'
+      + '<div style="min-width:0;flex:1">'
+      +   '<div style="display:flex;justify-content:space-between;gap:8px"><span style="font-weight:800">'+(t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•')+' '+esc(t||'—')+' '+(eOk?'<span style="color:#22c55e">✅</span>':String(o.estado||'').toUpperCase()==='ERROR'?'<span style="color:#ef4444">❌</span>':'<span style="color:#8b949e">'+esc(o.estado||'')+'</span>')+'</span>'
+      +   '<b style="color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</b></div>'
+      +   (destTxt?('<div class="pj-mono small" style="color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ '+esc(destTxt)+'</div>'):'')
+      +   '<div class="small" style="color:#8b949e">'+(o.titular?('👤 '+esc(o.titular)+' · '):'')+(o.chuniorId?('Nº '+esc(String(o.chuniorId))+' · '):'')+(o.operador?('op:'+esc(o.operador)):'')+'</div>'
+      + '</div></div>';
+  });
+  if(!tl) tl = '<div class="small" style="color:#8b949e;padding:14px">Sin operaciones registradas para este usuario.</div>';
+
+  const segChip = crm.segmento ? '<span class="pj-chip" style="background:'+(crm.segmento==='VIP'?'#3b2a09;color:#ffd98f':crm.segmento==='NUEVO'?'#16235f;color:#cbd5ff':'#11371f;color:#b9f7cb')+'">'+esc(crm.segmento)+'</span>' : '';
+  const html =
+      '<div class="pj-panel" onclick="event.stopPropagation()">'
+    +   '<div class="pj-head">'
+    +     '<div class="pj-avatar">'+esc(u.substring(0,2).toUpperCase())+'</div>'
+    +     '<div style="min-width:0;flex:1"><div style="font-size:17px;font-weight:900">'+esc(u)
+    +       ' <span title="Push" style="opacity:'+(fl.push?1:.25)+'">🔔</span><span title="App" style="opacity:'+(fl.app?1:.25)+'">📱</span>'+segChip+'</div>'
+    +       '<div class="small" style="color:#8b949e">'+ops.length+' operación/es · '+esc(crm.accion||'')+'</div></div>'
+    +     '<button class="mini-btn blue" onclick="crmCopiarPromo(\''+uEsc+'\')">📋 Promo</button>'
+    +     '<button class="mini-btn green" onclick="crmPushIndividual(\''+uEsc+'\')">📲 Push</button>'
+    +     '<button class="mini-btn gray" onclick="cerrarPerfilJugador()" style="font-weight:800">✕</button>'
+    +   '</div>'
+    +   '<div class="pj-body">'
+    +     '<div class="pj-rail">'+railIdent+railInstr+railBonos+railResumen+'</div>'
+    +     '<div class="pj-main"><div class="pj-day" style="margin-top:0">🕐 Actividad · '+ops.length+' con detalle</div>'
+    +       ((crm.totalOps||0)>ops.length?'<div class="small" style="color:#8b949e;margin:-2px 0 9px">ℹ️ El resumen cuenta '+crm.totalOps+' ops: incluye las importadas del agente (CSV), que llegan como totales SIN fila individual — acá se listan solo las '+ops.length+' operadas/registradas por el panel.</div>':'')
+    +       tl+'</div>'
+    +   '</div>'
+    + '</div>';
+  cerrarPerfilJugador();
+  const ov = document.createElement('div');
+  ov.id='perfilJugadorOverlay'; ov.innerHTML=html;
+  ov.onclick = cerrarPerfilJugador;
+  document.body.appendChild(ov);
+  window.__perfilJugadorAbierto = uLow;
+  // Historial COMPLETO (día 1 → hoy): trae async TODAS las ops del usuario (más allá de las 200
+  // globales) y re-renderiza el perfil si sigue abierto y en el mismo usuario. Sin loop: el loader
+  // se cachea y en el re-render devuelve hayNuevas=false.
+  try{
+    if(window.cargarArbolCompletoUsuario){
+      window.cargarArbolCompletoUsuario(u, function(hayNuevas){
+        if(hayNuevas && document.getElementById('perfilJugadorOverlay') && window.__perfilJugadorAbierto===uLow){
+          window.abrirPerfilJugador(u);
+        }
+      });
+    }
+  }catch(_e){}
+};
+
+// Árbol de operaciones de un usuario: merge de Supabase (_historialData) + store local
+// + caché de historial COMPLETO por usuario (window._arbolFullCache, cargado on-demand al
+// abrir el perfil → trae todas las ops del día 1, más allá de las 200 globales de _historialData).
 function arbolUsuario(usuario){
   const u = normalizar(usuario||'');
   if(!u) return [];
   const out = {};
-  (_historialData||[]).forEach(function(h){
+  const _full = (window._arbolFullCache && window._arbolFullCache[u]) ? window._arbolFullCache[u] : [];
+  const _base = _full.length ? _full.concat(_historialData||[]) : (_historialData||[]);
+  _base.forEach(function(h){
     if(normalizar(h.usuario||'')!==u) return;
     const k = String(h.id);
     out[k] = {
@@ -4184,6 +4613,36 @@ function arbolUsuario(usuario){
   });
   return Object.values(out).sort(function(a,b){ return new Date(b.fecha||0)-new Date(a.fecha||0); });
 }
+// Carga ON-DEMAND el historial COMPLETO de UN usuario (todas sus ops de historial_ops de la
+// oficina, día 1 → hoy), más allá de las 200 globales de _historialData. Cachea por usuario.
+// onDone(hayNuevas) se llama al terminar (hayNuevas=true si trajo filas nuevas → re-render).
+window._arbolFullCache = window._arbolFullCache || {};
+window.cargarArbolCompletoUsuario = async function(usuario, onDone){
+  const u = normalizar(usuario||''); if(!u){ if(onDone)onDone(false); return; }
+  const cache = window._arbolFullCache[u];
+  if(cache && cache.__loaded){ if(onDone)onDone(false); return; }   // ya cargado, no repetir
+  if(cache && cache.__loading){ if(onDone)onDone(false); return; }
+  window._arbolFullCache[u] = Object.assign(cache||[], {__loading:true});
+  try{
+    const { data, error } = await supabaseClient
+      .from("historial_ops").select("*")
+      .in("pc_codigo", (typeof pcAliasesHist==='function'?pcAliasesHist():[]))
+      .ilike("usuario", String(usuario||'').trim())   // igualdad case-insensitive (sin comodines)
+      .order("created_at", { ascending:false })
+      .limit(3000);
+    if(!error && Array.isArray(data)){
+      data.__loaded = true;
+      window._arbolFullCache[u] = data;
+      if(onDone) onDone(data.length>0);
+    } else {
+      window._arbolFullCache[u] = Object.assign([], {__loaded:true});   // marca cargado (vacío) para no reintentar en loop
+      if(onDone) onDone(false);
+    }
+  }catch(_e){
+    try{ delete window._arbolFullCache[u]; }catch(__e){}   // permite reintentar en el próximo open
+    if(onDone) onDone(false);
+  }
+};
 window.verDetalleMovimiento = function(histId, usuarioArg){
   const esc = escapeHtml;
   const map = _movStoreAll();
@@ -4228,6 +4687,23 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
   const cbuHtml = (esRetiro && cbuVal)
     ? '<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(cbuVal)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba(251,146,60,.45);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias destino · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(cbuVal)+'</span></span><span class="pcopy-ico">📋</span></button>'
     : '';
+  // Cruce antifraude con la base local de jugadores: ¿destino conocido? ¿titular habitual?
+  let cbuWarnHtml = '';
+  if(esRetiro && cbuVal && window.jugadorCbuCheck){
+    try{
+      const _chk = window.jugadorCbuCheck(usuario, cbuVal, titularDecl);
+      if(_chk && _chk.datos){
+        const _uEsc = String(usuario).replace(/'/g,"\\'");
+        if(_chk.titularNuevo)
+          cbuWarnHtml = '<div style="margin-top:6px;padding:7px 10px;border-radius:8px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.5);color:#fca5a5;font-size:12px;font-weight:700">🚨 Titular DISTINTO al que suele usar ('+esc((_chk.titularesConocidos||[]).slice(0,2).join(', '))+'). Revisá antes de transferir — posible cuenta ajena.</div>';
+        else if(!_chk.conocido)
+          cbuWarnHtml = '<div style="margin-top:6px;padding:7px 10px;border-radius:8px;background:rgba(245,197,24,.12);border:1px solid rgba(245,197,24,.5);color:#fde68a;font-size:12px;font-weight:700">⚠️ Destino NUEVO — nunca cobró en esta cuenta. Confirmá con el usuario.</div>';
+        else
+          cbuWarnHtml = '<div style="margin-top:5px;font-size:11px;color:#22c55e;font-weight:700">✓ Ya cobró en este destino ×'+_chk.veces+'</div>';
+        cbuWarnHtml += '<button type="button" class="mini-btn" style="margin-top:6px;font-size:11px;background:#1e293b;color:#93c5fd" onclick="mostrarDestinosUsuario(\''+_uEsc+'\')">📇 Todos los destinos del usuario</button>';
+      }
+    }catch(_e){}
+  }
 
   const arbol = arbolUsuario(usuario);
   let totC=0, totR=0;
@@ -4261,7 +4737,7 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
     +     '<b style="font-size:16px;color:'+acc+'">'+(esRetiro?'⬇️ Retiro':'⬆️ Carga')+' · '+esc(usuario)+'</b>'
     +     '<b style="font-size:18px;color:'+acc+'">'+money(Math.abs(Number(mov.monto||0)))+'</b>'
     +   '</div>'
-    +   cbuHtml
+    +   cbuHtml + cbuWarnHtml
     +   '<div style="margin-top:8px;font-size:13px">'
     +     fila('Titular', esc(titularDecl||mov.titular||''))
     +     fila('Destino', esc(mov.destino||''))
@@ -4346,6 +4822,32 @@ function _arbolResumenHtml(usuario){
       + ult + '</div>';
   }catch(_e){ return ''; }
 }
+// Progreso de un retiro PARCIAL: cuánto se pagó ya (metadata.retiro_parcial.pagado) y cuánto resta.
+// Se usa para que la tarjeta y el modal muestren el RESTANTE (no el total original) a medida que se paga.
+window._retiroParcialInfo = function(s){
+  const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
+  let pagado = 0;
+  try{
+    let m = (s&&(s.METADATA!==undefined?s.METADATA:s.metadata))||{};
+    if(typeof m==='string'){ try{ m=JSON.parse(m); }catch(_e){ m={}; } }
+    const rp = (m&&(m.retiro_parcial||m.retiro_progreso||m.progreso))||{};
+    pagado = Math.abs(Number((rp.pagado!=null?rp.pagado:(rp.acumulado!=null?rp.acumulado:(m.pagado_parcial!=null?m.pagado_parcial:0))))||0);
+  }catch(_e){}
+  if(total>0 && pagado>total) pagado=total;
+  return { total:total, pagado:pagado, restante:Math.max(0,total-pagado), hasProg:pagado>0.5 };
+};
+// Un RETIRO con progreso PARCIAL (se pagó algo pero NO todo) sigue PENDIENTE hasta cobrar el total,
+// aunque la RPC lo haya marcado PAGADA/completo. Solo debe desaparecer si se retiró por COMPLETO
+// (pagado >= total) o si es un cierre deliberado (RECHAZADA/CANCELADA). Red de seguridad del panel.
+window._retiroParcialSigueAbierto = function(s){
+  try{
+    if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()!=='RETIRO') return false;
+    const est = String(s.ESTADO||'').toUpperCase();
+    if(/RECHAZ|CANCEL/.test(est)) return false;   // cierre deliberado del operador → respetar
+    const pp = window._retiroParcialInfo ? window._retiroParcialInfo(s) : null;
+    return !!(pp && pp.hasProg && pp.total>0 && pp.pagado < pp.total - 0.5);
+  }catch(_e){ return false; }
+};
 // Copiar CBU/alias al portapapeles (usado por el detalle del árbol).
 function portalCopiarCbu(btn){
   try{
@@ -4402,8 +4904,16 @@ function portalCopiarCbu(btn){
         +   '<div style="display:flex;align-items:center;gap:8px">'+badge+'<b style="font-size:15px;color:#f0f6fc">'+esc(it.usuario||'—')+'</b><b style="font-size:16px;color:#f5c518">'+money(it.monto||0)+'</b></div>'
         +   '<span style="font-size:11px;color:#8b949e">'+fecha(it.creado)+(it.intentos?(' · '+it.intentos+' reintento/s'):'')+'</span>'
         + '</div>'
-        + (it.titular ? '<div style="margin-top:4px;font-size:12px;color:#c9d1d9"><span style="color:#8b949e">A nombre de:</span> <b>'+esc(it.titular)+'</b></div>' : '')
-        + (it.solicitudId ? '<div style="margin-top:2px;font-size:12px;color:#c9d1d9"><span style="color:#8b949e">Solicitud:</span> #'+esc(String(it.solicitudId))+'</div>' : '')
+        + '<div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 14px;margin-top:6px;font-size:12px;color:#c9d1d9">'
+        +   (it.titular ? '<div><span style="color:#8b949e">A nombre de:</span> <b>'+esc(it.titular)+'</b></div>' : '')
+        +   (esBono && it.baseMonto ? '<div><span style="color:#8b949e">Sobre carga de:</span> '+money(it.baseMonto)+'</div>'
+               : (it.declarado ? '<div><span style="color:#8b949e">Declaró:</span> '+money(it.declarado)+'</div>' : ''))
+        +   (it.destino ? '<div style="grid-column:1/-1"><span style="color:#8b949e">Destino:</span> '+esc(it.destino)+'</div>' : '')
+        +   (it.cbu ? '<div style="grid-column:1/-1"><span style="color:#8b949e">CBU/CVU:</span> '+esc(it.cbu)+'</div>' : '')
+        +   (it.obs ? '<div style="grid-column:1/-1"><span style="color:#8b949e">Obs:</span> '+esc(it.obs)+'</div>' : '')
+        +   (it.solicitudId ? '<div><span style="color:#8b949e">Solicitud:</span> #'+esc(String(it.solicitudId))+'</div>' : '')
+        +   (it.billeteraNombre ? '<div><span style="color:#8b949e">Billetera:</span> '+esc(it.billeteraNombre)+'</div>' : '')
+        + '</div>'
         + '<div style="margin-top:5px;font-size:11px;color:#fca5a5">Falló: '+esc(it.motivo||'sin detalle')+'</div>'
         + aviso + saldoLeido
         + '<div style="display:flex;gap:7px;justify-content:flex-end;margin-top:8px">'
@@ -4450,7 +4960,75 @@ function portalCopiarCbu(btn){
   setTimeout(function(){ try{ renderColaPendientes(); }catch(_e){} }, 3500); // pendientes de una sesión anterior
 })();
 
+// ── Ledger de billeteras: saldo ESPERADO por operaciones vs REAL de Chunior ─────────────
+// Cada operación (carga +, retiro/parcial -) que pasa por registrarEnHistorial suma/resta al "ops"
+// de su billetera. Al sincronizar con Chunior comparamos esperado(base+ops) vs real → si difieren,
+// aviso LEVE (ej: una carga que no se anotó en Chunior) + se re-basa al valor real. Todo LOCAL.
+const BIL_LEDGER_KEY = 'nodo_bil_ledger_v1';
+const _BIL_DIF_UMBRAL = 1; // pesos
+function _bilLedgerAll(){ try{ return JSON.parse(localStorage.getItem(BIL_LEDGER_KEY)||'{}')||{}; }catch(_e){ return {}; } }
+function _bilLedgerSave(m){ try{ localStorage.setItem(BIL_LEDGER_KEY, JSON.stringify(m)); }catch(_e){} }
+function _bilLedgerAdd(bilId, tipo, monto, estado){
+  if(!bilId) return;
+  if(estado && String(estado).toUpperCase()!=='OK') return; // solo ops efectivas
+  const t=String(tipo||'').toUpperCase(); const signo=t==='CARGA'?1:t==='RETIRO'?-1:0; if(!signo) return;
+  const m=Math.abs(Number(monto||0)); if(!m) return;
+  const led=_bilLedgerAll(); const k=String(bilId); const L=led[k]||{base:null,ops:0};
+  L.ops=Number(L.ops||0)+signo*m; led[k]=L; _bilLedgerSave(led);
+}
+window._bilLedgerAdd = _bilLedgerAdd;
+// Compara esperado vs real (llamar DESPUÉS de sincronizar Chunior, con billeteras[].SALDO ya real)
+// y avisa las diferencias. Re-basa el ledger al valor real actual. Devuelve la lista de diferencias.
+window._chequearDiferenciasBilletera = function(){
+  const led=_bilLedgerAll(); const difs=[];
+  (billeteras||[]).forEach(function(b){
+    const id=String(b.ID_BILLETERA); const actual=Number(b.SALDO||0); const L=led[id];
+    if(L && typeof L.base==='number'){
+      const esperado=L.base+Number(L.ops||0); const diff=esperado-actual;
+      if(Math.abs(diff)>=_BIL_DIF_UMBRAL) difs.push({id:b.ID_BILLETERA, nombre:b.NOMBRE_VISIBLE||id, esperado:esperado, actual:actual, diff:diff, ops:Number(L.ops||0)});
+    }
+    led[id]={base:actual, ops:0}; // re-basar al real (arranca de cero hasta la próxima sync)
+  });
+  _bilLedgerSave(led);
+  window.__bilDifs = difs;
+  if(difs.length){
+    try{
+      difs.sort((a,b)=>Math.abs(b.diff)-Math.abs(a.diff));
+      const top=difs[0]; const extra=difs.length>1?(' · +'+(difs.length-1)+' billetera(s) más'):'';
+      toast('⚠ Diferencia con Chunior · '+top.nombre+': real '+money(top.actual)+' vs esperado '+money(top.esperado)+' ('+(top.diff>0?'+':'')+money(top.diff)+')'+extra+' — ¿faltó anotar una carga?', 'yellow');
+    }catch(_e){}
+  }
+  return difs;
+};
+// ── Atribución por turno (portado del colega, v1.1.39) ───────────────────────
+// Toma el operador REALMENTE logueado en Chunior (#user-tools strong) y actualiza operador.usuario
+// antes de cada registro + cada 90s → cubre el cambio de turno sin re-login del panel. NO fabrica
+// un operador si no hay (respeta el gating de login/multi-oficina) y NO toca pc/rol/scope (eso lo
+// define el login del panel, atado a la PC física). Guard de 20s para no golpear Chunior de más.
+let _operadorChuniorTs = 0;
+async function refrescarOperadorDesdeChunior(force){
+  try{
+    if(!force && (Date.now() - _operadorChuniorTs) < 20000) return (typeof operador!=='undefined' && operador && operador.usuario) || null;
+    if(!window.chunior || !window.chunior.exec) return (typeof operador!=='undefined' && operador && operador.usuario) || null;
+    const u = await window.chunior.exec('(function(){var e=document.querySelector("#user-tools strong");return e?(e.textContent||"").trim():"";})()');
+    _operadorChuniorTs = Date.now();
+    const nombre = String(u||'').trim();
+    // Solo actualizamos el NOMBRE si ya hay un operador logueado (no fabricamos uno).
+    if(nombre && typeof operador!=='undefined' && operador && String(operador.usuario||'').toLowerCase() !== nombre.toLowerCase()){
+      console.log('[operador] cambió de puesto en Chunior:', operador.usuario, '→', nombre);
+      operador.usuario = nombre; operador.nombre = nombre;
+      try{ window.operador = operador; }catch(_e){}
+    }
+    return (typeof operador!=='undefined' && operador && operador.usuario) || nombre || null;
+  }catch(_e){ return (typeof operador!=='undefined' && operador && operador.usuario) || null; }
+}
+window.refrescarOperadorDesdeChunior = refrescarOperadorDesdeChunior;
+// Refresco periódico: cubre el cambio de turno aunque no se opere (Chunior ya se re-logueó).
+try{ setInterval(function(){ refrescarOperadorDesdeChunior(true); }, 90000); }catch(_e){}
+
 async function registrarEnHistorial(op){
+  // Antes de estampar, aseguramos que el operador sea el que está en Chunior AHORA (cambio de turno).
+  try{ await refrescarOperadorDesdeChunior(); }catch(_e){}
   const {
     usuario, tipo, monto=0, billetera_id=null, billetera_nombre=null,
     origen='MANUAL', estado='OK', notas=null, solicitud_id=null,
@@ -4488,7 +5066,7 @@ async function registrarEnHistorial(op){
         .select()
         .single();
 
-      if(!error){ try{ _capturarMovimientoDesdeHistorial(baseRow, data); }catch(_e){} return data; }
+      if(!error){ try{ _capturarMovimientoDesdeHistorial(baseRow, data); }catch(_e){} try{ _bilLedgerAdd(baseRow.billetera_id, baseRow.tipo, baseRow.monto, baseRow.estado); }catch(_e){} return data; }
 
       const msg = (error.message || "") + " " + (error.details || "") + " " + (error.hint || "");
       const colMencionada = _HISTORIAL_COLS_OPCIONALES.find(c => msg.includes(c) && (c in intento));
@@ -4576,6 +5154,35 @@ async function cargarHistorial(){
   }
   _historialData = data || [];
 
+  // CRM · Sembrar la base LOCAL de JUGADORES desde historial_ops (FUENTE PRINCIPAL).
+  // Muchos usuarios cargaron desde OTRA máquina/turno, o su solicitud del portal ya salió de la
+  // ventana actual → sólo viven en historial_ops. Sin esto NO aparecían en "Jugadores" (arbolito)
+  // aunque tuvieran operaciones. Regla igual que en guardarMovimientoLocal: CBU/alias SÓLO de
+  // RETIROS (en una carga el destino es NUESTRA billetera, no un dato del usuario); el titular
+  // sirve en ambos flujos. El teléfono se sigue tomando de vincular/harvest (historial_ops no lo trae).
+  try{
+    if(window.jugadorRegistrarDato){
+      window.__jugHistSeeded = window.__jugHistSeeded || new Set();
+      const _okEstadosJug = ['OK','PAGADA','ACREDITADA','COMPLETADA','APROBADA'];
+      _historialData.forEach(function(h){
+        if(!h || !h.usuario) return;
+        const sid = String(h.id!=null ? h.id : (h.usuario+'_'+(h.created_at||'')));
+        if(window.__jugHistSeeded.has(sid)) return;   // ya sembrado → no reprocesar en cada refresh
+        window.__jugHistSeeded.add(sid);
+        const p = _movParseNotas(h.notas);
+        const esRet = String(h.tipo||'').toUpperCase()==='RETIRO';
+        const opOk  = _okEstadosJug.includes(String(h.estado||'').toUpperCase());
+        // Se registra SIEMPRE (aunque no haya titular/CBU) para que el usuario EXISTA en el arbolito.
+        window.jugadorRegistrarDato(h.usuario, {
+          cbu: esRet ? (p.cbu||p.destino) : '',
+          titular: p.titular,
+          instrumentoVerificado: esRet && opOk,   // retiro pagado a ese destino = instrumento verificado
+          fecha: h.created_at
+        });
+      });
+    }
+  }catch(_e){}
+
   const bilSel = document.getElementById("filtHistBilletera");
   if(bilSel){
     const bils = [...new Set(_historialData.map(function(h){return h.billetera_nombre;}).filter(Boolean))];
@@ -4605,6 +5212,20 @@ async function cargarOperacionesAgente(){
     if(!error && Array.isArray(data)){ data.forEach(function(f){ m[String(f.usuario||"").toLowerCase()] = {push:!!f.push, app:!!f.app}; }); }
     window._crmFlags = m;
   }catch(_e){ window._crmFlags = window._crmFlags||{}; }
+  // Vínculos de whaticket (usuario+teléfono) → para que el CRM incluya a TODOS los registrados,
+  // aunque NO tengan operaciones de agente ni del panel. Aporta teléfono/estado; ops quedan en 0.
+  // Requiere la RPC panel_crm_vinculos (SQL). Si no existe, el CRM sigue andando sin esta fuente.
+  try{
+    const { data, error } = await supabaseClient.rpc("panel_crm_vinculos", { p_pc_codigos: pcs });
+    window._crmVinculos = (!error && Array.isArray(data)) ? data : (window._crmVinculos||[]);
+  }catch(_e){ window._crmVinculos = window._crmVinculos||[]; }
+  // Total de registrados en WTK (contador barato) → GLOBAL (todas las oficinas), sin cargar los 53k+ vínculos.
+  try{
+    const { data } = await supabaseClient.rpc("panel_crm_vinculos_count", { p_pc_codigos: null });
+    window._crmWtkTotal = (data === 0 || data) ? Number(data) : null;
+    const el = document.getElementById("crmWtkTotal");
+    if(el && window._crmWtkTotal != null) el.textContent = Number(window._crmWtkTotal).toLocaleString("es-AR");
+  }catch(_e){}
   return window._agenteResumen;
 }
 
@@ -4723,18 +5344,24 @@ function renderHistorial(lista){
       ? '<button class="mini-btn" style="font-size:12px;background:#1e293b;color:#93c5fd;padding:4px 8px" onclick="verTrazaHistorial(\x27'+h.id+'\x27)" title="Ver el paso a paso del proceso (dónde falló)">ℹ️</button>'
       : '';
     const detalleBtn = '<button class="mini-btn" style="font-size:12px;background:#1e293b;color:#f5c518;padding:4px 8px" onclick="verDetalleMovimiento(\x27'+escapeHtml(String(h.id||''))+'\x27,\x27'+escapeHtml(String(h.usuario||''))+'\x27)" title="Ver detalle del movimiento y el árbol de operaciones del usuario">🔍</button>';
-    const acciones = [infoBtn, detalleBtn, retryBtn, chuniorBtn, claveBtn, undoBtn].filter(Boolean).join(' ') || '-';
+    // Anular propina (portado de NexoBetaChan): solo en filas PROPINA con N° de Chunior → pone el monto en 0,10.
+    const anularPropBtn = (String(h.tipo||'').toUpperCase()==='PROPINA' && h.chunior_movimiento_id && String(h.estado||'').toUpperCase()!=='ANULADA')
+      ? '<button class="mini-btn red" style="font-size:11px" onclick="anularPropinaHistorial(\x27'+escapeHtml(String(h.id))+'\x27)" title="Anular esta propina (pone el monto en 0,10 en Chunior)">🚫 Anular</button>'
+      : '';
+    const acciones = [infoBtn, detalleBtn, retryBtn, chuniorBtn, claveBtn, undoBtn, anularPropBtn].filter(Boolean).join(' ') || '-';
     const saldoPreTd = (h.saldo_pre !== null && h.saldo_pre !== undefined && h.saldo_pre !== '')
       ? '<span style="color:#9aa7bd">'+money(h.saldo_pre)+'</span>'
       : '<span class="small">—</span>';
     const saldoPostTd = (h.saldo_post !== null && h.saldo_post !== undefined && h.saldo_post !== '')
       ? '<span style="font-weight:700;color:#7ee07e">'+money(h.saldo_post)+'</span>'
       : '<span class="small">—</span>';
+    // Diferenciación visual retiro/carga (como el nodo hermano): 🟠 naranja retiro · 🟢 verde carga
+    const _accH = h.tipo==='RETIRO' ? '#fb923c' : h.tipo==='CARGA' ? '#22c55e' : '';
     html += '<tr class="'+rowClass+'">'+
       '<td style="font-size:12px;white-space:nowrap">'+formatFecha(h.created_at)+'</td>'+
-      '<td style="white-space:nowrap">'+tipoIcon(h.tipo)+' '+escapeHtml(h.tipo||'—')+'</td>'+
+      '<td style="white-space:nowrap'+(_accH?';color:'+_accH+';font-weight:800':'')+'">'+tipoIcon(h.tipo)+' '+escapeHtml(h.tipo||'—')+'</td>'+
       '<td><b>'+escapeHtml(h.usuario||'—')+'</b>'+notasTd+'</td>'+
-      '<td style="font-weight:700">'+(h.monto?money(h.monto):'—')+'</td>'+
+      '<td style="font-weight:700'+(_accH?';color:'+_accH:'')+'">'+(h.monto?money(h.monto):'—')+'</td>'+
       '<td style="font-size:12px;white-space:nowrap">'+saldoPreTd+'</td>'+
       '<td style="font-size:12px;white-space:nowrap">'+saldoPostTd+'</td>'+
       '<td style="font-size:12px">'+escapeHtml(String(h.billetera_nombre||'—').split('·')[0].trim()||String(h.billetera_nombre||'—'))+'</td>'+
@@ -4782,8 +5409,13 @@ async function reintentarOperacionFallida(historialId){
   _wdLock();
   let b, chuVerif = { existe:false, movimientoId:null };
   try {
+    // N° de movimiento ya vinculados a OTRAS ops del historial → no reclamarlos como propios
+    // (evita que dos cargas del mismo usuario/monto se atribuyan el mismo N°).
+    const _otrosMovIds = ((typeof _historialData!=='undefined' && _historialData) || [])
+      .filter(function(x){ return String(x.id)!==String(historialId) && x.chunior_movimiento_id; })
+      .map(function(x){ return String(x.chunior_movimiento_id); });
     const verifChuniorPromise = (necesitaChunior && !chuniorYaHecho)
-      ? verificarMovimientoEnChunior(usuario, monto)   // corre en la ventana de Chunior (paralelo)
+      ? verificarMovimientoEnChunior(usuario, monto, null, null, _otrosMovIds)   // op VIEJA → sin ventana horaria
       : Promise.resolve({ existe:false, movimientoId:null });
     // Agentes y Chunior usan ventanas distintas → realmente en paralelo
     const [bRes, chuRes] = await Promise.all([
@@ -4916,7 +5548,7 @@ async function deshacerOperacion(id, usuario, tipoOriginal, monto, bilId){
 
   const tipoReversion = tipoOriginal==='CARGA'?'RETIRO':'CARGA';
   const montoNum = Number(monto);
-  const bil = billeteras.find(function(b){return b.ID_BILLETERA===bilId;})||getBilleraLanding();
+  const bil = billeteras.find(function(b){return String(b.ID_BILLETERA)===String(bilId);})||getBilleraLanding();
 
   toast("Procesando reversión...","blue");
   try {
@@ -5572,7 +6204,7 @@ async function ajustarSaldoBilletera(id, delta){
   // Postgres), no un read-modify-write local. Antes se leía el saldo en memoria (podía estar
   // desactualizado) y se escribía calculado acá — si dos operaciones tocaban la misma billetera
   // casi al mismo tiempo, la segunda podía pisar a la primera sin avisar (lost update silencioso).
-  const b = billeteras.find(x=>x.ID_BILLETERA===id);
+  const b = billeteras.find(x=>String(x.ID_BILLETERA)===String(id));
   try{
     const { data, error } = await supabaseClient.rpc("panel_billetera_ajustar_saldo",{p_secret:window.PANEL_DATA_SECRET,p_id:Number(id),p_delta:delta});
     if(error) throw error;
@@ -5616,7 +6248,7 @@ function renderBilleteras(){
 }
 
 function abrirEditarBilletera(id){
-  const b=billeteras.find(x=>x.ID_BILLETERA===id);
+  const b=billeteras.find(x=>String(x.ID_BILLETERA)===String(id));
   if(!b) return;
   abrirModal("Editar billetera",`
     <label>Nombre / Titular</label>
@@ -5879,7 +6511,7 @@ async function abrirCerrarRetiro(id){
 
     cerrarModal();
     toast("Retiro cerrado","green");
-    const bilObjR = billeteras.find(function(b){ return b.ID_BILLETERA===bilId; }) || {};
+    const bilObjR = billeteras.find(function(b){ return String(b.ID_BILLETERA)===String(bilId); }) || {};
     let movChuniorP = null;
     if(bilObjR.CHUNIOR_UID && usuario){
       try {
@@ -5901,7 +6533,7 @@ async function abrirCerrarRetiro(id){
     const montoInput = document.getElementById("retMonto");
     const update = ()=>{
       if(!sel||!info) return;
-      const b = billeteras.find(x=>x.ID_BILLETERA===sel.value);
+      const b = billeteras.find(x=>String(x.ID_BILLETERA)===String(sel.value));
       const saldo  = b ? Number(b.SALDO||0) : 0;
       const monto  = Number(montoInput?.value||montoSol||0);
       const ok     = saldo >= monto;
@@ -6345,6 +6977,13 @@ if(enElectron){
   setTimeout(refrescarSaldoAgente, 4000); // 4s después del load inicial
 }
 
+// Rechequeo MANUAL de fichas (portado de NexoBetaChan): relee Drex + Chunior y compara AHORA.
+window.rechequearFichas = async function(){
+  if(typeof _watchdogPoll !== 'function') return;
+  if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy > 0){ try{ toast('Hay una operación en curso · se compara al terminar', 'yellow'); }catch(_e){} return; }
+  try{ toast('Releyendo fichas de Drex y Chunior...', 'blue'); }catch(_e){}
+  try{ await _watchdogPoll(); }catch(_e){}
+};
 // ── Watchdog de fichas: detecta discrepancias entre Drex y Chunior ────────────
 // Cada 60s lee ambos saldos y los compara. En operaciones normales se mueven en
 // direcciones OPUESTAS con el mismo monto (carga: Drex -X, Chunior +X). Si no
@@ -6767,10 +7406,14 @@ async function ejecutarVincular(usuario, telefono){
     }
     // 3) Toast YA (no esperamos el envío del aviso → sensación instantánea).
     toast("✅ "+usuario+" vinculado. Avisándole por el chat con el botón para ingresar…","green");
+    // Base local de jugadores: la vinculación nos da usuario+teléfono CONFIRMADOS (KYC-lite).
+    try{ if(window.jugadorRegistrarDato) window.jugadorRegistrarDato(usuario, { telefono:telefono, verificado:true }); }catch(_e){}
     // Aviso al usuario por el chat del portal con su info de ingreso + botón "Ingresar" (background).
     try{
       if(typeof window.nodoEnviarMensajePortal==="function"){
-        const msg="✅ ¡Listo! Ya validamos tu cuenta.\n\nPara entrar al portal usá:\n👤 Usuario: "+usuario+"\n📱 Teléfono: "+telefono+"\n\nTocá el botón *Ingresar* acá abajo 👇\n⟦INGRESAR:"+usuario+"⟧";
+        // La marca lleva usuario|telefono CORREGIDOS: si el operador cambió el tel (o el usuario), el
+        // portal revalida con los datos buenos y el botón "Ingresar" funciona sin re-loguear.
+        const msg="✅ ¡Listo! Ya validamos tu cuenta.\n\nPara entrar al portal usá:\n👤 Usuario: "+usuario+"\n📱 Teléfono: "+telefono+"\n\nTocá el botón *Ingresar* acá abajo 👇\n⟦INGRESAR:"+usuario+"|"+telefono+"⟧";
         window.nodoEnviarMensajePortal(usuario,msg).then(rr=>{
           if(!(rr&&rr.ok)) console.warn("aviso 'Ingresar' no ruteado ("+((rr&&rr.error)||"?")+") — el portal lo detecta igual por auto-chequeo");
         }).catch(_e=>{});
@@ -7047,6 +7690,41 @@ async function verificarEstadoBackoffice(){
     document.getElementById("autoEstadoMsg").textContent = "Abrí el backoffice primero";
   }
 }
+
+// ── Switch de backend de Agentes (Casinodrex ⇄ BET300) ───────────────────────
+// El proxy de la oficina NO cambia: vive en la sesión persist:nodo-agentes (misma partición
+// para ambos backends). Cambiar de backend solo relanza la ventana de agentes con el preload/URL
+// del casino elegido; la salida de red (proxy) queda igual. Se PERSISTE en userData (sobrevive updates).
+window._agentBackendState = null;
+async function nodoCargarBackendAgentes(){
+  if(!enElectron || !window.ctrlElectron || !window.ctrlElectron.getAgentBackend) return;
+  try{
+    const st = await window.ctrlElectron.getAgentBackend();
+    window._agentBackendState = st;
+    const btn = document.getElementById('agentBackendBtn');
+    if(btn && st && st.ok){ btn.textContent = '🎰 Backoffice: '+st.label; btn.dataset.backend = st.backend; }
+  }catch(_e){}
+}
+async function nodoCambiarBackendAgentes(){
+  if(!enElectron || !window.ctrlElectron || !window.ctrlElectron.setAgentBackend){ toast('Solo en la app de escritorio','yellow'); return; }
+  const st = window._agentBackendState;
+  const ops = (st && st.opciones) || [{id:'casinodrex',label:'Casinodrex'},{id:'bet300',label:'BET300 (agentesbet.io)'}];
+  const actual = (st && st.backend) || 'casinodrex';
+  const otro = ops.find(function(o){ return o.id!==actual; }) || ops[0];
+  if(!confirm('¿Cambiar el backoffice de Agentes a "'+otro.label+'"?\n\nSe RELANZA la ventana de agentes (el proxy de la oficina NO cambia). Si no tenés la sesión guardada de ese backoffice, vas a tener que iniciar sesión de nuevo.')) return;
+  const btn=document.getElementById('agentBackendBtn'); if(btn){ btn.disabled=true; btn.textContent='🎰 Relanzando…'; }
+  try{
+    const r = await window.ctrlElectron.setAgentBackend(otro.id);
+    if(r && r.ok){
+      toast('🎰 Backoffice: '+(r.label||otro.label)+' · ventana relanzada','green');
+      await nodoCargarBackendAgentes();
+      try{ setTimeout(verificarEstadoBackoffice, 1800); }catch(_e){}
+    } else { toast('No se pudo cambiar: '+((r&&r.error)||'error'),'red'); await nodoCargarBackendAgentes(); }
+  }catch(e){ toast('Error: '+(e.message||e),'red'); await nodoCargarBackendAgentes(); }
+  finally{ if(btn) btn.disabled=false; }
+}
+window.nodoCargarBackendAgentes = nodoCargarBackendAgentes;
+window.nodoCambiarBackendAgentes = nodoCambiarBackendAgentes;
 
 async function testBuscar(){
   if(!enElectron) return;
@@ -8120,9 +8798,39 @@ async function sincronizarBilleterasChunior(silencioso){
 // Esto cubre el caso "se anotó en Chunior pero NODO no guardó el N° de movimiento".
 // Usa el buscador del admin (?q=usuario) y lee la tabla #result_list.
 // Devuelve { existe:boolean, movimientoId:string|null }.
-async function verificarMovimientoEnChunior(usuario, monto){
+// "07-07-2026 08:21:49" (DD-MM-YYYY HH:MM:SS, hora local de Chunior) → ms epoch.
+function _chuParsearFechaCreacion(s){
+  const m = String(s||'').trim().match(/(\d{2})-(\d{2})-(\d{4})\s+(\d{2}):(\d{2}):(\d{2})/);
+  if(!m) return null;
+  const d = new Date(+m[3], +m[2]-1, +m[1], +m[4], +m[5], +m[6]);
+  return isNaN(d.getTime()) ? null : d.getTime();
+}
+// Chunior pinta el monto como 3000 / 3.000 / 3000,00 / 3.000,00 → generamos las variantes de texto.
+function _chuVariantesMonto(monto){
+  const abs = Math.abs(Number(monto)||0);
+  const entero = String(Math.trunc(abs));
+  const miles  = Math.trunc(abs).toLocaleString('es-AR'); // 3.000
+  const out = [entero, miles, entero+',00', miles+',00', entero+'.00'];
+  return out.filter(function(v,i){ return out.indexOf(v)===i; });
+}
+// Verifica un movimiento en la LISTA de Chunior por usuario (notas) + monto. Portado/afinado del colega:
+//   - tCargaMs presente → ADEMÁS filtra por ventana horaria (desambigua varias del mismo monto por
+//     cercanía a la hora de la operación). Ausente → NO filtra por tiempo (reintento de op VIEJA:
+//     solo interesa si EXISTE un movimiento que coincida).
+//   - excluirIds → N° ya vinculados a OTRA op del historial: no reclamarlos (evita doble atribución
+//     del mismo movimiento a dos operaciones distintas).
+//   - monto por VARIANTES de formato (+ respaldo numérico); usuario EXACTO en notas (+ respaldo por
+//     texto de fila si la fila no trae notas).
+// Devuelve { existe, movimientoId, creacion?, vinculadoAOtro? } (existe/movimientoId = compat con el caller).
+async function verificarMovimientoEnChunior(usuario, monto, tCargaMs, ventanaMs, excluirIds){
   if(!window.chunior || !usuario) return { existe:false, movimientoId:null };
-  const montoAbs = Math.abs(Number(monto));
+  const filtraTiempo = (tCargaMs !== undefined && tCargaMs !== null);
+  const tRef    = tCargaMs || Date.now();
+  const ventana = ventanaMs || 10*60*1000; // ±10 min (cubre demoras y desfase de reloj)
+  const excluir = new Set((excluirIds||[]).map(function(x){ return String(x); }));
+  const normU     = String(usuario).trim().toLowerCase();
+  const variantes = _chuVariantesMonto(monto);
+  const montoAbs  = Math.abs(Number(monto));
   try {
     const listUrl = CHUNIOR_BASE + '/transacciones/movimientoficha/?q=' + encodeURIComponent(usuario);
     await window.chunior.navigate(listUrl);
@@ -8130,26 +8838,26 @@ async function verificarMovimientoEnChunior(usuario, monto){
     const t0 = Date.now();
     let listo = false;
     while(Date.now() - t0 < 8000){
-      listo = await window.chunior.exec('(function(){return !!(document.getElementById("result_list")||document.querySelector(".paginator"));})()').catch(function(){return false;});
+      listo = await window.chunior.exec('(function(){return !!(document.getElementById("result_list")||document.querySelector(".paginator, #changelist"));})()').catch(function(){return false;});
       if(listo) break;
       await new Promise(function(r){ setTimeout(r,250); });
     }
     if(!listo) return { existe:false, movimientoId:null };
 
-    // Leer las filas y buscar una que matchee usuario (notas) + monto (abs).
-    // Estructura del <tr>: .field-id > a (link con ID), .field-as_money (monto),
-    // .field-notas (usuario), .field-creation (fecha).
+    // Leer hasta 40 filas: id, monto (varias clases posibles), notas, fecha de creación y texto de respaldo.
     const res = await window.chunior.exec(
       '(function(){' +
         'var rows = document.querySelectorAll("#result_list tbody tr");' +
         'var out = [];' +
-        'for(var i=0;i<rows.length;i++){' +
+        'for(var i=0;i<rows.length && i<40;i++){' +
           'var r = rows[i];' +
-          'var a = r.querySelector(".field-id a, th a");' +
-          'var idm = null; if(a){ var mm=(a.href||"").match(/movimientoficha\\/(\\d+)/); if(mm) idm=mm[1]; else idm=(a.textContent||"").trim(); }' +
-          'var montoTxt = (r.querySelector(".field-as_money")||{}).textContent || "";' +
+          'var a = r.querySelector(".field-id a, th a, td a[href]");' +
+          'var idm = null; if(a){ var mm=(a.href||"").match(/movimientoficha\\/(\\d+)/); if(mm) idm=mm[1]; else { var t=(a.textContent||"").trim(); if(/^\\d{3,}$/.test(t)) idm=t; } }' +
+          'var montoTxt = ((r.querySelector(".field-as_money, .field-monto, td.field-monto")||{}).textContent || "").trim();' +
           'var notas = ((r.querySelector(".field-notas")||{}).textContent || "").trim();' +
-          'out.push({ id:idm, montoTxt:montoTxt, notas:notas });' +
+          'var cre = ((r.querySelector(".field-creation, td.field-creation")||{}).textContent || "").trim();' +
+          'var texto = (r.textContent||"").replace(/\\s+/g," ").trim().substring(0,300);' +
+          'out.push({ id:idm, montoTxt:montoTxt, notas:notas, creacion:cre, texto:texto });' +
         '}' +
         'return out;' +
       '})()'
@@ -8157,17 +8865,37 @@ async function verificarMovimientoEnChunior(usuario, monto){
 
     if(!res || !res.length) return { existe:false, movimientoId:null };
 
-    const normU = String(usuario).trim().toLowerCase();
+    // Candidatos que coinciden en usuario + monto (+ horario si aplica).
+    const candidatos = [];
     for(const r of res){
       const notasNorm = String(r.notas||'').trim().toLowerCase();
-      // El monto en la lista viene como "$ 1.500,00" (AR). Parseamos a número.
-      const mTxt = String(r.montoTxt||'').replace(/[^\d,.-]/g,'').replace(/\./g,'').replace(',','.');
-      const mNum = Math.abs(parseFloat(mTxt));
-      if(notasNorm === normU && !isNaN(mNum) && Math.abs(mNum - montoAbs) < 1){
-        return { existe:true, movimientoId: r.id || null };
+      const txtLower  = String(r.texto||'').toLowerCase();
+      // usuario: EXACTO en notas (lo que escribimos nosotros); si la fila no trae notas, respaldo por texto.
+      const usuarioOk = notasNorm ? (notasNorm === normU) : (!!normU && txtLower.indexOf(normU) !== -1);
+      if(!usuarioOk) continue;
+      // monto: por variantes de formato contra el campo monto/texto; respaldo por parseo numérico (AR).
+      const campoMonto = r.montoTxt || r.texto || '';
+      let montoOk = variantes.some(function(v){ return campoMonto.indexOf(v) !== -1; });
+      if(!montoOk){
+        const mTxt = String(r.montoTxt||'').replace(/[^\d,.-]/g,'').replace(/\./g,'').replace(',','.');
+        const mNum = Math.abs(parseFloat(mTxt));
+        montoOk = !isNaN(mNum) && Math.abs(mNum - montoAbs) < 1;
       }
+      if(!montoOk) continue;
+      const tFila = _chuParsearFechaCreacion(r.creacion);
+      if(filtraTiempo){ if(tFila === null || Math.abs(tFila - tRef) > ventana) continue; } // horario NO coincide
+      candidatos.push({ id: r.id||null, creacion: r.creacion, dt: (tFila!==null ? Math.abs(tFila - tRef) : Infinity) });
     }
-    return { existe:false, movimientoId:null };
+    if(!candidatos.length) return { existe:false, movimientoId:null };
+    candidatos.sort(function(a,b){ return a.dt - b.dt; }); // el más cercano en horario primero
+    // Descartar los que YA están vinculados a otra operación.
+    const libres = candidatos.filter(function(c){ return !(c.id && excluir.has(String(c.id))); });
+    if(libres.length){
+      const best = libres[0];
+      return { existe:true, movimientoId: best.id || null, creacion: best.creacion };
+    }
+    // Hubo match(es) pero TODOS ya pertenecen a otra op → no lo reclamamos como propio.
+    return { existe:false, movimientoId:null, vinculadoAOtro:true, idVinculado: candidatos[0].id, creacion: candidatos[0].creacion };
   } catch(e){
     return { existe:false, movimientoId:null };
   }
@@ -8273,6 +9001,46 @@ async function registrarCargaEnChunior(chunior_uid, monto, usuario){
 async function registrarRetiroEnChunior(chunior_uid, monto, usuario){
   return registrarCargaEnChunior(chunior_uid, -Math.abs(Number(monto)), usuario);
 }
+
+// ── Auto-recuperación de Chunior (portado del colega, v1.1.36) ────────────────
+// Idea: NO depender de que el operador apriete "Reiniciar Chunior". Si Chunior se traba varias
+// veces SEGUIDAS (formulario que no aparece, exec que falla, registro con ok:false), se recupera
+// SOLO recargándose desde la base. Contamos trabas CONSECUTIVAS de los registros de carga/retiro;
+// a las 5, disparamos reiniciarChunior(false) (soft: navega a la base, re-loguea si perdió sesión).
+// Un éxito resetea el contador → solo dispara si está REALMENTE pegado.
+window._chuniorTrabaCount = 0;
+let _chuniorReiniciando = false;
+const _CHUNIOR_TRABA_MAX = 5;
+async function _chuniorAutoRecuperar(){
+  if(_chuniorReiniciando) return;
+  if(!window.chunior || !window.chunior.reset) return;   // solo en la app de escritorio
+  _chuniorReiniciando = true;
+  try{ toast('🔄 Chunior se trabó '+window._chuniorTrabaCount+' veces seguidas · recuperándolo solo…','yellow'); }catch(_e){}
+  try{ await window.reiniciarChunior(false); }catch(_e){}
+  window._chuniorTrabaCount = 0;
+  setTimeout(function(){ _chuniorReiniciando = false; }, 8000); // margen para que termine de recargar
+}
+function _chuniorTraba(ok, contexto){
+  if(_chuniorReiniciando) return;                        // no contar mientras se recupera
+  if(ok){ window._chuniorTrabaCount = 0; return; }       // un éxito limpia la racha
+  window._chuniorTrabaCount = (window._chuniorTrabaCount||0) + 1;
+  try{ console.warn('[chunior] traba '+window._chuniorTrabaCount+'/'+_CHUNIOR_TRABA_MAX+(contexto?(' · '+contexto):'')); }catch(_e){}
+  if(window._chuniorTrabaCount >= _CHUNIOR_TRABA_MAX) _chuniorAutoRecuperar();
+}
+// Envolvemos SOLO registrarCargaEnChunior: el retiro delega en ella, así que cubre carga Y retiro
+// sin doble conteo. No tocamos los múltiples returns de la función original.
+(function(){
+  const _oc = registrarCargaEnChunior;
+  registrarCargaEnChunior = async function(chunior_uid, monto, usuario){
+    const esRetiro = Number(monto) < 0;
+    let r;
+    try{ r = await _oc.apply(this, arguments); }
+    catch(e){ _chuniorTraba(false, (esRetiro?'retiro:':'carga:')+(e.message||'')); throw e; }
+    _chuniorTraba(r && r.ok!==false, esRetiro?'retiro':'carga');
+    return r;
+  };
+  try{ window.registrarCargaEnChunior = registrarCargaEnChunior; }catch(_e){}
+})();
 
 // Cambia la billetera destino del movimiento N° {movId} en Chunior, sin que el operador lo vea.
 // Devuelve {ok, error?, movimientoId?}.
@@ -8594,11 +9362,180 @@ async function _anularMovimientoChunior(tipoUrl, movId){
 }
 async function anularPropinaChunior(movId){ return _anularMovimientoChunior('propina', movId); }
 
+// ── Depósitos sin reclamar + reclamo + anular propina (portado de NexoBetaChan 1.0.85) ──
+// Todo por el BRIDGE de Chunior (window.chunior), sin escrituras nuevas a la DB salvo el
+// update de historial_ops (que nuestro nodo ya hace directo — RLS permisiva en esa tabla).
+// poder verlos y reclamarlos. Reclamar = convertir en fichas en Chunior + acreditar al
+// usuario en Agentes (SIN anotar una carga nueva en Chunior: el depo ya es el registro).
+window.verDepositosSinReclamar = async function(){
+  if(!window.chunior){ toast('Ventana de Chunior no disponible','red'); return; }
+  abrirModal('💜 Depósitos sin reclamar', '<div class="small" style="padding:14px;color:var(--muted)">Leyendo de Chunior…</div>', null, '');
+  try{ const b=document.getElementById('modalSaveBtn'); if(b) b.style.display='none'; }catch(_e){}
+  const body = document.getElementById('modalBody');
+  try{
+    await window.chunior.navigate(CHUNIOR_BASE + '/transacciones/depositossinreclamar/');
+    const t0=Date.now(); let listo=false;
+    while(Date.now()-t0<10000){ listo=await window.chunior.exec('(function(){return !!(document.getElementById("result_list")||document.querySelector(".paginator,#changelist"));})()').catch(function(){return false;}); if(listo)break; await new Promise(function(r){ setTimeout(r,300); }); }
+    if(!listo){ if(body) body.innerHTML='<div class="err-box" style="padding:12px">La lista de Chunior no cargó. Reintentá.</div>'; return; }
+    // Leemos CADA celda con su clase y texto (no el textContent junto, que quedaba amontonado).
+    const filas = await window.chunior.exec(
+      '(function(){var out=[];var trs=document.querySelectorAll("#result_list tbody tr");' +
+      'for(var i=0;i<trs.length&&i<120;i++){var tr=trs[i];' +
+      ' var a=tr.querySelector("th a[href],td a[href]"); var id=null; if(a){var mh=(a.getAttribute("href")||"").match(/(\\d{3,})/); if(mh) id=mh[1];}' +
+      ' var tds=tr.querySelectorAll("th,td"); var cells=[];' +
+      ' for(var j=0;j<tds.length;j++){ cells.push({c:(tds[j].className||""), t:(tds[j].textContent||"").replace(/\\s+/g," ").trim()}); }' +
+      ' out.push({id:id, cells:cells});' +
+      '}return out;})()'
+    ).catch(function(){ return []; });
+    if(!Array.isArray(filas) || !filas.length){ if(body) body.innerHTML='<div class="alert-box" style="padding:12px">No hay depósitos sin reclamar.</div>'; return; }
+
+    // Extrae un campo: primero por clase de la celda, si no por patrón del texto.
+    function pick(cells, clsRe, txtRe){
+      let c = cells.find(function(x){ return clsRe.test(x.c); });
+      if(c && c.t) return c.t;
+      if(txtRe){ c = cells.find(function(x){ return txtRe.test(x.t); }); if(c) return c.t; }
+      return '';
+    }
+    const rows = filas.map(function(f){
+      const cells = f.cells||[];
+      const creacion = pick(cells, /creation|fecha|creado|date/i, /\d{2}[-/]\d{2}[-/]\d{4}/);
+      const monto    = pick(cells, /monto|money|importe/i, /\$/);
+      const billetera= pick(cells, /cuenta|billetera|destino|wallet/i, /^\s*\d+\s*[-·]/);
+      const notas    = pick(cells, /nota/i, null);
+      const operador = pick(cells, /operador|user|usuario|creado_por/i, null);
+      // Separar día y hora de "10-07-2026 10:39:29"
+      const mFecha = String(creacion||'').match(/(\d{2}[-/]\d{2}[-/]\d{4})\s*(\d{2}:\d{2}(?::\d{2})?)?/);
+      const dia  = mFecha ? mFecha[1] : creacion;
+      const hora = mFecha && mFecha[2] ? mFecha[2] : '';
+      const detalle = [notas, operador].filter(function(v){ return v && !/^\s*\d/.test(v); }).join(' · ');
+      return '<div style="display:flex;justify-content:space-between;align-items:center;gap:12px;padding:11px 13px;border-radius:11px;background:#161b22;border:1px solid #30363d;border-left:3px solid #a78bfa;margin-top:9px">'
+        + '<div style="min-width:0;flex:1">'
+        +   '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">'
+        +     '<span style="font-size:17px;font-weight:900;color:#c4b5fd">'+escapeHtml(monto||'—')+'</span>'
+        +     (billetera?'<span style="font-size:12px;font-weight:700;color:#e6edf3">'+escapeHtml(billetera)+'</span>':'')
+        +   '</div>'
+        +   '<div style="margin-top:4px;font-size:12px;color:#8b949e;display:flex;gap:12px;flex-wrap:wrap">'
+        +     (dia?'<span>📅 <b style="color:#c9d1d9">'+escapeHtml(dia)+'</b></span>':'')
+        +     (hora?'<span>🕐 <b style="color:#c9d1d9">'+escapeHtml(hora)+'</b></span>':'')
+        +   '</div>'
+        +   (detalle?'<div style="margin-top:3px;font-size:12px;color:#c9d1d9">📝 '+escapeHtml(detalle)+'</div>':'')
+        + '</div>'
+        + (f.id?('<button class="mini-btn green" style="font-size:12px;white-space:nowrap;padding:8px 12px" onclick="reclamarDepo(\''+escapeHtml(f.id)+'\',\''+escapeHtml(String(monto||''))+'\')">✅ Reclamar</button>'):'')
+        + '</div>';
+    }).join('');
+    if(body) body.innerHTML = '<div style="max-height:62vh;overflow:auto;padding-right:4px">'
+      + '<div class="small" style="color:#8b949e;margin-bottom:2px">'+filas.length+' depósito(s) sin reclamar en Chunior · el monto se suma a la billetera, se reclama convirtiéndolo en fichas.</div>'
+      + rows + '</div>';
+  }catch(e){ if(body) body.innerHTML='<div class="err-box" style="padding:12px">Error: '+escapeHtml(e.message||String(e))+'</div>'; }
+};
+
+// Reclamar un depo: pide el usuario, convierte en fichas en Chunior y acredita al usuario
+// en Agentes (sin anotar carga nueva en Chunior). El monto viene del propio depo.
+window.reclamarDepo = function(movId, montoTxt){
+  const monto = _adminChuParseMonto(montoTxt);
+  abrirModal('✅ Reclamar depósito N° '+escapeHtml(String(movId)),
+    '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Se convierte en fichas en Chunior y se acredita <b>'+money(monto)+'</b> al usuario en Agentes. No se anota una carga nueva (el depósito ya es el registro en Chunior).</div>'
+    + '<label>Usuario que reclama</label><input id="reclamoUsuario" placeholder="Ej: juan777" style="width:100%">',
+    async function(){
+      const usuario = (document.getElementById('reclamoUsuario')?.value||'').trim();
+      if(!usuario || usuario.length<3){ toast('Ingresá el usuario.','red'); return; }
+      if(!monto || monto<=0){ toast('El depósito no tiene monto válido.','red'); return; }
+      cerrarModal();
+      if(!_drexGlobalLock('reclamar-depo')){ toast('Hay otra operación en curso. Esperá.','yellow'); return; }
+      _wdLock();
+      _trazaInit('Reclamar depo N° '+movId+' · '+usuario+' · '+money(monto));
+      try{
+        // 1) Convertir en fichas en Chunior (botón _convertir_fichas del movimiento)
+        _trazaPaso('Convirtiendo en fichas en Chunior…');
+        await window.chunior.navigate(CHUNIOR_BASE + '/transacciones/depositossinreclamar/' + encodeURIComponent(movId) + '/change/');
+        const t0=Date.now(); let ready=false;
+        while(Date.now()-t0<10000){ ready=await window.chunior.exec('(function(){return !!document.querySelector("input[name=\'_convertir_fichas\']");})()').catch(function(){return false;}); if(ready)break; await new Promise(function(r){ setTimeout(r,300); }); }
+        if(!ready){ _trazaPaso('No apareció el botón "Convertir en fichas"','err'); _trazaFin('err'); toast('No se encontró "Convertir en fichas" en Chunior.','red'); return; }
+        const conv = await window.chunior.exec('(function(){var b=document.querySelector("input[name=\'_convertir_fichas\']"); if(!b) return {ok:false}; b.click(); return {ok:true};})()').catch(function(){return {ok:false};});
+        if(!conv || !conv.ok){ _trazaPaso('No se pudo clickear convertir','err'); _trazaFin('err'); toast('No se pudo convertir en fichas.','red'); return; }
+        await new Promise(function(r){ setTimeout(r,2000); });
+        _trazaPaso('Convertido en fichas en Chunior','ok');
+        // 2) Acreditar al usuario en Agentes (carga directa, SIN anotar en Chunior)
+        _trazaPaso('Acreditando '+money(monto)+' a '+usuario+' en Agentes…');
+        if(!await ensureDrexSession()){ _trazaPaso('Falta sesión de Agentes','err'); _trazaFin('err'); toast('Sesión de Agentes requerida.','red'); return; }
+        const bb = await callDrex('buscarUsuario', usuario, { skipBalance:true });
+        if(!bb || !bb.exists){ _trazaPaso(usuario+' no existe en Agentes','err'); _trazaFin('err'); toast('Usuario no encontrado en Agentes.','red'); return; }
+        const rc = await callDrex('cargarSaldo', monto);
+        const okC = rc && rc.ok !== false;
+        await registrarEnHistorial({
+          usuario, tipo:'CARGA', monto,
+          billetera_id:null, billetera_nombre:null, origen:'DEPO_RECLAMADO',
+          estado: okC?'OK':'ERROR',
+          notas:'Reclamo de depósito sin reclamar N° '+movId+' (convertido en fichas) · '+money(monto),
+          chunior_movimiento_id: String(movId),
+          saldo_post:(typeof rc?.newBalance?.value==='number'?rc.newBalance.value:null)
+        });
+        if(okC){ _trazaPaso('Acreditado a '+usuario,'ok'); _trazaFin('ok'); toast('✅ Depósito reclamado y acreditado a '+usuario,'green'); }
+        else{ _trazaPaso('No se pudo acreditar en Agentes','err'); _trazaFin('err'); toast('⚠️ Convertido en Chunior pero falló la carga en Agentes — cargalo a mano.','red'); }
+        try{ await cargarHistorial(); }catch(_e){}
+        try{ await sincronizarBilleterasChunior(true); }catch(_e){}
+      }catch(e){ _trazaPaso('Error: '+(e.message||''),'err'); _trazaFin('err'); toast('Error al reclamar: '+(e.message||''),'red'); }
+      finally{ _wdUnlock(); _drexGlobalUnlock(); }
+    }, 'Reclamar y acreditar');
+};
+
+window.anularPropinaHistorial = async function(historialId){
+  const h = (_historialData||[]).find(function(x){ return String(x.id)===String(historialId); });
+  if(!h){ toast('No se encontró el movimiento.', 'red'); return; }
+  if(String(h.tipo).toUpperCase()!=='PROPINA'){ toast('Solo se pueden anular propinas por ahora.', 'yellow'); return; }
+  if(!h.chunior_movimiento_id){ toast('Esta propina no tiene N° de Chunior — anulala a mano.', 'yellow'); return; }
+  if(!confirm('¿Anular la propina de '+money(h.monto||0)+' (Mov. N° '+h.chunior_movimiento_id+')?\n\nSe le pone el monto en 0,10 en Chunior (así se anulan los movimientos). No se puede deshacer automáticamente.')) return;
+  if(!_drexGlobalLock('anular-propina')){ toast('Hay otra operación en curso. Esperá.', 'yellow'); return; }
+  _wdLock();
+  toast('Anulando propina N° '+h.chunior_movimiento_id+'...', 'blue');
+  try{
+    const r = await anularPropinaChunior(h.chunior_movimiento_id);
+    if(r && r.ok){
+      try{ await ajustarSaldoBilletera(h.billetera_id, -Math.abs(Number(h.monto||0))); }catch(_e){} // revierte el monto sumado
+      try{
+        await supabaseClient.from('historial_ops').update({
+          estado:'ANULADA',
+          notas: (String(h.notas||'').trim()+' [ANULADA monto→0,10]').trim()
+        }).eq('id', h.id);
+      }catch(_e){}
+      toast('✅ Propina anulada (monto→0,10).', 'green');
+      try{ await cargarHistorial(); }catch(_e){}
+      try{ renderBillerasInicio(); }catch(_e){}
+    }else{
+      toast('⚠️ No se pudo anular: '+((r&&r.error)||'sin detalle'), 'red');
+    }
+  }catch(e){ toast('Error al anular: '+(e.message||''), 'red'); }
+  finally{ _wdUnlock(); _drexGlobalUnlock(); }
+};
+
+
 // ── Verificar saldo de un retiro pendiente en OCIO (portado de NexoBetaChan · versión SEGURA) ──
 // Cuando NO hay ninguna operación en curso, lee el saldo del usuario de UN retiro pendiente y lo
 // muestra (badge en la solicitud + toast). NO auto-rechaza (esa decisión de plata la toma el
 // operador). Re-chequea cada usuario máx. cada 5 min. Se desactiva con localStorage 'nodo_saldo_ocioso_off'.
 window._retiroSaldoCheck = window._retiroSaldoCheck || {};
+// Destrabar agente (portado de NexoBetaChan): salida de emergencia si un flujo dejó el candado
+// tomado (ej. buscarUsuario colgado). Libera el lock global + watchdog + flags de parcial/scanner.
+window.liberarLockAgentes = function(){
+  const m = window._drexGlobalBusyMotivo;
+  try{ if(typeof _drexGlobalUnlock==='function') _drexGlobalUnlock(); }catch(_e){}
+  try{ if(typeof _wdForceUnlock==='function') _wdForceUnlock(); }catch(_e){}
+  try{ window._v154pParcialBusy = false; }catch(_e){}
+  try{ window._retiroSaldoLastRun = 0; }catch(_e){}
+  try{ toast('🔓 Agente destrabado'+(m?(' (lo tenía: '+m+')'):'')+'. Ya podés reintentar.', 'green'); }catch(_e){}
+};
+// Reiniciar Chunior cuando muestra 403/CSRF. Recargar NO sirve (re-envía el POST fallido → mismo
+// 403); esto NAVEGA a la base (GET) → token CSRF fresco. hard=true limpia las cookies de Chunior
+// (NO Supabase) y fuerza un login nuevo.
+window.reiniciarChunior = async function(hard){
+  if(!window.chunior || !window.chunior.reset){ try{ toast('Solo disponible en la app de escritorio.','yellow'); }catch(_e){} return; }
+  try{ toast(hard?'🧹 Reiniciando Chunior con login limpio…':'🔄 Recuperando Chunior…','blue'); }catch(_e){}
+  try{
+    await window.chunior.reset(hard?{hard:true}:undefined);
+    try{ if(window.chunior.focus) window.chunior.focus(); }catch(_e){}
+    try{ toast('✅ Chunior recargado desde la base. Si pide login, ingresá de nuevo.','green'); }catch(_e){}
+  }catch(e){ try{ toast('No se pudo reiniciar Chunior: '+(e.message||e),'red'); }catch(_e){} }
+};
 async function verificarSaldoRetiroOcioso(){
   try{
     try{ if(localStorage.getItem('nodo_saldo_ocioso_off')==='1') return; }catch(_e){}
@@ -8609,19 +9546,41 @@ async function verificarSaldoRetiroOcioso(){
     if(window._v154pParcialBusy) return;
     if(typeof colaPendientesAll==='function' && colaPendientesAll().length>0) return;
     if(!window.ctrlElectron) return;
+    // Cooldown global: como mucho UNA verificación cada 4 min. Sin esto, con varios retiros abiertos el
+    // scanner entraba a Agentes una y otra vez (bucle) y dejaba el agente ocupado → el panel no operaba.
+    if(window._retiroSaldoLastRun && (Date.now()-window._retiroSaldoLastRun) < 4*60*1000) return;
+    const _MAX_EDAD_MS = 2*60*60*1000; // solo auto-escaneamos retiros RECIENTES (últimas 2 h); los viejos los maneja el operador
+    window._retiroSaldoDone = window._retiroSaldoDone || {};
     const pend = ((window.V154P&&window.V154P.solicitudes)||[]).filter(function(s){
       const tipo = String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase();
-      return tipo==='RETIRO' && (typeof estadoCerrado==='function' ? !estadoCerrado(s.ESTADO) : true);
+      if(tipo!=='RETIRO') return false;
+      if(typeof estadoCerrado==='function' && estadoCerrado(s.ESTADO)) return false;
+      // Retiro YA en curso / parcial en progreso → lo maneja el operador; NO re-escanear
+      // (si no, mientras un parcial queda EN_PROCESO el scanner re-entraba al agente y lo trababa).
+      if(/EN_PROCESO|EN_REVISION|PROCESANDO|TOMAD/.test(String(s.ESTADO||'').toUpperCase())) return false;
+      try{ const m=(typeof s.METADATA==='object'?s.METADATA:JSON.parse(s.METADATA||'{}'))||{}; if(m.retiro_parcial && Number(m.retiro_parcial.pagado||0)>0) return false; }catch(_e){}
+      return true;
     });
     const objetivo = pend.find(function(s){
+      const sid = String(s.ID||s.SOLICITUD_ID||s.ID_SOLICITUD||'');
       const u = String(s.USUARIO||'').toLowerCase();
-      const prev = window._retiroSaldoCheck[u];
-      return u && (!prev || (Date.now()-prev.ts) > 5*60*1000);
+      if(!u || !sid) return false;
+      const fc = Date.parse(s.FECHA_CREACION||s.created_at||s.FECHA||'') || 0;
+      if(fc && (Date.now()-fc) > _MAX_EDAD_MS) return false;        // retiro VIEJO → no auto-escanear (corta el bucle)
+      const d = window._retiroSaldoDone[sid];
+      if(d && d.confiable) return false;                           // ya verificado BIEN → una sola vez, nunca más
+      if(d && d.intentos>=3) return false;                         // 3 lecturas fallidas → basta, lo ve el operador
+      if(d && (Date.now()-d.ts) < 5*60*1000) return false;         // espaciar reintentos de lecturas fallidas
+      return true;
     });
     if(!objetivo) return;
     const usuario = String(objetivo.USUARIO||'');
+    const sid = String(objetivo.ID||objetivo.SOLICITUD_ID||objetivo.ID_SOLICITUD||'');
     const monto = Math.abs(Number(objetivo.MONTO_REAL||objetivo.MONTO_DECLARADO||0));
     if(!_drexGlobalLock('retiro-saldo-check')) return;
+    window._retiroSaldoLastRun = Date.now();
+    // Registrar el intento YA (aunque la lectura falle) para no reintentar en bucle.
+    { const _p = window._retiroSaldoDone[sid] || {intentos:0}; window._retiroSaldoDone[sid] = {confiable:false, intentos:_p.intentos+1, ts:Date.now()}; }
     _wdLock();
     try{
       const b = await callDrex('buscarUsuario', usuario, { skipBalance:false });
@@ -8630,30 +9589,44 @@ async function verificarSaldoRetiroOcioso(){
         const saldoConfiable = /\d/.test(String(b.balance.raw||'')) && Number.isFinite(saldo); // se leyó DE VERDAD (no un 0 por lectura fallida/lenta)
         const suficiente = saldo + 0.5 >= monto;
         window._retiroSaldoCheck[usuario.toLowerCase()] = { saldo:saldo, monto:monto, suficiente:suficiente, confiable:saldoConfiable, ts:Date.now(), raw:(b.balance.raw||'').trim() };
+        try{ if(window._retiroSaldoDone && window._retiroSaldoDone[sid]) window._retiroSaldoDone[sid].confiable = saldoConfiable; }catch(_e){} // lectura confiable → no re-escanear este retiro
         try{ if(typeof window.v154pRenderSolicitudesPortalEnInicio==='function') window.v154pRenderSolicitudesPortalEnInicio(); }catch(_e){}
-        // Auto-rechazo ANTI-FRAUDE: si el usuario pide MÁS de lo que tiene en fichas reales Y su saldo
-        // es casi nulo (< $5.000), el retiro es FALSO → se rechaza solo y se le avisa por chat. Si tiene
-        // ≥ $5.000 pero menos que lo pedido, NO se rechaza (queda para un retiro PARCIAL / ajuste manual).
-        const _PISO_AUTORECHAZO = 5000;
-        if(saldoConfiable && !suficiente && saldo < _PISO_AUTORECHAZO){
-          const sid = objetivo.ID || objetivo.SOLICITUD_ID || objetivo.ID_SOLICITUD;
-          const _sinFichas = saldo <= 0.5;
-          const _saldoTxt = (b.balance.raw||money(saldo)).trim();
+        // Auto-rechazo ANTI-FRAUDE — SOLO el caso INEQUÍVOCO: el usuario NO tiene fichas (saldo ~0).
+        // ⚠ Antes rechazábamos con "saldo < $5.000 y < monto": eso rechazaba a un usuario que SÍ tenía
+        // fichas (ej. 4.000 fichas pidiendo 50.000) tratándolo como falso. MAL: si tiene ALGUNAS fichas,
+        // corresponde un retiro PARCIAL, no un rechazo. Ahora solo se rechaza si está prácticamente
+        // vacío (< _PISO_SIN_FICHAS) y ADEMÁS lo confirmamos con una 2ª lectura independiente (descarta
+        // el 0 transitorio por proxy lento). Con fichas reales ⇒ NUNCA se auto-rechaza.
+        const _PISO_SIN_FICHAS = 500; // por debajo de esto no hay fichas reales ni para un parcial
+        if(saldoConfiable && saldo < _PISO_SIN_FICHAS && saldo < monto){
+          // 2ª lectura de confirmación: re-entra a Agentes y vuelve a leer. Solo rechazamos si TAMBIÉN
+          // la ve casi vacía. Si la 2ª no confirma (o no se pudo leer), NO se rechaza.
+          let confirmado = false, saldo2 = saldo, raw2 = (b.balance.raw||'').trim();
           try{
-            await window.actualizarSolicitudPortal(sid, 'RECHAZADA', {
-              etapa: _sinFichas ? 'AUTO_RECHAZO_SIN_SALDO' : 'AUTO_RECHAZO_SALDO_INSUF',
-              motivo: _sinFichas ? 'Sin fichas para retirar (saldo 0)' : ('Saldo insuficiente ('+_saldoTxt+') para el retiro de '+money(monto))
-            });
-            const _msg = _sinFichas
-              ? '❌ No pudimos procesar tu retiro: no figurás con fichas disponibles para retirar. Si creés que es un error, escribinos por acá.'
-              : '❌ No pudimos procesar tu retiro: tu saldo disponible ('+_saldoTxt+') no alcanza para el monto solicitado. Si creés que es un error, escribinos por acá.';
-            try{ await notificarUsuarioEnChat(usuario, _msg); }catch(_e){}
-            toast('❌ Retiro de '+usuario+' rechazado automáticamente · saldo '+_saldoTxt+' (< $5.000, es falso)', 'red');
-          }catch(_e){}
+            const b2 = await callDrex('buscarUsuario', usuario, { skipBalance:false });
+            if(b2 && b2.exists && typeof b2.balance?.value === 'number' && /\d/.test(String(b2.balance.raw||''))){
+              saldo2 = b2.balance.value; raw2 = (b2.balance.raw||'').trim();
+              confirmado = Number.isFinite(saldo2) && saldo2 < _PISO_SIN_FICHAS;
+            }
+          }catch(_e){ confirmado = false; }
+          if(confirmado){
+            const sid = objetivo.ID || objetivo.SOLICITUD_ID || objetivo.ID_SOLICITUD;
+            const _saldoTxt = (raw2||money(saldo2)).trim();
+            try{
+              await window.actualizarSolicitudPortal(sid, 'RECHAZADA', {
+                etapa: 'AUTO_RECHAZO_SIN_SALDO',
+                motivo: 'Sin fichas para retirar (saldo '+_saldoTxt+', confirmado x2)'
+              });
+              try{ await notificarUsuarioEnChat(usuario, '❌ No pudimos procesar tu retiro: no figurás con fichas disponibles para retirar. Si creés que es un error, escribinos por acá.'); }catch(_e){}
+              toast('❌ Retiro de '+usuario+' rechazado · SIN fichas (saldo '+_saldoTxt+', confirmado x2)', 'red');
+            }catch(_e){}
+          } else {
+            toast('⚠ '+usuario+': 1ª lectura casi vacía ('+ (b.balance.raw||'').trim() +') NO confirmada en 2ª ('+raw2+') · NO auto-rechazo', 'yellow');
+          }
         } else if(!saldoConfiable){
           toast('⚠ No pude leer bien el saldo de '+usuario+' — NO auto-rechazo. Revisalo a mano.', 'yellow');
         } else {
-          toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(b.balance.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · solo tiene esto → hacé retiro parcial'), suficiente?'blue':'red');
+          toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(b.balance.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · tiene fichas pero menos que lo pedido → retiro PARCIAL'), suficiente?'blue':'red');
         }
       }
     }catch(_e){}
@@ -9097,8 +10070,11 @@ async function procesarColaVerificacion(){
       updated_at: new Date().toISOString()
     }).eq("id", v.id);
     if(result.exists){
-      // Marcar como verificado en usuarios también
-      await supabaseClient.from("usuarios").update({verificado:true}).eq("usuario", v.usuario);
+      // NO escribimos directo en "usuarios": el blindaje (RLS) bloquea las escrituras directas del
+      // panel a esa tabla → esto tiraba 42501 "new row violates row-level security policy" en cada
+      // verificación (el loop corre cada 5s → spam constante en los logs de Supabase). El estado real
+      // de la verificación ya queda guardado arriba en la tabla "verificaciones".
+      // Si se quiere volver a marcar usuarios.verificado, tiene que ser vía RPC SECURITY DEFINER.
       toast(`✅ Verificado: ${v.usuario}`, "green");
     } else {
       toast(`❌ No existe: ${v.usuario}`, "red");
@@ -9283,7 +10259,7 @@ if(window.ctrlElectron){
 
     const all = (V154P.solicitudes || []).slice();
     // INICIO: solo muestra CARGA y RETIRO pendientes. SOPORTE va al chat inbox, no acá.
-    const pendientes = all.filter(s => !estadoCerrado(s.ESTADO) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
+    const pendientes = all.filter(s => (!estadoCerrado(s.ESTADO) || (window._retiroParcialSigueAbierto && window._retiroParcialSigueAbierto(s))) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
     const visibles = pendientes.slice(0,8);
 
     try{
@@ -9310,15 +10286,20 @@ if(window.ctrlElectron){
         const tomada = ["EN_REVISION","EN_PROCESO"].includes(String(s.ESTADO||"").toUpperCase());
         const _saldoChk = (window._retiroSaldoCheck||{})[String(s.USUARIO||"").toLowerCase()];
         const _esRetiroS = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
+        const _accS = _esRetiroS ? '#fb923c' : (String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="CARGA" ? '#22c55e' : ''); // 🟠 retiro · 🟢 carga
         const _saldoBadge = (_esRetiroS && _saldoChk) ? `<div style="font-size:10px;font-weight:800;margin-top:2px;color:${_saldoChk.suficiente?'#22c55e':'#ef4444'}">saldo ${esc(_saldoChk.raw||"")}${_saldoChk.suficiente?' ✓':' ⚠ no alcanza'}</div>` : "";
+        const _pp = (window._retiroParcialInfo ? window._retiroParcialInfo(s) : {restante:Number(s.MONTO_REAL||s.MONTO_DECLARADO||0),pagado:0,total:Number(s.MONTO_REAL||s.MONTO_DECLARADO||0),hasProg:false});
+        const _montoCell = (_esRetiroS && _pp.hasProg)
+          ? `${money(_pp.restante)}<div style="font-size:10px;font-weight:800;margin-top:2px;color:#a78bfa">parcial · pagado ${money(_pp.pagado)} de ${money(_pp.total)}</div>`
+          : money(s.MONTO_REAL || s.MONTO_DECLARADO || 0);
         return `<div class="v154p-card">
           <div>
             <div class="v154p-main">${esc(s.USUARIO || "-")}</div>
             <div class="v154p-small">#${id} · ${fecha(s.FECHA_CREACION)} · ${esc(s.ORIGEN || "PORTAL")}</div>
             ${s.TITULAR ? `<div class="v154p-small" style="color:#fde68a">Titular: ${esc(s.TITULAR)}</div>` : ""}
           </div>
-          <div><span class="v154p-badge">${esc(s.TIPO || "-")}</span></div>
-          <div class="v154p-main">${money(s.MONTO_REAL || s.MONTO_DECLARADO || 0)}${_saldoBadge}</div>
+          <div><span class="v154p-badge"${_accS?` style="background:${_accS}22;color:${_accS};border:1px solid ${_accS}66"`:``}>${esc(s.TIPO || "-")}</span></div>
+          <div class="v154p-main"${_accS?` style="color:${_accS}"`:``}>${_montoCell}${_saldoBadge}</div>
           <div><span class="v154p-badge">${esc(s.ESTADO || "-")}</span></div>
           <div class="v154p-actions">
             ${tomada?`<button class="v154p-btn yellow" disabled>Tomada</button>`:`<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
@@ -9362,12 +10343,17 @@ if(window.ctrlElectron){
           ${String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO"?`<button class="mini-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
           <button class="mini-btn blue" onclick="v154pDetalleSolicitud(${id})">Ver</button>
           <button class="mini-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>`;
+      const _ppT = (window._retiroParcialInfo ? window._retiroParcialInfo(s) : {restante:Number(s.MONTO_REAL||s.MONTO_DECLARADO||0),pagado:0,total:Number(s.MONTO_REAL||s.MONTO_DECLARADO||0),hasProg:false});
+      const _esRetT = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
+      const _montoCellT = (_esRetT && _ppT.hasProg)
+        ? `${money(_ppT.restante)}<br><span class="small" style="color:#a78bfa;font-weight:700">pagado ${money(_ppT.pagado)}/${money(_ppT.total)}</span>`
+        : money(s.MONTO_REAL || s.MONTO_DECLARADO || 0);
       return `<tr>
         <td>${fecha(s.FECHA_CREACION)}</td>
         <td>${esc(s.TIPO || "-")}</td>
         <td><b>${esc(s.USUARIO || "-")}</b><br><span class="small">${esc(s.ORIGEN || "PORTAL")}</span></td>
         <td>${esc(s.TITULAR || s.NOMBRE_COMPLETO || "-")}</td>
-        <td>${money(s.MONTO_REAL || s.MONTO_DECLARADO || 0)}</td>
+        <td>${_montoCellT}</td>
         <td>${typeof estadoBadge === "function" ? estadoBadge(s.ESTADO) : esc(s.ESTADO || "-")}</td>
         <td>${acciones}</td>
       </tr>`;
@@ -9457,6 +10443,30 @@ async function cargarSolicitudesPortal(silencioso=false){
       V154P.solicitudes = normArr(r.data).map(mapSolicitudPortal);
       window.solicitudes = V154P.solicitudes.slice();
       try{ solicitudes = V154P.solicitudes.slice(); }catch(_e){}
+      // Cosecha pasiva → base LOCAL de jugadores (portado de NexoBetaChan): cada solicitud del portal
+      // trae usuario + teléfono y (según tipo) titular/CBU. Se registra UNA vez por solicitud (Set de
+      // sesión) → TODO usuario que operó en el portal queda guardado, aunque nadie lo vincule a mano.
+      try{
+        if(window.jugadorRegistrarDato && Array.isArray(V154P.solicitudes)){
+          window.__jugHarvested = window.__jugHarvested || new Set();
+          V154P.solicitudes.forEach(function(s){
+            const sid = String(s.ID||s.SOLICITUD_ID||''); if(!sid || window.__jugHarvested.has(sid)) return;
+            const u = String(s.USUARIO||s.USUARIO_JUGADOR||'').trim(); if(!u) return;
+            window.__jugHarvested.add(sid);
+            let meta = s.METADATA!==undefined?s.METADATA:(s.metadata||{});
+            if(typeof meta==='string'){ try{ meta=JSON.parse(meta); }catch(_e){ meta={}; } }
+            const esRet = String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()==='RETIRO';
+            const dato = {
+              telefono: s.TELEFONO || s.telefono || (meta&&meta.telefono) || '',
+              titular: s.TITULAR || s.NOMBRE_COMPLETO || (meta&&meta.titular) || '',
+              // CBU/alias SOLO de retiros: en una carga ese campo es NUESTRA billetera.
+              cbu: esRet ? String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||(meta&&(meta.cbu||meta.destino))||'').trim() : '',
+              fecha: s.FECHA_CREACION || s.FECHA || undefined
+            };
+            if(dato.telefono || dato.titular || dato.cbu) window.jugadorRegistrarDato(u, dato);
+          });
+        }
+      }catch(_e){}
       if(!window.__asegurandoChatsSoportePortal){
         window.__asegurandoChatsSoportePortal = true;
         setTimeout(async function(){
@@ -9492,7 +10502,7 @@ async function cargarSolicitudesPortal(silencioso=false){
   }
 
   async function actualizarSolicitudPortal(id, estado, extra){
-    const r = await rpc("panel_v15_5_actualizar_solicitud_portal", {
+    const payload = {
       p_id: Number(id),
       p_estado: estado,
       p_operador: window.operador?.usuario || window.operador?.nombre
@@ -9500,14 +10510,25 @@ async function cargarSolicitudesPortal(silencioso=false){
                || "",
       p_monto: null,
       p_metadata: extra || {}
-    });
+    };
 
-    if(r?.error){
-      alert("Error actualizando solicitud: " + (r.error.message || JSON.stringify(r.error)));
-      return r;
+    // Reintento ante fallos de RED ("fetch failed"/timeout/socket) — típico en la mirror con proxy
+    // que pestañea. Setear el estado es IDEMPOTENTE, así que reintentar es seguro (no duplica nada).
+    let r, ultimoErr;
+    for(let intento = 1; intento <= 3; intento++){
+      r = await rpc("panel_v15_5_actualizar_solicitud_portal", payload);
+      if(!r?.error){ await cargarSolicitudesPortal(true); return r; }
+      ultimoErr = r.error;
+      const msg = String(r.error.message || r.error || '').toLowerCase();
+      const esRed = /fetch failed|failed to fetch|network|timeout|econn|socket|load failed|networkerror/.test(msg);
+      if(!esRed) break; // error real de negocio → no reintentar
+      if(intento < 3){
+        try{ toast('Red inestable, reintentando actualización ('+intento+'/3)…','yellow'); }catch(_e){}
+        await new Promise(res => setTimeout(res, 600 * intento));
+      }
     }
 
-    await cargarSolicitudesPortal(true);
+    alert("Error actualizando solicitud: " + (ultimoErr?.message || JSON.stringify(ultimoErr)));
     return r;
   }
 
@@ -9519,11 +10540,25 @@ async function cargarSolicitudesPortal(silencioso=false){
   };
   window.v154pRechazarSolicitud = function(id){
     const s = (V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+    // Motivos rápidos: el usuario los VE en el portal (pantalla Estado), así que tienen que servirle.
+    // El textarea arranca VACÍO (antes venía precargado "Rechazada desde panel" → todos veían ese texto inútil).
+    const _rap = [
+      "No nos llegó tu transferencia. Revisá el comprobante y volvé a intentar.",
+      "El comprobante no coincide con el monto o la cuenta.",
+      "Comprobante repetido / ya usado.",
+      "Los datos del titular no coinciden. Escribinos por el chat."
+    ];
+    const _rapHtml = _rap.map(function(t){
+      return '<button type="button" class="mini-btn" style="margin:2px;font-size:11px" data-t="'+t.replace(/"/g,'&quot;')+'" onclick="var e=document.getElementById(\'v154pRechObs\'); if(e) e.value=this.getAttribute(\'data-t\');">'+escapeHtml(t.split(".")[0])+'</button>';
+    }).join("");
     abrirModal("Rechazar solicitud #"+id,
-      '<label>Motivo (se envía al usuario)</label>'+
-      '<textarea id="v154pRechObs" placeholder="Ej: no nos llegó tu transferencia / comprobante repetido">Rechazada desde panel</textarea>',
+      '<label>Motivo (se envía al usuario y lo ve en el portal)</label>'+
+      '<textarea id="v154pRechObs" placeholder="Explicale al usuario por qué se rechaza (lo va a ver en su portal)"></textarea>'+
+      '<div style="margin-top:6px;font-size:11px;color:#93a3b8">Motivos rápidos (tocá para usar):</div>'+
+      '<div style="display:flex;flex-wrap:wrap;gap:2px;margin-top:3px">'+_rapHtml+'</div>',
       async function(){
-        const motivo = (document.getElementById("v154pRechObs")||{}).value || "Rechazada desde panel";
+        const motivo = ((document.getElementById("v154pRechObs")||{}).value||"").trim()
+          || "No pudimos procesar tu solicitud. Escribinos por el chat y lo resolvemos.";
         cerrarModal();
         try{
           await actualizarSolicitudPortal(id, "RECHAZADA", {etapa:"RECHAZADA_PANEL", motivo});
@@ -9534,6 +10569,68 @@ async function cargarSolicitudesPortal(silencioso=false){
         }catch(e){ alert(e.message||"Error al rechazar"); }
       }, "Rechazar");
   };
+  // ── Sugerencia + selección de billetera de pago (fusión con el parcial del colega 1.0.85) ──
+  // Base = NUESTRO flujo (un monto + progreso portal + push). Le sumamos el asistente del colega:
+  // sugiere con qué billetera(s) pagar (greedy por saldo, redondeado) y deja editar el reparto.
+  // Sin checkbox: la billetera "cuenta" si su monto > 0 (edición directa, sin re-render frágil).
+  function _montoRedondo(v){ v=Math.abs(Number(v)||0); if(v>=100000)return Math.floor(v/100000)*100000; if(v>=10000)return Math.floor(v/10000)*10000; if(v>=1000)return Math.floor(v/1000)*1000; return Math.floor(v/100)*100; }
+  window._montoRedondo = window._montoRedondo || _montoRedondo;
+  window.recomendarRepartoRetiro = function(monto, maxBils){
+    maxBils = maxBils || 3;
+    const objetivo = Math.abs(Number(monto)||0);
+    const conSaldo = (billeteras||[])
+      .filter(function(b){ return Number(b.SALDO||0) >= 200000 && !/promo|referid/i.test(String(b.NOMBRE_VISIBLE||'')); })
+      .map(function(b){ return { id:b.ID_BILLETERA, nombre:b.NOMBRE_VISIBLE||'—', saldo:Number(b.SALDO||0), chunior:b.CHUNIOR_UID }; })
+      .sort(function(a,b){ return b.saldo - a.saldo; });
+    if(!objetivo || !conSaldo.length) return { reparto:[], pagable:0, objetivo:objetivo };
+    const reparto = []; let acum = 0;
+    for(const b of conSaldo){
+      if(acum >= objetivo - 0.5 || reparto.length >= maxBils) break;
+      let usar = _montoRedondo(Math.min(b.saldo, objetivo - acum));
+      if(usar <= 0) continue;
+      reparto.push({ id:b.id, nombre:b.nombre, saldo:b.saldo, usar:usar, chunior:b.chunior });
+      acum += usar;
+    }
+    const pagable = reparto.reduce(function(s,x){ return s+x.usar; }, 0);
+    return { reparto:reparto, pagable:pagable, objetivo:objetivo, cubre:pagable>=objetivo-0.5 };
+  };
+  // Pinta la caja de sugerencia/edición de billeteras según el monto del modal parcial.
+  window.v154pReparto = function(){
+    const box = document.getElementById('v154pRepartoBox'); if(!box) return;
+    const monto = Math.abs(Number((document.getElementById('v154pParcialMonto')||{}).value||0));
+    if(!monto){ box.innerHTML='<div class="small" style="color:#8b949e;margin-top:6px">Ingresá el monto para ver la sugerencia de billeteras.</div>'; return; }
+    const rep = window.recomendarRepartoRetiro(monto);
+    const sug = {}; (rep.reparto||[]).forEach(function(x){ sug[String(x.id)]=x.usar; });
+    const usables = (billeteras||[]).filter(function(b){ return Number(b.SALDO||0)>=200000 && !/promo|referid/i.test(String(b.NOMBRE_VISIBLE||'')); }).sort(function(a,b){ return Number(b.SALDO||0)-Number(a.SALDO||0); });
+    let html = '<div style="margin-top:10px;font-weight:800;color:#c9d1d9;font-size:13px">¿Con qué billetera(s) pagás? <span class="small" style="color:#8b949e;font-weight:400">· sugerido por saldo · editá o dejá en 0</span></div>';
+    if(!usables.length){ box.innerHTML = html + '<div class="small" style="color:#fca5a5;margin-top:5px">⚠ Sin billeteras con saldo (≥$200k, sin promo/referido). Se usará la billetera por defecto.</div>'; return; }
+    html += usables.slice(0,8).map(function(b){
+      const bid=String(b.ID_BILLETERA); const m=Number(sug[bid]||0);
+      return '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">'
+        + '<span style="flex:1;min-width:0;font-size:12px"><b>'+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</b> <span style="color:#8b949e">· '+money(b.SALDO||0)+'</span></span>'
+        + '<input type="number" inputmode="numeric" class="v154pRepInp" data-bil="'+bid+'" value="'+(m||'')+'" oninput="v154pRepartoTotal()" placeholder="0" style="width:120px;text-align:right;font-weight:700">'
+        + '</div>';
+    }).join('');
+    html += '<div id="v154pRepartoTotal" style="margin-top:8px;font-size:12px"></div>';
+    box.innerHTML = html;
+    window.v154pRepartoTotal();
+  };
+  window.v154pRepartoTotal = function(){
+    const monto = Math.abs(Number((document.getElementById('v154pParcialMonto')||{}).value||0));
+    let tot=0; document.querySelectorAll('.v154pRepInp').forEach(function(inp){ tot += Math.abs(Number(inp.value)||0); });
+    const el=document.getElementById('v154pRepartoTotal'); if(!el) return;
+    const dif = monto - tot;
+    el.innerHTML = 'Repartido: <b style="color:'+(Math.abs(dif)<=0.5?'#22c55e':'#f5c518')+'">'+money(tot)+'</b> / '+money(monto)
+      + (Math.abs(dif)<=0.5 ? ' ✓' : (dif>0 ? ' · faltan '+money(dif) : ' · te pasaste '+money(-dif)));
+  };
+  window.v154pLeerRepartoSel = function(){
+    const out=[]; document.querySelectorAll('.v154pRepInp').forEach(function(inp){
+      const m=Math.abs(Number(inp.value)||0);
+      if(m>0){ const bid=inp.getAttribute('data-bil'); const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); if(b) out.push({id:b.ID_BILLETERA, chunior:b.CHUNIOR_UID, nombre:b.NOMBRE_VISIBLE, monto:m}); }
+    });
+    return out;
+  };
+
   // Retiros parciales (punto 3, opción 2 · "se retiran las fichas"): "Parcial" EJECUTA el retiro
   // real por el monto parcial (descuenta las fichas en casinodrex, mismos primitivos blindados que
   // retirarSaldoRapido) y SOLO si salió bien registra el progreso (landing_retiro_registrar_parcial)
@@ -9544,10 +10641,24 @@ async function cargarSolicitudesPortal(silencioso=false){
     if(String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="RETIRO"){ alert("El pago parcial es solo para retiros."); return; }
     const usuario = s.USUARIO || s.USUARIO_JUGADOR || "";
     const total = Number(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO||0);
-    abrirModal("Pago parcial · Retiro #"+id,
-      '<div class="small" style="margin-bottom:8px">Usuario <b>'+esc(usuario)+'</b> · Total del retiro <b>'+money(total)+'</b>.<br>Se van a <b>RETIRAR estas fichas de la plataforma</b> y se le avisa al usuario por notificación.</div>'+
-      '<label>Monto a retirar ahora</label>'+
-      '<input id="v154pParcialMonto" type="number" inputmode="numeric" min="1" placeholder="Ej: 500000">'+
+    // Progreso ya pagado (parciales previos) → el modal arranca en el RESTANTE, no en el total.
+    const _ppM = window._retiroParcialInfo ? window._retiroParcialInfo(s) : {pagado:0,restante:total,total:total,hasProg:false};
+    const restante = _ppM.restante>0 ? _ppM.restante : total;
+    // Titular + CBU del que retira (prioridad de la vista): a dónde hay que transferir.
+    const _titP = s.TITULAR || s.NOMBRE_COMPLETO || '';
+    let _cbuP = String(s.CBU||s.CVU||s.CBU_ALIAS||s.RETIRO_ALIAS_CBU||s.ALIAS_CBU||s.DESTINO||'').trim();
+    try{ let mm=s.METADATA!==undefined?s.METADATA:(s.metadata||{}); if(typeof mm==='string'){try{mm=JSON.parse(mm);}catch(_e){mm={};}} if(!_cbuP) _cbuP=String((mm&&(mm.cbu||mm.destino))||'').trim(); }catch(_e){}
+    const _cbuPHtml = _cbuP ? ('<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(_cbuP)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba(251,146,60,.5);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias del que retira · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(_cbuP)+'</span></span><span class="pcopy-ico" style="font-size:15px">📋</span></button>') : '';
+    abrirModal("💸 Pago parcial · Retiro #"+id,
+      '<div style="background:#0d1320;border:1px solid rgba(251,146,60,.32);border-radius:12px;padding:11px 12px;margin-bottom:12px">'+
+        '<div style="font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">⬇️ Retiro · '+esc(usuario)+'</div>'+
+        (_titP?'<div style="font-size:18px;font-weight:900;color:#fff;line-height:1.15;margin-top:2px">'+esc(_titP)+'</div>':'')+
+        _cbuPHtml+
+        '<div class="small" style="color:#8b949e;margin-top:6px">Total del retiro <b style="color:#e6edf3">'+money(total)+'</b>'+(_ppM.hasProg?(' · ya pagado <b style="color:#a78bfa">'+money(_ppM.pagado)+'</b> · <b style="color:#22c55e">falta '+money(restante)+'</b>'):'')+' · se retiran las fichas de la plataforma y se le avisa al usuario.</div>'+
+      '</div>'+
+      '<label>Monto a retirar ahora'+(_ppM.hasProg?' <span style="color:#8b949e;font-weight:400">(restante pre-cargado — editá si pagás menos)</span>':'')+'</label>'+
+      '<input id="v154pParcialMonto" type="number" inputmode="numeric" min="1" value="'+restante+'" placeholder="Ej: 500000" oninput="v154pReparto()">'+
+      '<div id="v154pRepartoBox"></div>'+
       _arbolResumenHtml(usuario),
       async function(){
         const monto = Math.abs(Number((document.getElementById("v154pParcialMonto")||{}).value||0));
@@ -9578,43 +10689,78 @@ async function cargarSolicitudesPortal(silencioso=false){
           const rp = await rpc("landing_retiro_registrar_parcial", { p_id:Number(id), p_monto_parcial:monto, p_operador:op });
           if(rp?.error){ alert("⚠️ El retiro SÍ se hizo, pero falló registrar el progreso:\n"+(rp.error.message||"")+"\nAvisale/registralo manualmente."); }
           const d = (rp && rp.data && (Array.isArray(rp.data)?rp.data[0]:rp.data)) || {pagado:monto,total:total,completado:false};
+          // NO confiamos en d.completado: lo recalculamos con pagado vs total (la RPC venía marcando
+          // "completo" con saldo pendiente). Solo está COMPLETO si lo acumulado alcanza el total.
+          const _pagadoAcum = Number(d.pagado!=null?d.pagado:monto)||0;
+          const _totalReal  = Number(d.total!=null?d.total:total)||total;
+          const _completadoReal = _totalReal>0 && _pagadoAcum >= _totalReal - 0.5;
 
-          // 3) AVISAR al usuario por PUSH
-          try{ notificarRetiroParcialPush(usuario, monto, Number(d.pagado||monto), Number(d.total||total), !!d.completado); }catch(_e){}
+          // 3) AVISAR al usuario por PUSH (según el completado REAL, no el de la RPC)
+          try{ notificarRetiroParcialPush(usuario, monto, _pagadoAcum, _totalReal, _completadoReal); }catch(_e){}
 
-          // 4) CONTABILIDAD COMPLETA (igual que un retiro normal): saldo pre/post + billetera + Chunior + historial + traza
+          // 4) CONTABILIDAD COMPLETA: saldo pre/post + billetera(s) elegida(s) + Chunior + historial + traza.
+          // Fusión con el asistente del colega: si el operador repartió entre billeteras, se registra
+          // una anotación de Chunior + fila de historial POR billetera; si no tocó nada, cae en la
+          // billetera por defecto (getBilleraLanding), como antes.
           const saldoPreP  = (typeof r?.previousBalance?.value==='number') ? r.previousBalance.value : (b.balance?.value ?? null);
           const saldoPostP = (typeof r?.newBalance?.value==='number')      ? r.newBalance.value      : (saldoPreP!==null ? saldoPreP - monto : null);
-          const bilP = getBilleraLanding();
-          let movChuniorP = null;
-          if(bilP && bilP.CHUNIOR_UID){
-            try{ _trazaPaso('Anotando el retiro en Chunior…'); }catch(_e){}
-            try{
-              const rChu = await registrarRetiroEnChunior(bilP.CHUNIOR_UID, monto, usuario);
-              if(rChu && rChu.ok && rChu.movimientoId){ movChuniorP = rChu.movimientoId; try{_trazaPaso('Chunior N° '+rChu.movimientoId,'ok');}catch(_e){} }
-              else if(rChu && rChu.error){ toast('⚠️ Retiro OK pero falló en Chunior: '+rChu.error,'red'); try{_trazaPaso('Chunior falló: '+rChu.error,'err');}catch(_e){} }
-            }catch(e){ toast('⚠️ Error en Chunior: '+(e.message||''),'red'); try{_trazaPaso('Chunior error: '+(e.message||''),'err');}catch(_e){} }
-          } else { try{ _trazaPaso('Sin billetera con Chunior asignada','warn'); }catch(_e){} }
-          let _filaHistP = null;
+          let bilsPagar = (typeof window.v154pLeerRepartoSel==='function') ? window.v154pLeerRepartoSel() : [];
+          if(!bilsPagar.length){ const _bl=getBilleraLanding(); bilsPagar = _bl ? [{id:_bl.ID_BILLETERA, chunior:_bl.CHUNIOR_UID, nombre:_bl.NOMBRE_VISIBLE, monto:monto}] : [{id:null, chunior:null, nombre:null, monto:monto}]; }
+          // GARANTÍA DE PLATA: lo que se ANOTA (Chunior + historial) DEBE sumar EXACTAMENTE lo que se
+          // retiró físicamente del casino (monto). El reparto entre billeteras es SOLO una sugerencia de
+          // DÓNDE pagar; NUNCA puede definir un total distinto al retirado. Antes, si el reparto sumaba
+          // distinto (ej. retiró 500k pero el reparto quedó 2×200k=400k), Chunior/historial anotaban 400k
+          // → 100k de discrepancia. Si el reparto no cuadra con el monto, lo ignoramos como montos y
+          // anotamos el monto COMPLETO en UNA sola billetera (la de mayor peso del reparto, o la default),
+          // igual que la retirada física fue UNA sola.
           try{
-            _filaHistP = await registrarEnHistorial({
-              usuario, tipo:'RETIRO', monto,
-              billetera_id:     bilP ? bilP.ID_BILLETERA   : null,
-              billetera_nombre: bilP ? bilP.NOMBRE_VISIBLE : null,
-              origen:'PORTAL', estado:'OK',
-              notas:'Retiro parcial #'+id+' · '+money(d.pagado||monto)+'/'+money(d.total||total),
-              solicitud_id:id, chunior_movimiento_id:movChuniorP,
-              saldo_pre:saldoPreP, saldo_post:saldoPostP
-            });
+            const _repSum = bilsPagar.reduce(function(a,x){ return a+Math.abs(Number(x&&x.monto||0)); }, 0);
+            if(Math.abs(_repSum - monto) > 0.5){
+              let _prim = bilsPagar.slice().filter(function(x){ return x && x.id; })
+                          .sort(function(a,b){
+                            const ca=a.chunior?1:0, cb=b.chunior?1:0;   // primero las que tienen Chunior (no saltear la anotación)
+                            if(cb!==ca) return cb-ca;
+                            return Math.abs(Number(b.monto||0))-Math.abs(Number(a.monto||0));
+                          })[0] || null;
+              if(!_prim){ const _g=getBilleraLanding(); _prim = _g ? {id:_g.ID_BILLETERA, chunior:_g.CHUNIOR_UID, nombre:_g.NOMBRE_VISIBLE} : {id:null,chunior:null,nombre:null}; }
+              bilsPagar = [{ id:_prim.id, chunior:_prim.chunior, nombre:_prim.nombre, monto:monto }];
+              try{ toast('⚠ El reparto ('+money(_repSum)+') no coincidía con lo retirado ('+money(monto)+'). Anoté '+money(monto)+' en '+(_prim.nombre||'la billetera')+' para no generar discrepancia. Si pagaste desde varias, corregí con "Cambiar billetera".','yellow'); }catch(_e){}
+            }
           }catch(_e){}
-          try{ _trazaFin(movChuniorP?'ok':'warn', _filaHistP && _filaHistP.id); }catch(_e){}
-          if(movChuniorP){ try{ _watchdogTrigger(1500); }catch(_e){} }
+          let _filaHistP = null, _algunChunior = null;
+          for(let _bi=0; _bi<bilsPagar.length; _bi++){
+            const bp = bilsPagar[_bi];
+            let movChuniorP = null;
+            if(bp.chunior){
+              try{ _trazaPaso('Anotando en Chunior'+(bilsPagar.length>1?(' ('+(bp.nombre||'')+' · '+money(bp.monto)+')'):'')+'…'); }catch(_e){}
+              try{
+                const rChu = await registrarRetiroEnChunior(bp.chunior, bp.monto, usuario);
+                if(rChu && rChu.ok && rChu.movimientoId){ movChuniorP = rChu.movimientoId; _algunChunior = movChuniorP; try{_trazaPaso('Chunior N° '+rChu.movimientoId,'ok');}catch(_e){} }
+                else if(rChu && rChu.error){ toast('⚠️ Retiro OK pero falló en Chunior: '+rChu.error,'red'); try{_trazaPaso('Chunior falló: '+rChu.error,'err');}catch(_e){} }
+              }catch(e){ toast('⚠️ Error en Chunior: '+(e.message||''),'red'); try{_trazaPaso('Chunior error: '+(e.message||''),'err');}catch(_e){} }
+            } else if(_bi===0){ try{ _trazaPaso('Sin billetera con Chunior asignada','warn'); }catch(_e){} }
+            try{
+              const _f = await registrarEnHistorial({
+                usuario, tipo:'RETIRO', monto:bp.monto,
+                billetera_id: bp.id, billetera_nombre: bp.nombre,
+                origen:'PORTAL', estado:'OK',
+                notas:'Retiro parcial #'+id+' · '+money(d.pagado||monto)+'/'+money(d.total||total)+(bilsPagar.length>1?(' · pago '+(_bi+1)+'/'+bilsPagar.length):''),
+                solicitud_id:id, chunior_movimiento_id:movChuniorP,
+                saldo_pre: _bi===0?saldoPreP:null, saldo_post: _bi===bilsPagar.length-1?saldoPostP:null
+              });
+              if(_bi===0) _filaHistP = _f;
+            }catch(_e){}
+          }
+          try{ _trazaFin(_algunChunior?'ok':'warn', _filaHistP && _filaHistP.id); }catch(_e){}
+          if(_algunChunior){ try{ _watchdogTrigger(1500); }catch(_e){} }
 
-          toast(d.completado?("✅ Retiro COMPLETO ("+money(d.pagado||0)+")"):("💸 Parcial OK · van "+money(d.pagado||0)+" de "+money(d.total||total)),"green");
+          toast(_completadoReal?("✅ Retiro COMPLETO ("+money(_pagadoAcum)+")"):("💸 Parcial OK · van "+money(_pagadoAcum)+" de "+money(_totalReal)+" · falta "+money(Math.max(0,_totalReal-_pagadoAcum))),"green");
           try{ await cargarSolicitudesPortal(true); }catch(_e){}
         }catch(e){ alert("Error en el retiro parcial: "+(e.message||e)); }
         finally{ window._v154pParcialBusy = false; }
       }, "Retirar y registrar");
+    // Pintar la sugerencia de billeteras según el monto pre-cargado.
+    setTimeout(function(){ try{ if(window.v154pReparto) window.v154pReparto(); }catch(_e){} }, 30);
   };
   // Aviso de retiro parcial al usuario por PUSH (si tiene push suscripto). Reemplaza el chat, que no siempre llega.
   function notificarRetiroParcialPush(usuario, montoParcial, pagado, total, completado){
@@ -9697,6 +10843,7 @@ async function cargarSolicitudesPortal(silencioso=false){
         </div>
         <div id="portalJobResultado" style="margin-top:9px"></div>
         <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+          <button id="portalJobParcialBtn" class="mini-btn" style="background:#7c3aed;display:none" type="button" onclick="portalJobIrParcial()" title="Pagar el retiro por partes / desde varias billeteras">💸 Parcial</button>
           <button class="mini-btn" style="background:#374151" type="button" onclick="cerrarPortalJobModal()">Cancelar</button>
           <button id="portalJobEnviarBtn" class="mini-btn green" type="button" onclick="confirmarPortalJobModal()">Aprobar</button>
         </div>
@@ -9809,10 +10956,28 @@ async function cargarSolicitudesPortal(silencioso=false){
     const _titular = s.TITULAR || s.NOMBRE_COMPLETO || '—';
     const _destino = s.DESTINO || s.BILLETERA_NOMBRE || '—';
     document.getElementById('portalJobSub').textContent = '#'+id+' · '+(s.USUARIO||'')+' · '+tipo+' · '+fecha(s.FECHA_CREACION || s.FECHA);
-    document.getElementById('portalJobRef').innerHTML =
-      '<div><span style="color:#64748b">Declaró:</span> <b style="color:#fff">'+esc(money(monto))+'</b></div>'+
-      '<div><span style="color:#64748b">Titular:</span> '+esc(_titular)+'</div>'+
-      '<div style="grid-column:1/-1"><span style="color:#64748b">Destino:</span> '+esc(_destino)+'</div>';
+    // Info del retiro más clara (importado del nodo del colega): en RETIRO, titular GRANDE + CBU
+    // del que solicita con botón de copiar; en carga se mantiene compacto.
+    const _esRetiroJob = tipo==='RETIRO';
+    const _cbuJob = _esRetiroJob ? String(s.CBU||s.CVU||s.CBU_ALIAS||s.RETIRO_ALIAS_CBU||s.ALIAS_CBU||(_destino!=='—'?_destino:'')||'').trim() : '';
+    // Badge de tipo (prioriza la vista): verde CARGA ⬆️ · naranja RETIRO ⬇️ + monto declarado.
+    const _tipoBadge = _esRetiroJob
+      ? '<span style="display:inline-block;background:rgba(251,146,60,.15);color:#fb923c;border:1px solid rgba(251,146,60,.4);border-radius:999px;padding:2px 10px;font-size:11px;font-weight:900">⬇️ RETIRO</span>'
+      : '<span style="display:inline-block;background:rgba(34,197,94,.15);color:#22c55e;border:1px solid rgba(34,197,94,.4);border-radius:999px;padding:2px 10px;font-size:11px;font-weight:900">⬆️ CARGA</span>';
+    let _refHtml = '<div style="grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:4px">'+_tipoBadge+'<span style="font-size:16px;font-weight:900;color:#fff">'+esc(money(monto))+'</span></div>';
+    if(_esRetiroJob){
+      _refHtml += '<div style="grid-column:1/-1"><span style="color:#64748b;font-size:11px;text-transform:uppercase;font-weight:800">Titular</span>'
+        + '<div style="font-size:19px;font-weight:900;color:#fff;line-height:1.15">'+esc(_titular)+'</div></div>';
+      if(_cbuJob){
+        _refHtml += '<div style="grid-column:1/-1"><button type="button" onclick="portalCopiarCbu(this)" data-valor="'+esc(_cbuJob)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#0d1117;border:1px solid rgba(251,146,60,.5);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:6px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias del que retira · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(_cbuJob)+'</span></span><span class="pcopy-ico" style="font-size:15px">📋</span></button></div>';
+      }
+    } else {
+      // CARGA prolijo: titular (quien transfiere) prominente + destino declarado (billetera que usó).
+      _refHtml += '<div style="grid-column:1/-1"><span style="color:#64748b;font-size:11px;text-transform:uppercase;font-weight:800">Titular que transfiere</span>'
+        + '<div style="font-size:17px;font-weight:900;color:#fff;line-height:1.15">'+esc(_titular)+'</div></div>'
+        + ((_destino&&_destino!=='—') ? '<div style="grid-column:1/-1;margin-top:3px"><span style="color:#64748b">Destino declarado:</span> <b style="color:#e6edf3">'+esc(_destino)+'</b></div>' : '');
+    }
+    document.getElementById('portalJobRef').innerHTML = _refHtml;
     el.dataset.montoDeclarado = String(Math.abs(monto || 0));
     document.getElementById('portalJobMontoAprobado').value = String(Math.abs(monto || 0));
     document.getElementById('portalJobObs').value = '';
@@ -9824,8 +10989,19 @@ async function cargarSolicitudesPortal(silencioso=false){
     portalPoblarBilleteras(document.getElementById('portalJobBilletera'), s);
     const btn = document.getElementById('portalJobEnviarBtn');
     if(btn){ btn.disabled=false; btn.style.opacity=''; btn.textContent='Aprobar'; }
+    // Botón "Parcial" solo en RETIROS (unifica: desde el mismo modal se puede aprobar completo o parcial).
+    const _pb=document.getElementById('portalJobParcialBtn'); if(_pb) _pb.style.display = _esRetiroJob ? '' : 'none';
     el.style.display = 'block';
     setTimeout(()=>{ const inp = document.getElementById('portalJobMontoAprobado'); if(inp){ inp.focus(); inp.select(); } }, 80);
+  };
+  // Desde el modal de aprobar un RETIRO → ir al pago parcial (mismo id). Unifica el flujo.
+  window.portalJobIrParcial = function(){
+    const modal=document.getElementById('portalJobModal');
+    const id=Number(modal?.dataset?.solicitudId||0);
+    if(!id) return;
+    try{ cerrarPortalJobModal(); }catch(_e){}
+    if(typeof v154pRegistrarParcial==="function") v154pRegistrarParcial(id);
+    else if(window.v154pRegistrarParcial) window.v154pRegistrarParcial(id);
   };
   window.confirmarPortalJobModal = async function(){
     const modal = document.getElementById('portalJobModal');
@@ -10161,6 +11337,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
               if(okBono){
                 if(filaBono && filaBono.id){ try{ await supabaseClient.from('historial_ops').update({saldo_pre:_bonoPre, saldo_post:_bonoPost}).eq('id', filaBono.id); }catch(_e){} }
                 try{ await ajustarSaldoBilletera(bilPromo.ID_BILLETERA, bonoMonto); }catch(_e){}
+                try{ if(window.jugadorRegistrarDato) window.jugadorRegistrarDato(usuario, { bono:{estado:'APLICADO', pct:ctx.bonoPct, monto:bonoMonto} }); }catch(_e){}
                 toast('🎁 Bono '+ctx.bonoPct+'% acreditado: '+money(bonoMonto), 'green');
                 if(bilPromo.CHUNIOR_UID){
                   registrarCargaEnChunior(bilPromo.CHUNIOR_UID, bonoMonto, usuario).then(async function(rChu){
@@ -10185,7 +11362,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
         setTimeout(()=>{ cerrarPortalJobModal(); }, 450);
       }else{
         await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_ERROR_AGENTES', monto_aprobado:montoAbs, historial_id:filaHist?.id||null, error:resultado?.message||'error'});
-        try{ if(typeof colaPendientesAdd==='function') colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
+        try{ if(typeof colaPendientesAdd==='function') colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', titular:ctx.titular||'', destino:ctx.destino||'', cbu:ctx.cbu||'', obs:ctx.obs||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
         if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Error en Agentes: '+esc(resultado?.message||'sin detalle')+'</div>';
         _trazaPaso('Agentes: no se pudo aplicar · '+(resultado?.message||'error'),'err'); _trazaFin('err', filaHist&&filaHist.id);
         toast('Portal con error · revisar', 'red');
@@ -10199,7 +11376,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
     }catch(e){
       const _fh = await registrarEnHistorial({usuario, tipo, monto:montoAbs, billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null, origen:'LANDING', estado:'ERROR', notas:'Solicitud portal #'+id+' · '+(e.message||'excepción'), solicitud_id:id});
       await actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_EXCEPCION', error:e.message||String(e), monto_aprobado:montoAbs});
-      try{ if(typeof colaPendientesAdd==='function' && tipo==='CARGA') colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:e.message||'excepción', solicitudId:id, posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(e.message||'')) }); }catch(_e){}
+      try{ if(typeof colaPendientesAdd==='function' && tipo==='CARGA') colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:e.message||'excepción', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', titular:ctx.titular||'', destino:ctx.destino||'', cbu:ctx.cbu||'', obs:ctx.obs||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(e.message||'')) }); }catch(_e){}
       if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Error: '+esc(e.message||String(e))+'</div>';
       _trazaPaso('Error inesperado: '+(e.message||String(e)),'err'); _trazaFin('err', _fh&&_fh.id);
       await cargarHistorial();
@@ -10211,6 +11388,18 @@ async function ejecutarSolicitudPortalSimple(ctx){
   }
 
   window.v154pCrearJobSolicitud = async function(id){
+    // Si el retiro YA tiene un parcial en curso (pagado>0 y < total), "Aprobar" NO debe hacer un
+    // retiro COMPLETO: eso marcaría PAGADA ignorando lo ya pagado (y sin tocar metadata.retiro_parcial),
+    // cerrando el retiro con saldo real pendiente. En ese caso, redirigimos al flujo Parcial por lo que
+    // falta → el cierre lo decide SOLO la RPC del parcial cuando pagado>=total.
+    try{
+      const s = (V154P.solicitudes||[]).find(x=>Number(x.ID||x.SOLICITUD_ID)===Number(id));
+      if(s && window._retiroParcialSigueAbierto && window._retiroParcialSigueAbierto(s)){
+        const pp = window._retiroParcialInfo(s);
+        try{ toast('Este retiro tiene un parcial en curso · pagado '+money(pp.pagado)+' de '+money(pp.total)+'. Abro "Parcial" por lo que falta ('+money(pp.restante)+').','yellow'); }catch(_e){}
+        if(typeof window.v154pRegistrarParcial==='function'){ window.v154pRegistrarParcial(id); return; }
+      }
+    }catch(_e){}
     return window.abrirModalPortalSolicitud(id);
   };
 
@@ -10727,6 +11916,8 @@ async function ejecutarSolicitudPortalSimple(ctx){
     let res;
     try{ res = await _oldSync(silencioso); }catch(e){ console.warn('sync original error no bloqueante', e); }
     await cargarBilleteras(false);
+    // Comparar esperado (por operaciones) vs real de Chunior → aviso leve de diferencias + re-basar.
+    try{ if(window._chequearDiferenciasBilletera) window._chequearDiferenciasBilletera(); }catch(e){ console.warn('chequeo dif billetera', e); }
     try{ renderInicio(); }catch(e){ console.warn('renderInicio after force wallet',e); }
     if(!silencioso){
       if(billeteras && billeteras.length) toast('Billeteras cargadas: '+billeteras.length, 'green');
@@ -12149,12 +13340,14 @@ async function ejecutarSolicitudPortalSimple(ctx){
   function getSavedMsgs(ticket){try{return JSON.parse(localStorage.getItem(storageKey(ticket))||"[]")}catch(_e){return[]}}
   function setSavedMsgs(ticket,msgs){try{localStorage.setItem(storageKey(ticket),JSON.stringify(msgs||[]))}catch(_e){}}
 
-  function soporteRows(){
+  function soporteRows(incluirCerrados){
     const arr=(window.V154P&&Array.isArray(V154P.solicitudes))?V154P.solicitudes:(Array.isArray(window.solicitudes)?window.solicitudes:[]);
     return arr.filter(s=>{
       if(tipoSol(s)!=="SOPORTE")return false;
       const e=estadoSol(s);
-      return !["CERRADO","CANCELADO","RECHAZADA","RESUELTA"].includes(e);
+      if(["CANCELADO","RECHAZADA"].includes(e))return false;              // esos nunca
+      if(!incluirCerrados && ["CERRADO","RESUELTA"].includes(e))return false; // cerrados solo si se piden
+      return true;
     });
   }
 
@@ -12187,12 +13380,39 @@ async function ejecutarSolicitudPortalSimple(ctx){
     return out;
   }
 
-  function ticketsAgrupadosFinal(){
+  // ── Store LOCAL de chats CERRADOS ──────────────────────────────────────────
+  // La RPC de solicitudes solo trae una ventana reciente → un chat cerrado viejo se cae de
+  // V154P.solicitudes y desaparecía de la pestaña "Cerrados". Acá los persistimos (con su hilo)
+  // en localStorage para que "Cerrados" muestre TODOS, sobrevivan reinicios y a la ventana del server.
+  const CHATS_CERRADOS_KEY='nodo_chats_cerrados_v1';
+  function _chatsCerradosAll(){ try{ return JSON.parse(localStorage.getItem(CHATS_CERRADOS_KEY)||'{}')||{}; }catch(_e){ return {}; } }
+  function _chatsCerradosSave(map){
+    try{
+      const keys=Object.keys(map);
+      if(keys.length>600){ keys.map(k=>({k,f:toDate(map[k].fecha||0)})).sort((a,b)=>a.f-b.f).slice(0,keys.length-600).forEach(x=>delete map[x.k]); }
+      localStorage.setItem(CHATS_CERRADOS_KEY, JSON.stringify(map));
+    }catch(_e){}
+  }
+  function _chatsCerradosGuardar(list){
+    try{
+      const map=_chatsCerradosAll(); let cambio=false;
+      (list||[]).forEach(g=>{
+        if(!g || !g.cerrado) return;
+        const key=U(g.usuario||''); if(!key) return;
+        map[key]={ id:g.id, usuario:g.usuario, telefono:g.telefono||'', thread:(g.thread||[]).slice(-200),
+          masterId:g.masterId||null, solicitudId:g.solicitudId||'', fecha:g.fecha||'', mensaje:g.mensaje||'',
+          items:(g.items||[]).map(s=>({ID:idSol(s)})).filter(x=>x.ID), _cachedAt:new Date().toISOString() };
+        cambio=true;
+      });
+      if(cambio) _chatsCerradosSave(map);
+    }catch(_e){}
+  }
+  function ticketsAgrupadosFinal(incluirCerrados){
     const map=new Map();
     // El alta de usuario NUEVO (portal → "Sos nuevo") manda el teléfono DENTRO de metadata
     // (landing_portal_v16_crear_solicitud no tiene columna TELEFONO propia para SOPORTE) —
     // fallback a metadata.telefono, si no el modal de vincular queda con el tel vacío.
-    soporteRows().forEach(s=>{
+    soporteRows(incluirCerrados).forEach(s=>{
       const usuario=usuarioSol(s);
       const key=U(usuario);
       const m0=metaObj(s);
@@ -12224,6 +13444,9 @@ async function ejecutarSolicitudPortalSimple(ctx){
     const list=Array.from(map.values()).map(g=>{
       const acc=accInfo(g.usuario);
       if(acc?.accepted){g.accepted=true;if(acc.masterId)g.masterId=acc.masterId}
+      // Cerrado = TODAS sus solicitudes están en CERRADO/RESUELTA (el hilo sigue guardado en metadata).
+      g.cerrado = g.items.length>0 && g.items.every(s=>["CERRADO","RESUELTA"].includes(estadoSol(s)));
+      if(g.cerrado) g.accepted=false; // un cerrado no cuenta como "abierto"
       if(!g.masterId){
         // Cabecera: solicitud más reciente del usuario.
         const sorted=g.items.slice().sort((a,b)=>idSol(b)-idSol(a));
@@ -12252,6 +13475,27 @@ async function ejecutarSolicitudPortalSimple(ctx){
       if(g.last){g.fecha=g.last.fecha;g.mensaje=g.last.mensaje}
       return g;
     }).sort((a,b)=>toDate(b.fecha)-toDate(a.fecha));
+
+    if(incluirCerrados){
+      // 1) Persistir los cerrados que SÍ vinieron del server (con su hilo actualizado).
+      try{ _chatsCerradosGuardar(list); }catch(_e){}
+      // 2) Sumar los cerrados CACHEADOS que ya NO están en la ventana del server (el vivo gana).
+      try{
+        const presentes=new Set(list.map(g=>U(g.usuario||'')));
+        const store=_chatsCerradosAll();
+        Object.keys(store).forEach(k=>{
+          if(presentes.has(k)) return;
+          const c=store[k]||{};
+          const items=(c.items||[]).map(it=>({ID:it.ID,SOLICITUD_ID:it.ID,ESTADO:"CERRADO",TIPO:"SOPORTE",metadata:{}}));
+          const thread=Array.isArray(c.thread)?c.thread:[];
+          list.push({ id:c.id||("TICKET_"+k.replace(/[^A-Z0-9]/g,"_")), usuario:c.usuario||k, telefono:c.telefono||"",
+            items:items, fecha:c.fecha||"", mensaje:c.mensaje||"", solicitudId:c.solicitudId||"",
+            masterId:c.masterId||null, accepted:false, thread:thread, cerrado:true,
+            unread:0, last:(thread.length?thread[thread.length-1]:null), _localCerrado:true });
+        });
+        list.sort((a,b)=>toDate(b.fecha)-toDate(a.fecha));
+      }catch(_e){}
+    }
 
     return list;
   }
@@ -12292,14 +13536,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
     const box=document.getElementById("chatList")||document.getElementById("v15ChatList");
     if(!box)return;
 
-    const all=ticketsAgrupadosFinal();
-    const espera=all.filter(t=>!t.accepted);
-    const abiertos=all.filter(t=>t.accepted);
+    const all=ticketsAgrupadosFinal(true);
+    const espera=all.filter(t=>!t.accepted&&!t.cerrado);
+    const abiertos=all.filter(t=>t.accepted&&!t.cerrado);
+    const cerrados=all.filter(t=>t.cerrado);
     let tab=tabActual();
     if(tab==="espera"&&!espera.length&&abiertos.length)tab=window.__wq2ActiveTab="abiertos";
 
     const q=(document.getElementById("wq2Search")?.value||"").toLowerCase().trim();
-    let pool=tab==="abiertos"?abiertos:espera;
+    let pool=tab==="cerrados"?cerrados:tab==="abiertos"?abiertos:espera;
     if(q)pool=pool.filter(t=>(t.usuario+" "+t.telefono+" "+t.mensaje).toLowerCase().includes(q));
 
     try{
@@ -12307,6 +13552,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       if(bc){ if(espera.length){bc.classList.remove("hidden");bc.textContent=String(espera.length)}else bc.classList.add("hidden");}
       const stat=document.getElementById("statChats");
       if(stat)stat.textContent=String(espera.length);
+      try{ window.__wq2EnEspera=espera.length; }catch(_e){} // fuente ACTUAL de "sin leer" (el banner de Inicio la usa)
     }catch(_e){}
 
     const tabBtn=(id,label,count,active)=>`<button class="wq2-tab${active?" active":""}" onclick="wq2SetTab('${id}')">${label}${count?` <span class="wq2-count">${count}</span>`:""}</button>`;
@@ -12315,10 +13561,11 @@ async function ejecutarSolicitudPortalSimple(ctx){
       <div class="wq2-tabs">
         ${tabBtn("espera","En espera",espera.length,tab==="espera")}
         ${tabBtn("abiertos","Abiertos",abiertos.length,tab==="abiertos")}
+        ${tabBtn("cerrados","Cerrados",cerrados.length,tab==="cerrados")}
       </div>`;
 
     if(!pool.length){
-      html+=`<div class="wq2-empty">${tab==="abiertos"?"No hay chats abiertos.":tab==="interno"?"Sin mensajes internos.":"No hay consultas en espera."}</div>`;
+      html+=`<div class="wq2-empty">${tab==="cerrados"?"No hay chats cerrados recientes.":tab==="abiertos"?"No hay chats abiertos.":tab==="interno"?"Sin mensajes internos.":"No hay consultas en espera."}</div>`;
     }else{
       pool.forEach(t=>{
         const active=U(window.__nodoChatCurrentUser||"")===U(t.usuario);
@@ -12328,11 +13575,13 @@ async function ejecutarSolicitudPortalSimple(ctx){
           <div style="min-width:0">
             <div class="wq2-name">${E(t.usuario)}</div>
             <div class="wq2-msg">${E(t.mensaje||"")}</div>
-            <div class="wq2-state ${accepted?"open-final":""}">${accepted?"ABIERTO":"EN ESPERA"} · ${t.thread.length} msj · Sol. ${E(t.masterId||t.solicitudId||"")}</div>
+            <div class="wq2-state ${accepted?"open-final":""}">${t.cerrado?"CERRADO":accepted?"ABIERTO":"EN ESPERA"} · ${t.thread.length} msj · Sol. ${E(t.masterId||t.solicitudId||"")}</div>
           </div>
           <div>
             <div class="wq2-meta">${hora(t.fecha)}</div>
-            <button class="wq2-accept" style="${accepted?"background:#16a34a":""}" onclick="aceptarTicketLocalStep2('${E(t.id)}')">${accepted?"Abrir":"Aceptar"}</button>
+            ${t.cerrado
+              ? `<button class="wq2-accept" style="background:#7c3aed" onclick="reabrirConsultaWq2('${E(t.id)}')" title="Reabrir esta consulta para seguir escribiéndole al cliente">↩ Reabrir</button>`
+              : `<button class="wq2-accept" style="${accepted?"background:#16a34a":""}" onclick="aceptarTicketLocalStep2('${E(t.id)}')">${accepted?"Abrir":"Aceptar"}</button>`}
           </div>
         </div>`;
       });
@@ -12421,7 +13670,9 @@ async function ejecutarSolicitudPortalSimple(ctx){
       const op=U(m.origen)==="OPERADOR";
       const imgSrc=m.imagen_url||m.imagen||"";
       const imgHtml=(imgSrc&&!_chatImgFailed.has(imgSrc))?`<img src="${E(imgSrc)}" style="max-width:220px;border-radius:8px;margin-top:6px;display:block;cursor:pointer" title="Ver imagen" onclick="window.open(this.src,'_blank')" onerror="window._chatImgError('${E(imgSrc)}')">` : "";
-      html+=`<div class="wq2-row ${op?"op":"user"}"><div class="wq2-bubble">${E(m.mensaje||"").replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time">${hora(m.fecha)}</div></div></div>`;
+      const editBtn=(op && !imgSrc && m.fecha)?`<button class="wq2-edit" onclick="editarMensajeOperador('${E(m.fecha)}')" title="Editar este mensaje (también se actualiza para el cliente)">✏️</button>`:"";
+      const editedTag=m.editado?`<span class="wq2-edited" title="Mensaje editado">· editado</span>`:"";
+      html+=`<div class="wq2-row ${op?"op":"user"}"><div class="wq2-bubble">${E(m.mensaje||"").replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time">${hora(m.fecha)}${editedTag}${editBtn}</div></div></div>`;
     });
     html+=`</div>`;
     if(body.innerHTML!==html){
@@ -12432,6 +13683,39 @@ async function ejecutarSolicitudPortalSimple(ctx){
   window.renderChatMensajes=renderChatConversationStep5;
   window.v15RenderChatMensajes=renderChatConversationStep5;
   window.cargarChatActual=async function(){renderChatConversationStep5();return{ok:true}};
+
+  // Editar un mensaje ya enviado por el operador (por si se equivocó). Actualiza la copia local +
+  // el chat_thread del servidor → el cliente ve el texto corregido en el portal. Modal (no prompt,
+  // que en Electron no anda). Marca el mensaje como "editado".
+  window.editarMensajeOperador=function(fechaIso){
+    const ticket=window.__nodoChatCurrentTicket; if(!ticket) return;
+    const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(ticket.usuario))||ticket;
+    const merged=uniqThread((fresh.thread||[]).concat(getSavedMsgs(fresh)));
+    const m=merged.find(x=>String(x.fecha)===String(fechaIso)&&U(x.origen||x.tipo)==="OPERADOR");
+    if(!m){ try{toast('No encontré el mensaje.','red');}catch(_e){} return; }
+    if(typeof abrirModal!=="function"){ return; }
+    abrirModal('✏️ Editar mensaje',
+      '<div class="small" style="margin-bottom:6px;color:#8b949e">El mensaje se actualiza también para el cliente en el portal.</div>'+
+      '<textarea id="editMsgTxt" rows="3" style="width:100%">'+E(m.mensaje||'')+'</textarea>',
+      async function(){
+        const texto=String((document.getElementById('editMsgTxt')||{}).value||'').trim();
+        try{ cerrarModal(); }catch(_e){}
+        if(!texto || texto===String(m.mensaje||'')) return;
+        // 1) copia local
+        try{ const saved=getSavedMsgs(fresh); let ch=false; saved.forEach(x=>{ if(String(x.fecha)===String(fechaIso)&&U(x.tipo||x.origen)==="OPERADOR"){ x.mensaje=texto; x.editado=true; ch=true; } }); if(ch) setSavedMsgs(fresh,saved); }catch(_e){}
+        // 2) chat_thread del servidor (lo que lee el portal)
+        try{
+          const masterId=Number(fresh.masterId||fresh.solicitudId||0);
+          const edited=(fresh.thread||[]).map(x=> (String(x.fecha)===String(fechaIso)&&U(x.origen)==="OPERADOR") ? Object.assign({},x,{mensaje:texto,editado:true}) : x);
+          fresh.thread=edited;
+          if(masterId && typeof actualizarSolicitudPortal==="function"){
+            await actualizarSolicitudPortal(masterId,"EN_REVISION",{chat_estado:"RESPONDIDO_PANEL",chat_master_id:masterId,chat_thread:edited});
+          }
+        }catch(e){ try{toast('No se pudo guardar la edición: '+(e.message||e),'red');}catch(_e){} }
+        try{ renderChatConversationStep5(); }catch(_e){}
+        try{ toast('✏️ Mensaje editado','green'); }catch(_e){}
+      }, 'Guardar');
+  };
 
   async function persistirChatStep5(ticket,estadoChat,extraMsg=null){
     if(typeof actualizarSolicitudPortal!=="function")throw new Error("actualizarSolicitudPortal no disponible");
@@ -12572,6 +13856,28 @@ async function ejecutarSolicitudPortalSimple(ctx){
       window.__wq2ActiveTab="espera";
       renderChatListStep2Final();renderChatConversationStep5();
     }catch(e){alert("Error al cerrar: "+(e.message||e))}
+  };
+
+  // Reabrir una consulta CERRADA: el hilo (chat_thread) nunca se borró, solo se había filtrado.
+  // Vuelve el estado a EN_REVISION + chat_estado abierto, re-acepta al usuario y abre la conversación
+  // → el operador puede seguir escribiéndole al cliente sin perder el historial.
+  window.reabrirConsultaWq2=async function(ticketId){
+    let t=(ticketsAgrupadosFinal(true)||[]).find(x=>String(x.id)===String(ticketId));
+    if(!t) t=(ticketsAgrupadosFinal(true)||[]).find(x=>U(x.usuario)===U(ticketId));
+    if(!t){ try{toast('No encontré esa consulta.','red');}catch(_e){} return; }
+    try{
+      for(const s of (t.items||[])){
+        const sid=idSol(s);
+        if(sid)await actualizarSolicitudPortal(sid,"EN_REVISION",{chat_estado:"RESPONDIDO_PANEL",chat_master_id:t.masterId||t.solicitudId||sid});
+      }
+      setAccepted(t.usuario, t.masterId);       // vuelve a "Abiertos"
+      window.__wq2ActiveTab="abiertos";
+      if(typeof cargarSolicitudesPortal==="function")await cargarSolicitudesPortal(true);
+      renderChatListStep2Final();
+      const _abrir = window.aceptarTicketLocalStep2 || (typeof aceptarTicketLocalStep2==="function"?aceptarTicketLocalStep2:null);
+      if(_abrir){ try{ _abrir(t.id); }catch(_e){} }
+      try{toast('↩ Consulta reabierta: '+E(t.usuario)+' · seguí escribiéndole','green');}catch(_e){}
+    }catch(e){ try{toast('No se pudo reabrir: '+(e.message||e),'red');}catch(_e){} }
   };
 
   // ── Auto-cierre de consultas sin respuesta ──────────────────────────────
@@ -13831,6 +15137,19 @@ async function ejecutarSolicitudPortalSimple(ctx){
       if(a.ultima_op&&(!j.ultimaOperacion||toDate(a.ultima_op)>toDate(j.ultimaOperacion)))j.ultimaOperacion=a.ultima_op;
       if(c+r>0)j.origenes["AGENTE"]=(j.origenes["AGENTE"]||0)+c+r;
     });
+    // Merge de VÍNCULOS de whaticket (usuario+teléfono): asegura que TODO usuario registrado aparezca
+    // en el CRM, aunque no tenga NINGUNA operación. Aporta teléfono/estado del vínculo; ops quedan en 0
+    // (caen como NUEVO). Para los que ya tienen ops, solo completa el teléfono/estado si faltaba.
+    (window._crmVinculos||[]).forEach(function(v){
+      const usuario=S(v.usuario).trim(), key=U(usuario); if(!key)return;
+      const _nuevo=!map.has(key);
+      if(_nuevo)map.set(key,{usuario,totalOps:0,cargas:0,retiros:0,consultas:0,montoCargas:0,montoRetiros:0,neto:0,ultimaOperacion:null,ultimaCarga:null,ultimaRetiro:null,turnos:{TM:0,TT:0,TN:0},billeteras:{},origenes:{},operadores:{},saldoPost:null,errores:0});
+      const j=map.get(key);
+      if(!j.telefono && (v.telefono_canon||v.telefono)) j.telefono=S(v.telefono_canon||v.telefono).trim();
+      if(v.estado_vinculo) j.estadoVinculo=U(v.estado_vinculo);
+      if(v.titular && !j.titular) j.titular=S(v.titular).trim();
+      if(_nuevo) j.origenes["WHATICKET"]=(j.origenes["WHATICKET"]||0)+1; // marca de origen solo si es puro vínculo
+    });
     const arr=Array.from(map.values()).map(j=>{
       j.neto=j.montoCargas-j.montoRetiros;j.diasUltCarga=diasDesde(j.ultimaCarga||j.ultimaOperacion);
       j.turnoFrecuente=Object.entries(j.turnos).sort((a,b)=>b[1]-a[1])[0]?.[0]||"-";
@@ -13850,9 +15169,43 @@ async function ejecutarSolicitudPortalSimple(ctx){
     .crm-toolbar{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin-bottom:12px}.crm-toolbar input,.crm-toolbar select{margin:0!important;padding:8px 10px!important;font-size:12px!important}.crm-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px}.crm-stat{background:#1b202c;border:1px solid #2e3444;border-radius:14px;padding:12px}.crm-stat .k{font-size:11px;color:#98a2b3;font-weight:800;text-transform:uppercase}.crm-stat .v{font-size:22px;font-weight:950;margin-top:4px}.crm-table-wrap{max-height:560px;overflow:auto;border:1px solid #2d3342;border-radius:14px}.crm-seg{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:950}.crm-vip{background:#3b2a09;color:#ffd98f}.crm-activo{background:#11371f;color:#b9f7cb}.crm-tibio{background:#3b300b;color:#fde68a}.crm-frio{background:#3a1515;color:#ffd0d0}.crm-nuevo{background:#16235f;color:#cbd5ff}.crm-score{font-weight:950;color:#7dd3fc}.crm-actions{display:flex;gap:6px;flex-wrap:wrap}@media(max-width:1100px){.crm-toolbar{grid-template-columns:repeat(2,minmax(120px,1fr))}}`;document.head.appendChild(st)}
   function promoTexto(j){if(!j)return"";if(j.segmento==="VIP")return`Hola ${j.usuario} 👋 Tenemos una promo especial para vos por ser jugador frecuente. Consultame y te la activo.`;if(j.segmento==="ACTIVO")return`Hola ${j.usuario} 👋 ¿Seguimos jugando? Tenemos promos activas para hoy.`;if(j.segmento==="TIBIO")return`Hola ${j.usuario} 👋 Hace unos días no te vemos cargar. Hoy podemos darte un extra para volver.`;if(j.segmento==="FRIO")return`Hola ${j.usuario} 👋 Volvé hoy y consultame por un bono de reactivación.`;return`Hola ${j.usuario} 👋 Bienvenido/a. Si querés cargar, te ayudo por acá.`}
   window.crmCopiarPromo=function(usuario){const j=(window._crmJugadoresData||[]).find(x=>U(x.usuario)===U(usuario));const txt=promoTexto(j);navigator.clipboard?.writeText(txt).then(()=>{try{toast("Promo copiada","green")}catch(_e){alert("Promo copiada")}}).catch(()=>alert(txt))};
-  window.crmFiltrar=function(){const data=window._crmJugadoresData||buildCRM();const q=N(document.getElementById("crmBuscar")?.value||""),seg=U(document.getElementById("crmSeg")?.value||""),turn=U(document.getElementById("crmTurno")?.value||""),or=U(document.getElementById("crmOrigen")?.value||""),orden=document.getElementById("crmOrden")?.value||"score";let arr=data.slice();if(q)arr=arr.filter(j=>N([j.usuario,j.billeteraHabitual,j.operadorHabitual,j.accion,j.segmento].join(" ")).includes(q));if(seg)arr=arr.filter(j=>U(j.segmento)===seg);if(turn)arr=arr.filter(j=>U(j.turnoFrecuente)===turn);if(or)arr=arr.filter(j=>U(j.origenHabitual)===or);if(orden==="ultima")arr.sort((a,b)=>(toDate(b.ultimaOperacion)||0)-(toDate(a.ultimaOperacion)||0));if(orden==="cargas")arr.sort((a,b)=>b.montoCargas-a.montoCargas);if(orden==="neto")arr.sort((a,b)=>b.neto-a.neto);if(orden==="score")arr.sort((a,b)=>b.score-a.score);renderCRMTabla(arr)};
-  function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=`<div class="alert-box">No hay jugadores para esos filtros.</div>`;return}let html=`<div class="crm-table-wrap"><table><thead><tr><th>Jugador</th><th>Segmento</th><th>Score</th><th>Cargas</th><th>Retiros</th><th>Neto</th><th>Última</th><th>Turno</th><th>Billetera</th><th>Acción</th><th>Acciones</th></tr></thead><tbody>`;arr.forEach(j=>{const uEsc=String(j.usuario).replace(/'/g,"\\'");html+=`<tr><td><b>${j.usuario}</b> <span title="Push: ${j.push?'sí':'no'}" style="opacity:${j.push?1:.28}">🔔</span><span title="App instalada: ${j.app?'sí':'no'}" style="opacity:${j.app?1:.28}">📱</span><div class="small">${j.totalOps} ops · ${j.origenHabitual}</div></td><td><span class="crm-seg ${clsSeg(j.segmento)}">${j.segmento}</span></td><td><span class="crm-score">${j.score}</span></td><td>${j.cargas}<div class="small">${fmtMoney(j.montoCargas)}</div></td><td>${j.retiros}<div class="small">${fmtMoney(j.montoRetiros)}</div></td><td><b style="color:${j.neto>=0?"#12b76a":"#f04438"}">${fmtMoney(j.neto)}</b></td><td>${j.diasUltCarga>=9999?"—":j.diasUltCarga+" días"}<div class="small">${j.ultimaCarga?new Date(j.ultimaCarga).toLocaleDateString("es-AR"):"sin carga"}</div></td><td>${j.turnoFrecuente}</td><td>${j.billeteraHabitual}</td><td>${j.accion}</td><td><div class="crm-actions"><button class="mini-btn blue" onclick="crmCopiarPromo('${uEsc}')">📋 Promo</button><button class="mini-btn green" id="pushBtn_${j.usuario}" onclick="crmPushIndividual('${uEsc}')">📲 Push</button></div></td></tr>`});html+=`</tbody></table></div>`;box.innerHTML=html;const total=document.getElementById("crmTotalVisible");if(total)total.textContent=String(arr.length)}
-  function renderCRM(){installCss();const view=document.getElementById("viewJugadores");if(!view)return;const data=buildCRM();const stats={total:data.length,vip:data.filter(j=>j.segmento==="VIP").length,activos:data.filter(j=>j.segmento==="ACTIVO").length,tibios:data.filter(j=>j.segmento==="TIBIO").length,frios:data.filter(j=>j.segmento==="FRIO").length,nuevos:data.filter(j=>j.segmento==="NUEVO").length};view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="crm-stat-grid"><div class="crm-stat"><div class="k">Total</div><div class="v">${stats.total}</div></div><div class="crm-stat"><div class="k">VIP</div><div class="v" style="color:#fdb022">${stats.vip}</div></div><div class="crm-stat"><div class="k">Activos</div><div class="v" style="color:#12b76a">${stats.activos}</div></div><div class="crm-stat"><div class="k">Tibios</div><div class="v" style="color:#fde68a">${stats.tibios}</div></div><div class="crm-stat"><div class="k">Fríos</div><div class="v" style="color:#f04438">${stats.frios}</div></div><div class="crm-stat"><div class="k">Nuevos</div><div class="v">${stats.nuevos}</div></div></div><div class="card"><h2 class="card-title">🔎 Filtros CRM</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Usuario, billetera, operador..." oninput="crmFiltrar()"><select id="crmSeg" onchange="crmFiltrar()"><option value="">Todos los segmentos</option><option value="VIP">VIP</option><option value="ACTIVO">Activo</option><option value="TIBIO">Tibio</option><option value="FRIO">Frío</option><option value="NUEVO">Nuevo</option></select><select id="crmTurno" onchange="crmFiltrar()"><option value="">Todos los turnos</option><option value="TM">TM 06-14</option><option value="TT">TT 14-22</option><option value="TN">TN 22-06</option></select><select id="crmOrigen" onchange="crmFiltrar()"><option value="">Todos los orígenes</option><option value="PORTAL">Portal</option><option value="PANEL">Panel</option><option value="MANUAL">Manual</option></select><select id="crmOrden" onchange="crmFiltrar()"><option value="score">Orden: score</option><option value="ultima">Orden: última operación</option><option value="cargas">Orden: cargas $</option><option value="neto">Orden: neto</option></select><div class="small" style="display:flex;align-items:center">Mostrando: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div>
+  window.crmFiltrar=function(){
+    const data=window._crmJugadoresData||buildCRM();
+    const qraw=document.getElementById("crmBuscar")?.value||"";
+    const q=N(qraw),seg=U(document.getElementById("crmSeg")?.value||""),turn=U(document.getElementById("crmTurno")?.value||""),or=U(document.getElementById("crmOrigen")?.value||""),orden=document.getElementById("crmOrden")?.value||"score";
+    let arr=data.slice();
+    if(q)arr=arr.filter(j=>N([j.usuario,j.telefono,j.titular,j.billeteraHabitual,j.operadorHabitual,j.accion,j.segmento].join(" ")).includes(q));
+    if(seg)arr=arr.filter(j=>U(j.segmento)===seg);
+    if(turn)arr=arr.filter(j=>U(j.turnoFrecuente)===turn);
+    if(or)arr=arr.filter(j=>U(j.origenHabitual)===or);
+    if(orden==="ultima")arr.sort((a,b)=>(toDate(b.ultimaOperacion)||0)-(toDate(a.ultimaOperacion)||0));
+    if(orden==="cargas")arr.sort((a,b)=>b.montoCargas-a.montoCargas);
+    if(orden==="neto")arr.sort((a,b)=>b.neto-a.neto);
+    if(orden==="score")arr.sort((a,b)=>b.score-a.score);
+    renderCRMTabla(arr);
+    // Buscador ON-DEMAND sobre la base WTK COMPLETA (53k+): trae los que NO están en la lista local.
+    // Debounced (400ms) y acotado por el RPC; no carga los 53k, sólo lo que matchea.
+    clearTimeout(window._crmWtkTimer);
+    if(qraw.trim().length>=3 && !seg && !turn){
+      window._crmWtkTimer=setTimeout(async function(){
+        try{
+          // Buscamos en TODAS las oficinas (p_pc_codigos:null) → base WTK completa. El resultado trae pc_codigo.
+          const r=await supabaseClient.rpc("panel_crm_vinculos_buscar",{p_pc_codigos:null,p_query:qraw.trim(),p_limit:80});
+          if((document.getElementById("crmBuscar")?.value||"")!==qraw)return; // el texto cambió → descartar resultado viejo
+          if(r&&r.error){ try{ toast("Falta correr el SQL del buscador (panel_crm_vinculos_buscar)","red"); }catch(_e){} return; }
+          const wtk=(r&&Array.isArray(r.data))?r.data:[];
+          if(!wtk.length)return;
+          const ya=new Set(arr.map(j=>U(j.usuario)));
+          const extras=wtk.filter(v=>!ya.has(U(v.usuario))).map(v=>({usuario:S(v.usuario),telefono:S(v.telefono_canon||"").trim(),titular:S(v.titular||"").trim(),estadoVinculo:U(v.estado_vinculo||""),pcCodigo:U(v.pc_codigo||""),segmento:"NUEVO",score:0,cargas:0,retiros:0,montoCargas:0,montoRetiros:0,neto:0,totalOps:0,diasUltCarga:9999,turnoFrecuente:"-",billeteraHabitual:"-",origenHabitual:"WHATICKET",operadorHabitual:"-",accion:"",ultimaOperacion:null,ultimaCarga:null,push:false,app:false,_wtkOnly:true}));
+          window._crmWtkBuscados=window._crmWtkBuscados||{};
+          extras.forEach(function(e){ window._crmWtkBuscados[String(e.usuario).toLowerCase()]=e; });
+          if(extras.length)renderCRMTabla(arr.concat(extras));
+        }catch(_e){}
+      },400);
+    }
+  };
+  function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=`<div class="alert-box">No hay jugadores para esos filtros.</div>`;return}let html=`<div class="crm-table-wrap"><table><thead><tr><th>Jugador</th><th>Segmento</th><th>Score</th><th>Cargas</th><th>Retiros</th><th>Neto</th><th>Última</th><th>Turno</th><th>Billetera</th><th>Acción</th><th>Acciones</th></tr></thead><tbody>`;arr.forEach(j=>{const uEsc=String(j.usuario).replace(/'/g,"\\'");html+=`<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador('${uEsc}')" title="Abrir perfil completo del jugador"><td><b>${j.usuario}</b> <span title="Push: ${j.push?'sí':'no'}" style="opacity:${j.push?1:.28}">🔔</span><span title="App instalada: ${j.app?'sí':'no'}" style="opacity:${j.app?1:.28}">📱</span><div class="small">${j.totalOps} ops · ${j.origenHabitual}${j.telefono?' · 📱 '+j.telefono:''}${j.titular?' · 👤 '+j.titular:''}${j._wtkOnly?' <span style="color:#7dd3fc;font-weight:900">· WTK'+(j.pcCodigo?' '+j.pcCodigo:'')+'</span>':''}</div></td><td><span class="crm-seg ${clsSeg(j.segmento)}">${j.segmento}</span></td><td><span class="crm-score">${j.score}</span></td><td>${j.cargas}<div class="small">${fmtMoney(j.montoCargas)}</div></td><td>${j.retiros}<div class="small">${fmtMoney(j.montoRetiros)}</div></td><td><b style="color:${j.neto>=0?"#12b76a":"#f04438"}">${fmtMoney(j.neto)}</b></td><td>${j.diasUltCarga>=9999?"—":j.diasUltCarga+" días"}<div class="small">${j.ultimaCarga?new Date(j.ultimaCarga).toLocaleDateString("es-AR"):"sin carga"}</div></td><td>${j.turnoFrecuente}</td><td>${j.billeteraHabitual}</td><td>${j.accion}</td><td onclick="event.stopPropagation()"><div class="crm-actions"><button class="mini-btn blue" onclick="crmCopiarPromo('${uEsc}')">📋 Promo</button><button class="mini-btn green" id="pushBtn_${j.usuario}" onclick="crmPushIndividual('${uEsc}')">📲 Push</button><button class="mini-btn gray" title="Perfil completo (CBUs, titulares, timeline)" onclick="abrirPerfilJugador('${uEsc}')">🌳</button></div></td></tr>`});html+=`</tbody></table></div>`;box.innerHTML=html;const total=document.getElementById("crmTotalVisible");if(total)total.textContent=String(arr.length)}
+  function renderCRM(){installCss();const view=document.getElementById("viewJugadores");if(!view)return;const data=buildCRM();const stats={total:data.length,vip:data.filter(j=>j.segmento==="VIP").length,activos:data.filter(j=>j.segmento==="ACTIVO").length,tibios:data.filter(j=>j.segmento==="TIBIO").length,frios:data.filter(j=>j.segmento==="FRIO").length,nuevos:data.filter(j=>j.segmento==="NUEVO").length};view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn gray" onclick="mostrarBaseLocalJugadores()" title="Base local: teléfonos, CBUs/alias y titulares por jugador">📇 Base local</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="crm-stat-grid"><div class="crm-stat"><div class="k">Total</div><div class="v">${stats.total}</div></div><div class="crm-stat" title="Total de usuarios registrados en la base de Whaticket. Usá el buscador para encontrar cualquiera (no se cargan todos)."><div class="k">Registrados (WTK)</div><div class="v" style="color:#7dd3fc" id="crmWtkTotal">${(window._crmWtkTotal!=null?Number(window._crmWtkTotal).toLocaleString("es-AR"):"…")}</div></div><div class="crm-stat"><div class="k">VIP</div><div class="v" style="color:#fdb022">${stats.vip}</div></div><div class="crm-stat"><div class="k">Activos</div><div class="v" style="color:#12b76a">${stats.activos}</div></div><div class="crm-stat"><div class="k">Tibios</div><div class="v" style="color:#fde68a">${stats.tibios}</div></div><div class="crm-stat"><div class="k">Fríos</div><div class="v" style="color:#f04438">${stats.frios}</div></div><div class="crm-stat"><div class="k">Nuevos</div><div class="v">${stats.nuevos}</div></div></div><div class="card"><h2 class="card-title">🔎 Filtros CRM</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Usuario, billetera, operador..." oninput="crmFiltrar()"><select id="crmSeg" onchange="crmFiltrar()"><option value="">Todos los segmentos</option><option value="VIP">VIP</option><option value="ACTIVO">Activo</option><option value="TIBIO">Tibio</option><option value="FRIO">Frío</option><option value="NUEVO">Nuevo</option></select><select id="crmTurno" onchange="crmFiltrar()"><option value="">Todos los turnos</option><option value="TM">TM 06-14</option><option value="TT">TT 14-22</option><option value="TN">TN 22-06</option></select><select id="crmOrigen" onchange="crmFiltrar()"><option value="">Todos los orígenes</option><option value="AGENTE">Agente (CSV)</option><option value="PORTAL">Portal</option><option value="PANEL">Panel</option><option value="MANUAL">Manual</option><option value="WHATICKET">Whaticket / registro</option></select><select id="crmOrden" onchange="crmFiltrar()"><option value="score">Orden: score</option><option value="ultima">Orden: última operación</option><option value="cargas">Orden: cargas $</option><option value="neto">Orden: neto</option></select><div class="small" style="display:flex;align-items:center">Mostrando: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div>
     <div class="card" style="margin-top:14px">
       <h2 class="card-title">📣 Campaña Push</h2>
       <div class="small" style="color:var(--muted);margin-bottom:14px">Enviá una notificación push a un segmento de jugadores que tengan el portal instalado.</div>

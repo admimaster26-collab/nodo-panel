@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('ctrlElectron', {
   verifyUser: (usuario) => ipcRenderer.invoke('drex:verify-user', { usuario }),
   // Aplica el proxy de la oficina (la config/clave se resuelve en main, no acá).
   proxyApply: (pcCodigo) => ipcRenderer.invoke('proxy:apply', { pcCodigo }),
+  // Switch de backend de Agentes (casinodrex ⇄ bet300). El proxy no se toca (misma partición).
+  getAgentBackend: () => ipcRenderer.invoke('agent:get-backend'),
+  setAgentBackend: (backend) => ipcRenderer.invoke('agent:set-backend', { backend }),
   // Recupera el foco de teclado tras un confirm() nativo (bug Electron: la ventana queda sin input).
   refocus: () => ipcRenderer.invoke('panel:refocus')
 });
@@ -39,6 +42,7 @@ contextBridge.exposeInMainWorld('chunior', {
   getUrl:   ()       => ipcRenderer.invoke('chunior:get-url'),
   navigate: (url)    => ipcRenderer.invoke('chunior:navigate', url),
   reload:   ()       => ipcRenderer.invoke('chunior:reload'),
+  reset:    (opts)   => ipcRenderer.invoke('chunior:reset', opts),
   focus:    ()       => ipcRenderer.invoke('chunior:focus'),
 });
 
@@ -60,7 +64,7 @@ contextBridge.exposeInMainWorld('panelAPI', {
 // ============================================================
 contextBridge.exposeInMainWorld('updaterAPI', {
   getVersion: () => ipcRenderer.invoke('updater:version'),
-  check:      () => ipcRenderer.invoke('updater:check'),
+  check:      (arg) => ipcRenderer.invoke('updater:check', arg),
   download:   () => ipcRenderer.invoke('updater:download'),
   install:    () => ipcRenderer.invoke('updater:install'),
   openReleases: () => ipcRenderer.invoke('updater:open-releases'),

@@ -7,6 +7,20 @@ const { createClient } = require('@supabase/supabase-js');
 // autoDownload=false: solo busca y avisa; el operador decide bajar/instalar
 // desde el botón del panel. Así ninguna oficina se actualiza sola mientras
 // seguimos iterando el código.
+// Canales de actualización (portado de NexoBetaChan): alpha = repo oficial nuestro,
+// beta = repo del colega (pruebas). Son FUENTES distintas (repos distintos), sin cruce.
+// Override por .env: UPDATER_ALPHA="owner/repo" · UPDATER_BETA="owner/repo".
+const UPDATE_CHANNELS = {
+  alpha: { owner: 'admimaster26-collab', repo: 'nodo-panel',   label: 'Alpha · oficial' },
+  beta:  { owner: 'zhinouno-ui',         repo: 'NexoBetaChan',  label: 'Beta · pruebas' }
+};
+(function(){
+  const parse = s => { const p = String(s||'').split('/'); return (p[0] && p[1]) ? { owner:p[0], repo:p[1] } : null; };
+  const a = parse(process.env.UPDATER_ALPHA), b = parse(process.env.UPDATER_BETA);
+  if (a) { UPDATE_CHANNELS.alpha.owner = a.owner; UPDATE_CHANNELS.alpha.repo = a.repo; }
+  if (b) { UPDATE_CHANNELS.beta.owner  = b.owner; UPDATE_CHANNELS.beta.repo  = b.repo; }
+})();
+let _updaterChannel = 'alpha'; // canal activo (lo fija el renderer en cada check)
 let autoUpdater = null;
 try {
   autoUpdater = require('electron-updater').autoUpdater;
@@ -44,7 +58,17 @@ function cargarEnvLocalV15() {
     }
     if (!envPath) return;
     console.log("[env] usando", envPath);
-    const raw = fs.readFileSync(envPath, "utf8");
+    // Tolerante al encoding: si el .env se guardó en UTF-16 (típico con Notepad "Unicode" o con
+    // `>`/Out-File de PowerShell), leerlo como UTF-8 da basura y NO se detectaban las variables.
+    // Detectamos el BOM y decodificamos bien (UTF-16 LE/BE, UTF-8 con BOM, o UTF-8 plano).
+    let raw;
+    try {
+      const _buf = fs.readFileSync(envPath);
+      if (_buf.length >= 2 && _buf[0] === 0xFF && _buf[1] === 0xFE) raw = _buf.toString("utf16le");
+      else if (_buf.length >= 2 && _buf[0] === 0xFE && _buf[1] === 0xFF) raw = Buffer.from(_buf).swap16().toString("utf16le");
+      else if (_buf.length >= 3 && _buf[0] === 0xEF && _buf[1] === 0xBB && _buf[2] === 0xBF) raw = _buf.slice(3).toString("utf8");
+      else raw = _buf.toString("utf8");
+    } catch (_e) { raw = fs.readFileSync(envPath, "utf8"); }
     raw.split(/\r?\n/).forEach(line => {
       const clean = String(line || "").trim();
       if (!clean || clean.startsWith("#") || !clean.includes("=")) return;
@@ -214,14 +238,77 @@ function getPanelSupabaseV15() {
   return panelSupabaseV15;
 }
 
-const AGENT_URL    = 'https://bo.casinodrex.com/agents/user_search';
-const NEW_USER_URL = 'https://bo.casinodrex.com/agents/new_user';
+// ── Plataforma de agentes: casinodrex (default) o BET300 (flag AGENT_PLATFORM=bet300 en .env) ──
+// El flag va en el .env junto al exe / userData (como PANEL_DATA_SECRET). Sin flag → casinodrex,
+// idéntico a siempre. Ambos preloads viajan en el MISMO build; el flag elige URL + preload.
+// BET300 usa la MISMA partición/proxy que casinodrex (sale por el proxy de la oficina igual).
+// ── Backend de Agentes SWITCHEABLE en runtime (casinodrex ⇄ bet300) ───────────
+// El backend define URL + preload + selectores de "app lista". Se cambia desde el panel
+// (botón "🎰 Backoffice"), se PERSISTE en userData/nodo-agent-backend (sobrevive updates)
+// y RELANZA la ventana de agentes. IMPORTANTE: el proxy NO se toca — vive en la sesión
+// persist:nodo-agentes (MISMA partición para ambos backends), así que la salida de red
+// (proxy de la oficina) es idéntica se elija el backend que se elija.
+const AGENT_BACKENDS = {
+  casinodrex: {
+    url:        'https://bo.casinodrex.com/agents/user_search',
+    newUserUrl: 'https://bo.casinodrex.com/agents/new_user',
+    preload:    'agent-preload.js',
+    spa:        false,
+    label:      'Casinodrex',
+    appSel:     '#searchButton, input.validationField, input[name="amount"], input[type="password"], input[name="alias"], [data-agenttree-user-type], span.hideUserBalance, .crmpam_no_data_found'
+  },
+  bet300: {
+    url:        'https://agentesbet.io/',
+    newUserUrl: 'https://agentesbet.io/',
+    preload:    'agent-preload-bet300.js',
+    spa:        true,
+    label:      'BET300 (agentesbet.io)',
+    appSel:     'input[placeholder="Buscar usuario"], input[placeholder="Alias"], .v-navigation-drawer .v-list-item, .v-list-item--link'
+  }
+};
+function _agentBackendFile(){ try { return path.join(app.getPath('userData'), 'nodo-agent-backend'); } catch (_e) { return ''; } }
+function _leerBackendGuardado(){
+  // 1) Lo que eligió el operador desde el panel (archivo persistido) manda.
+  try { const f = _agentBackendFile(); if (f && fs.existsSync(f)) { const v = String(fs.readFileSync(f, 'utf8')).trim().toLowerCase(); if (AGENT_BACKENDS[v]) return v; } } catch (_e) {}
+  // 2) Fallback al .env (AGENT_PLATFORM) para las PCs que ya lo usan. Default: casinodrex (intacto).
+  const env = String(process.env.AGENT_PLATFORM || '').trim().toLowerCase();
+  return env === 'bet300' ? 'bet300' : 'casinodrex';
+}
+let _agentBackend = _leerBackendGuardado();
+let AGENT_IS_BET300, AGENT_URL, NEW_USER_URL, AGENT_PRELOAD, _AGENT_APP_SEL;
+function _aplicarBackend(b){
+  if (!AGENT_BACKENDS[b]) b = 'casinodrex';
+  _agentBackend = b;
+  const c = AGENT_BACKENDS[b];
+  AGENT_IS_BET300 = (b === 'bet300');
+  AGENT_URL       = c.url;
+  NEW_USER_URL    = c.newUserUrl;
+  AGENT_PRELOAD   = path.join(__dirname, c.preload);
+  _AGENT_APP_SEL  = c.appSel;
+}
+_aplicarBackend(_agentBackend);
+try { console.log('[agente] backend =', _agentBackend, '·', AGENT_BACKENDS[_agentBackend].label); } catch (_e) {}
 const CHUNIOR_URL  = 'https://bo.chunior.com/transacciones/';
 
 let mainWindow    = null;
 let agentWindow   = null;
 let verifyWindow  = null;
 let chuniorWindow = null;
+let _chuLastRecover = 0; // anti-loop del auto-recovery de 403/CSRF de Chunior
+let _chu403Count = 0;    // escalación: 1er 403 → navegar a base; si persiste → limpiar cookies
+// Limpia SOLO las cookies del dominio de Chunior (NO toca Supabase, que vive en la misma sesión default).
+async function limpiarCookiesChunior(win){
+  try{
+    const ses = win.webContents.session;
+    const cookies = await ses.cookies.get({ domain: 'chunior.com' });
+    for (const c of cookies) {
+      const dom = (c.domain && c.domain.startsWith('.')) ? c.domain.slice(1) : (c.domain || '');
+      if (!/chunior\.com$/i.test(dom)) continue;
+      const url = (c.secure ? 'https://' : 'http://') + dom + (c.path || '/');
+      try { await ses.cookies.remove(url, c.name); } catch (_e) {}
+    }
+  }catch(e){ console.warn('[chunior] limpiar cookies', e && e.message); }
+}
 const pendingAutomation   = new Map();
 const pendingVerification = new Map();
 
@@ -308,12 +395,57 @@ function createMainWindow() {
 //   • Inyectar sec-ch-ua a mano choca con el fingerprint real de Chromium → el WAF lo marca
 //     como bot y devuelve 403. Dejamos que Chromium mande sus propios client-hints (consistentes).
 // Resultado: UA limpio de Chrome, client-hints coherentes, cero pollution de la default session.
+// ACTUALIZACIÓN (fix CSRF de Chunior): Chunior detecta Electron NO solo por el UA string (que ya
+// reescribimos por-webContents) sino por el client-hint sec-ch-ua, que SIGUE diciendo "Electron" en
+// cada request → su WAF rompe la sesión/CSRF (403). Ahora reescribimos UA + sec-ch-ua de Chrome
+// limpio SOLO en las requests a chunior.com (filtrado por URL en la default session):
+//   • Supabase queda INTACTO (no se reescribe nada suyo) → sin la contaminación de la 1.0.78.
+//   • NO se toca la sesión de Agentes (persist:nodo-agentes) → no vuelve el 403 del WAF de casinodrex.
 function configurarSesionAgentesDrex(win) {
   try {
     const cur       = win.webContents.getUserAgent();
     const chromeTok = (cur.match(/Chrome\/[\d.]+/) || ['Chrome/124.0.0.0'])[0];
+    const major     = (chromeTok.match(/\d+/) || ['124'])[0];
     const ua        = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ' + chromeTok + ' Safari/537.36';
-    win.webContents.setUserAgent(ua); // por-webContents: no toca la default session ni el resto
+    const secChUa   = '"Chromium";v="' + major + '", "Google Chrome";v="' + major + '", "Not.A/Brand";v="99"';
+    win.webContents.setUserAgent(ua); // por-webContents (Agentes y Chunior)
+    const ses = win.webContents.session;
+    if (ses === session.defaultSession && !ses.__nodoChuniorHook) {
+      ses.__nodoChuniorHook = true;
+      ses.webRequest.onBeforeSendHeaders((details, cb) => {
+        try {
+          const h = details.requestHeaders || {};
+          if (/chunior\.com/i.test(details.url || '')) { // SOLO Chunior; Supabase sin tocar
+            h['User-Agent']         = ua;
+            h['sec-ch-ua']          = secChUa;
+            h['sec-ch-ua-mobile']   = '?0';
+            h['sec-ch-ua-platform'] = '"Windows"';
+            if (!h['Accept-Language']) h['Accept-Language'] = 'es-AR,es;q=0.9,en;q=0.8';
+          }
+          cb({ requestHeaders: h });
+        } catch (_e) { cb({ requestHeaders: (details && details.requestHeaders) || {} }); }
+      });
+    }
+
+    // BET300: Cloudflare de agentesbet.net bloquea por el client-hint sec-ch-ua "Electron".
+    // Reescribimos UA + sec-ch-ua SOLO para agentesbet.net y SOLO con el flag bet300 activo
+    // (casinodrex 100% intacto: con casinodrex este hook ni se instala).
+    if (AGENT_IS_BET300 && !ses.__nodoBet300Hook) {
+      ses.__nodoBet300Hook = true;
+      ses.webRequest.onBeforeSendHeaders((details, cb) => {
+        try {
+          const h = details.requestHeaders || {};
+          if (/agentesbet\.(net|io)/i.test(details.url || '')) {
+            h['User-Agent']         = ua;
+            h['sec-ch-ua']          = secChUa;
+            h['sec-ch-ua-mobile']   = '?0';
+            h['sec-ch-ua-platform'] = '"Windows"';
+            if (!h['Accept-Language']) h['Accept-Language'] = 'es-AR,es;q=0.9,en;q=0.8';
+          }
+          cb({ requestHeaders: h });
+        } catch (_e) { cb({ requestHeaders: (details && details.requestHeaders) || {} }); }
+      });
+    }
   } catch (e) {
     console.warn('[main] configurarSesionAgentesDrex:', e && e.message);
   }
@@ -328,7 +460,7 @@ function createAgentWindow(url = AGENT_URL) {
     title:  'Agentes — Cargas automáticas',
     show:   false,
     webPreferences: {
-      preload:              path.join(__dirname, 'agent-preload.js'),
+      preload:              AGENT_PRELOAD,
       partition:            AGENT_PARTITION, // sesión dedicada → el proxy solo afecta a Agentes
       contextIsolation:     true,
       nodeIntegration:      false,
@@ -381,6 +513,31 @@ function createChuniorWindow() {
   // mismo UA de Chrome real que usa la ventana de Agentes → el login carga como en un navegador normal.
   try { configurarSesionAgentesDrex(chuniorWindow); } catch (_e) {}
   chuniorWindow.loadURL(CHUNIOR_URL);
+  // Auto-recovery del 403/CSRF: si Chunior muestra "403 Forbidden" (token CSRF vencido), NO sirve
+  // recargar (re-envía el POST fallido → mismo 403). Navegamos a la BASE con un GET nuevo → token
+  // fresco. Guarda anti-loop (una vez cada 8s).
+  chuniorWindow.webContents.on('did-finish-load', async () => {
+    try {
+      if (!chuniorWindow || chuniorWindow.isDestroyed()) return;
+      const t = chuniorWindow.webContents.getTitle() || '';
+      if (/403|forbidden|csrf/i.test(t)) {
+        if (Date.now() - _chuLastRecover < 7000) return; // anti-loop
+        _chuLastRecover = Date.now();
+        _chu403Count++;
+        if (_chu403Count >= 2) {
+          // El GET a la base TAMBIÉN da 403 → la cookie de sesión está corrupta. Limpiarla y reintentar.
+          console.warn('[chunior] 403 persiste → limpiando cookies de Chunior y recargando login limpio');
+          _chu403Count = 0;
+          try { await limpiarCookiesChunior(chuniorWindow); } catch (_e) {}
+        } else {
+          console.warn('[chunior] 403/CSRF detectado → navegando a la base (GET) para recuperar el token');
+        }
+        chuniorWindow.loadURL(CHUNIOR_URL);
+      } else {
+        _chu403Count = 0; // se recuperó
+      }
+    } catch (_e) {}
+  });
   chuniorWindow.on('closed', () => { chuniorWindow = null; });
   return chuniorWindow;
 }
@@ -423,7 +580,9 @@ function whenAgentReady(win, timeoutMs = 12000) {
 // Selector de "app operable" (señal positiva) y alternación de frases de error de CDN/WAF
 // (señal negativa). Ambos strings SIN backslashes → se inyectan sin problemas en el
 // executeJavaScript de abajo; el bloqueo se arma con new RegExp(..., 'i') en la página.
-const _AGENT_APP_SEL   = '#searchButton, input.validationField, input[name="amount"], input[type="password"], input[name="alias"], [data-agenttree-user-type], span.hideUserBalance, .crmpam_no_data_found';
+// _AGENT_APP_SEL (señal positiva de "app operable") ahora es runtime: lo setea _aplicarBackend
+// según el backend elegido. Los template strings de abajo lo leen en cada llamada → toman el valor
+// vigente aunque se cambie el backend en caliente.
 const _AGENT_BLOCK_ALT = 'request blocked|request could not be satisfied|generated by cloudfront|cloudfront|access denied|forbidden|not authorized|service unavailable|bad gateway|gateway timeout|just a moment|attention required|checking your browser|ray id|algo sali|cannot read propert|errorboundary';
 async function agentPageIsBlockedDrex(win) {
   try {
@@ -470,7 +629,13 @@ async function agentWaitReadyDrex(win, timeoutMs = 9000) {
 async function navigateAgentTo(url = AGENT_URL, opts = {}) {
   const win = getAgentWindow();
   const forceReload = !!opts.forceReload;
-  const sameUrl = (a, b) => String(a || '').split('#')[0].split('?')[0] === String(b || '').split('#')[0].split('?')[0];
+  // BET300 es una SPA (Vue): la ruta interna cambia (/, /login, rutas del router) pero es LA MISMA
+  // app. Comparar por ORIGIN → se reconoce como "misma página" y se REUSA sin recargar (agentesbet.io
+  // es más lento que casinodrex; recargar en cada búsqueda hacía que buscarUsuario pasara el timeout).
+  const sameUrl = (a, b) => {
+    if (AGENT_IS_BET300) { try { return new URL(a).origin === new URL(b).origin; } catch (_e) { return false; } }
+    return String(a || '').split('#')[0].split('?')[0] === String(b || '').split('#')[0].split('?')[0];
+  };
   navEsperadaDrex = true;
   try {
     const MAX = 3;
@@ -530,7 +695,7 @@ function sendAutomation(method, ...args) {
   // Algunos métodos requieren estar en una URL específica → navegamos primero
   let preNav;
   if      (method === 'buscarUsuario')       preNav = navigateAgentTo(AGENT_URL);
-  else if (method === 'crearUsuario')        preNav = navigateAgentTo(NEW_USER_URL, { forceReload: true });
+  else if (method === 'crearUsuario')        preNav = navigateAgentTo(NEW_USER_URL, { forceReload: !AGENT_IS_BET300 }); // BET300 crea por modal, sin recargar
   else if (method === 'obtenerSaldoAgente')  preNav = navigateAgentTo(AGENT_URL);
   else                                       preNav = whenAgentReady(win);
   return preNav.then(() => {
@@ -560,7 +725,7 @@ function createVerifyWindow() {
     title:  'Verificación — Login usuarios',
     show:   false,
     webPreferences: {
-      preload:          path.join(__dirname, 'agent-preload.js'),
+      preload:          AGENT_PRELOAD,
       partition:        AGENT_PARTITION, // misma sesión que Agentes (comparte login + proxy)
       contextIsolation: true,
       nodeIntegration:  false,
@@ -747,21 +912,28 @@ function _sendUpdaterStatus(event, payload) {
 
 ipcMain.handle('updater:version', () => ({ ok: true, version: app.getVersion() }));
 
-ipcMain.handle('updater:check', async (event) => {
+ipcMain.handle('updater:check', async (event, arg) => {
   if (!autoUpdater) return { ok: false, reason: 'no-updater' };
   if (!app.isPackaged) return { ok: false, reason: 'dev-mode' };
+  // Canal elegido por el renderer (persistido en el panel). Default: el último usado.
+  const canal = (arg && arg.channel && UPDATE_CHANNELS[arg.channel]) ? arg.channel : _updaterChannel;
+  _updaterChannel = canal;
+  const repo = UPDATE_CHANNELS[canal];
   try {
     autoUpdater.removeAllListeners();
-    autoUpdater.on('checking-for-update', () => _sendUpdaterStatus(event, { state: 'checking' }));
-    autoUpdater.on('update-available',    (info) => _sendUpdaterStatus(event, { state: 'available', version: info && info.version }));
-    autoUpdater.on('update-not-available',() => _sendUpdaterStatus(event, { state: 'not-available' }));
-    autoUpdater.on('error', (err) => _sendUpdaterStatus(event, { state: 'error', message: String(err && err.message || err) }));
+    autoUpdater.on('checking-for-update', () => _sendUpdaterStatus(event, { state: 'checking', channel: canal }));
+    autoUpdater.on('update-available',    (info) => _sendUpdaterStatus(event, { state: 'available', version: info && info.version, channel: canal }));
+    autoUpdater.on('update-not-available',() => _sendUpdaterStatus(event, { state: 'not-available', channel: canal }));
+    autoUpdater.on('error', (err) => _sendUpdaterStatus(event, { state: 'error', message: String(err && err.message || err), channel: canal }));
     autoUpdater.on('download-progress', (p) => _sendUpdaterStatus(event, { state: 'downloading', percent: Math.round(p && p.percent || 0) }));
-    autoUpdater.on('update-downloaded', (info) => _sendUpdaterStatus(event, { state: 'downloaded', version: info && info.version }));
+    autoUpdater.on('update-downloaded', (info) => _sendUpdaterStatus(event, { state: 'downloaded', version: info && info.version, channel: canal }));
+    // Cada canal es una FUENTE distinta (repo distinto). Sin cruce automático.
+    autoUpdater.setFeedURL({ provider: 'github', owner: repo.owner, repo: repo.repo });
     const r = await autoUpdater.checkForUpdates();
-    return { ok: true, version: r && r.updateInfo && r.updateInfo.version };
+    return { ok: true, version: r && r.updateInfo && r.updateInfo.version, channel: canal, repo: repo.owner + '/' + repo.repo };
   } catch (e) {
-    return { ok: false, reason: 'error', message: String(e && e.message || e) };
+    console.warn('[updater] check falló · canal', canal, '(' + repo.owner + '/' + repo.repo + ') ·', e && e.message);
+    return { ok: false, reason: 'error', channel: canal, message: String(e && e.message || e) };
   }
 });
 
@@ -781,7 +953,7 @@ ipcMain.handle('updater:install', () => {
 // puede bajar cualquier instalador previo si esta versión falla. Es la salida de emergencia
 // más confiable (un downgrade automático de electron-updater es frágil).
 ipcMain.handle('updater:open-releases', async () => {
-  try { await shell.openExternal('https://github.com/admimaster26-collab/nodo-panel/releases'); return { ok: true }; }
+  try { const repo = UPDATE_CHANNELS[_updaterChannel] || UPDATE_CHANNELS.alpha; await shell.openExternal('https://github.com/' + repo.owner + '/' + repo.repo + '/releases'); return { ok: true }; }
   catch (e) { return { ok: false, message: String(e && e.message || e) }; }
 });
 
@@ -812,6 +984,34 @@ ipcMain.handle('drex:show-agent-window', (_event, url) => {
 // Ejecuta un método de automatización en el backoffice
 ipcMain.handle('drex:automation', async (_event, { method, args = [] } = {}) => {
   return sendAutomation(method, ...args);
+});
+
+// ── Switch de backend de Agentes (casinodrex ⇄ bet300) ───────────────────────
+// El panel muestra un botón "🎰 Backoffice" que llama a estos handlers.
+ipcMain.handle('agent:get-backend', () => ({
+  ok: true,
+  backend: _agentBackend,
+  label: (AGENT_BACKENDS[_agentBackend] || {}).label || _agentBackend,
+  url: AGENT_URL,
+  opciones: Object.keys(AGENT_BACKENDS).map(k => ({ id: k, label: AGENT_BACKENDS[k].label }))
+}));
+// Cambia el backend, lo PERSISTE y RELANZA la ventana de agentes con el preload/URL nuevos.
+// NO toca el proxy: la sesión persist:nodo-agentes (misma partición para ambos backends) conserva
+// su setProxy + auth → la ventana recreada sale por el MISMO proxy de la oficina, sin re-aplicar nada.
+ipcMain.handle('agent:set-backend', (_event, { backend } = {}) => {
+  if (!AGENT_BACKENDS[backend]) return { ok: false, error: 'backend desconocido: ' + backend };
+  if (backend === _agentBackend) return { ok: true, backend, sinCambio: true, label: AGENT_BACKENDS[backend].label };
+  _aplicarBackend(backend);
+  try { const f = _agentBackendFile(); if (f) fs.writeFileSync(f, backend, 'utf8'); } catch (_e) {}
+  // Cerrar la ventana de agente + la de verificación → se recrean con el preload/URL del backend nuevo.
+  try { if (agentWindow && !agentWindow.isDestroyed()) { agentWindow.destroy(); } } catch (_e) {}
+  agentWindow = null;
+  try { if (verifyWindow && !verifyWindow.isDestroyed()) { verifyWindow.destroy(); } } catch (_e) {}
+  verifyWindow = null;
+  // Relanzar y mostrar (el operador probablemente tenga que loguearse al backend nuevo la 1ª vez).
+  try { const w = getAgentWindow(); w.show(); w.focus(); } catch (_e) {}
+  try { console.log('[agent-backend] cambiado a', backend, '→', AGENT_URL, '·', AGENT_PRELOAD); } catch (_e) {}
+  return { ok: true, backend, label: AGENT_BACKENDS[backend].label, url: AGENT_URL };
 });
 
 // Auto-login del agente con credenciales BLINDADAS: la clave se trae acá (proceso main)
@@ -930,6 +1130,19 @@ ipcMain.handle('chunior:reload', async () => {
   win.reload();
   await whenChuniorReady(win);
   return { ok: true };
+});
+
+// Reinicia Chunior (recupera del 403/CSRF). NO recarga (eso re-envía el POST fallido → mismo 403):
+// NAVEGA a la base con un GET → token CSRF fresco. Con opts.hard limpia SOLO las cookies del dominio
+// de Chunior (NO toca Supabase, que también vive en la sesión default) para forzar un login limpio.
+ipcMain.handle('chunior:reset', async (_event, opts) => {
+  const win = getChuniorWindow();
+  _chu403Count = 0;
+  if (opts && opts.hard) { try { await limpiarCookiesChunior(win); } catch (_e) {} }
+  try { win.loadURL(CHUNIOR_URL); await whenChuniorReady(win); } catch (_e) {}
+  try { win.show(); win.focus(); } catch (_e) {}
+  let url = ''; try { url = win.webContents.getURL(); } catch (_e) {}
+  return { ok: true, url };
 });
 
 // Trae la ventana de Chunior al frente

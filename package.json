@@ -1,6 +1,6 @@
 {
   "name": "nodo-operativo",
-  "version": "1.0.93",
+  "version": "1.1.39",
   "description": "NODO · OPERATIVO — Panel de operaciones",
   "main": "main.js",
   "scripts": {
@@ -32,6 +32,7 @@
       "main.js",
       "app-preload.js",
       "agent-preload.js",
+      "agent-preload-bet300.js",
       "chunior-bridge.js",
       "config.json",
       "services/**/*",
