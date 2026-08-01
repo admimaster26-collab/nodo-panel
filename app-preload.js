@@ -70,3 +70,12 @@ contextBridge.exposeInMainWorld('updaterAPI', {
   openReleases: () => ipcRenderer.invoke('updater:open-releases'),
   onStatus:   (cb) => ipcRenderer.on('updater:status', (_event, payload) => cb(payload))
 });
+
+// ============================================================
+// Nexo · integración por archivo (opcional, no estricta · portado de NexoBetaChan)
+// nodo escribe %APPDATA%/nexo-desktop/shared/nodo-datos.json; Nexo lo lee y fusiona.
+// ============================================================
+contextBridge.exposeInMainWorld('nexoFile', {
+  estado: () => ipcRenderer.invoke('nexo:estado'),
+  write:  (content) => ipcRenderer.invoke('nexo:write', { content })
+});

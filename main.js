@@ -902,6 +902,41 @@ ipcMain.handle('panel:get-context', async () => ({
   // propio cliente con la anon key PÚBLICA). Lo ideal es migrar más lecturas a panelAPI.rpc.
 }));
 
+// ── Nexo: integración por ARCHIVO (OPCIONAL, no estricta · portado de NexoBetaChan) ──
+// Contrato (verificado contra el código de Nexo): nodo es DUEÑO de
+//   %APPDATA%\nexo-desktop\shared\nodo-datos.json
+// Lo escribe atómico (tmp+rename); Nexo lo LEE al abrir y fusiona (una dirección, un dueño → cero
+// corrupción). NUNCA tocar el shard nexo-db-<pid>.json de Nexo. No estricto: si nexo-desktop NO
+// está instalado (no existe la carpeta), no se escribe nada y no es error.
+function _nexoDatosPath() {
+  return path.join(app.getPath('appData'), 'nexo-desktop', 'shared', 'nodo-datos.json');
+}
+function _nexoInstalado() {
+  try { return fs.existsSync(path.join(app.getPath('appData'), 'nexo-desktop')); } catch (_e) { return false; }
+}
+ipcMain.handle('nexo:estado', async () => {
+  try {
+    const p = _nexoDatosPath();
+    const instalado = _nexoInstalado();
+    let existeArchivo = false, bytes = 0, mtime = null;
+    try { if (fs.existsSync(p)) { const st = fs.statSync(p); existeArchivo = true; bytes = st.size; mtime = st.mtime.toISOString(); } } catch (_e) {}
+    return { ok:true, instalado, path:p, existeArchivo, bytes, mtime };
+  } catch (e) { return { ok:false, error: e.message || String(e) }; }
+});
+ipcMain.handle('nexo:write', async (_e, arg = {}) => {
+  try {
+    if (!_nexoInstalado()) return { ok:false, instalado:false }; // Nexo no está → no escribimos (no estricto)
+    const p = _nexoDatosPath();
+    const dir = path.dirname(p);
+    try { fs.mkdirSync(dir, { recursive: true }); } catch (_e) {} // nodo crea su carpeta shared/
+    const content = String(arg && arg.content != null ? arg.content : '');
+    const tmp = p + '.tmp-nodo';
+    fs.writeFileSync(tmp, content, 'utf8');
+    fs.renameSync(tmp, p); // atómico en el mismo volumen
+    return { ok:true, instalado:true, path:p, bytes: Buffer.byteLength(content, 'utf8') };
+  } catch (e) { return { ok:false, error: e.message || String(e) }; }
+});
+
 // ── Auto-actualización: chequeo/descarga/instalación MANUAL desde el botón del panel ──
 function _sendUpdaterStatus(event, payload) {
   try {

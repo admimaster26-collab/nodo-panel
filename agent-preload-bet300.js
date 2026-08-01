@@ -19,6 +19,7 @@ function now() { return Date.now(); }
 
 // ── Freno real (⛔ Cancelar) ─────────────────────────────────────────────────
 let _abortOperacion = false;
+let _navegandoAInicio = false;  // true mientras el preload navega al INICIO post-login → una carga forzada espera a que termine
 function _chequearFreno(donde) {
   if (_abortOperacion) throw new Error('⛔ Operación frenada por el operador' + (donde ? ' (' + donde + ')' : '') + '. No se aplicó plata.');
 }
@@ -36,15 +37,34 @@ function visibleElements(sel, root = document) {
 function firstVisible(sel, root = document) {
   return visibleElements(sel, root)[0] || null;
 }
-async function waitFor(predicate, timeout = DEFAULT_TIMEOUT, interval = 120) {
+async function waitFor(predicate, timeout = DEFAULT_TIMEOUT, interval = 120, label) {
   const started = now();
   while (now() - started < timeout) {
     _chequearFreno();
     const v = typeof predicate === 'function' ? predicate() : document.querySelector(predicate);
-    if (v) return v;
+    if (v) {
+      // [perf] detección de demoras: logueamos solo las esperas LENTAS (>700ms) para ver dónde se traba.
+      const el = now() - started;
+      if (el > 700) console.log('%c[perf] waitFor'+(label?' ['+label+']':'')+' resolvió en '+el+'ms', 'color:#eab308');
+      return v;
+    }
     await delay(interval);
   }
-  throw new Error('Tiempo de espera agotado esperando la página de agentes (BET300).');
+  console.warn('[perf] waitFor'+(label?' ['+label+']':'')+' TIMEOUT tras '+(now()-started)+'ms');
+  throw new Error('Tiempo de espera agotado esperando la página de agentes (BET300).'+(label?' ['+label+']':''));
+}
+// [perf] Timer por operación (buscar/carga/retiro/crear/login): mide el total y avisa si tarda mucho.
+// Se usa desde el dispatcher de drexAutomation → sale UN log por operación con su duración real.
+function _perfWrap(nombre, fn) {
+  return async function (...args) {
+    const t0 = now();
+    try { return await fn.apply(this, args); }
+    finally {
+      const ms = now() - t0;
+      const col = ms > 6000 ? '#ef4444' : (ms > 3000 ? '#eab308' : '#22c55e');
+      console.log('%c[perf] '+nombre+' → '+ms+'ms'+(ms>3000?'  ⚠ LENTO':''), 'color:'+col+';font-weight:700');
+    }
+  };
 }
 function normalizeText(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
 function normAlias(s) {
@@ -117,6 +137,22 @@ async function cerrarModalActual() {
   return false;
 }
 
+// Cierra RÁPIDO cualquier banner/modal de creación de usuario: botón "Cerrar" (repetido) + modal
+// activo + menús. Se usa al detectar "user_create_successfully"/"Duplicated alias" para agilizar la
+// cola (no esperar a que el modal se cierre solo, que es más lento que el banner).
+async function _cerrarTodoBet300() {
+  try {
+    for (let i = 0; i < 3; i++) {
+      const cerrar = findByText(/^cerrar$/i, 'button, .v-btn');
+      if (!cerrar) break;
+      clickElement(cerrar);
+      await delay(140);
+    }
+    if (findActiveModal()) { try { await cerrarModalActual(); } catch (_e) {} }
+    try { cerrarMenusAbiertos(); } catch (_e) {}
+  } catch (_e) {}
+}
+
 // ── Toast de resultado (v-snackbar) ─────────────────────────────────────────
 // Éxito: .v-snackbar__wrapper.bg-success (texto "balance_updated_successfully")
 // Error: .v-snackbar__wrapper.bg-error   (texto "General Error -13", etc.)
@@ -158,6 +194,11 @@ function observarSnackbar() {
           const txt = normalizeText((el.querySelector('.v-snackbar__content') || el).textContent);
           if (el.classList.contains('bg-success')) { capt.resultado = { tipo: 'ok', texto: txt }; return; }
           if (el.classList.contains('bg-error'))   { capt.resultado = { tipo: 'error', texto: txt }; return; }
+          // Banners de creación de usuario que a veces NO traen bg-success/bg-error (vienen neutros
+          // / bg-secondary): los capturamos por TEXTO — es MÁS RÁPIDO que esperar a que el modal se
+          // cierre solo. Estos textos solo aparecen al crear usuario, no en cargas.
+          if (/duplicated\s*alias/i.test(txt))                           { capt.resultado = { tipo: 'error', texto: txt, dup: true };    return; }
+          if (/user_?create_?successfully|create_?successfully/i.test(txt)) { capt.resultado = { tipo: 'ok', texto: txt, creado: true }; return; }
         }
       }
     });
@@ -252,9 +293,15 @@ async function ensureReady() {
   if (pageIsBlocked()) return status();
   await recuperarFlujoPendiente();
   if (pageNeedsLogin() || pageIsBlocked()) return status();
-  // Esperar a que la SPA esté OPERABLE (buscador presente o un modal abierto) antes de
-  // actuar: después de un reload, Vue tarda en montar y se arrancaba demasiado temprano.
-  await waitFor(() => findSearchInput() || findActiveModal(), 8000).catch(() => {});
+  // Si otro flujo ya está navegando al inicio, ESPERAMOS a que termine (una carga forzada no se
+  // borra ni falla a mitad de la navegación, queda encolada).
+  if (_navegandoAInicio) await waitFor(() => !_navegandoAInicio, 25000, 200, 'esperar-nav-inicio').catch(() => {});
+  // Verificar la PÁGINA: si NO estamos en la búsqueda/inicio ni con un modal abierto (p.ej. quedamos
+  // en Estadísticas post-login), vamos al inicio SIN recargar. Si ya estamos ahí, no hace nada → no
+  // se recarga al pedo.
+  if (!findSearchInput() && !findActiveModal()) { try { await _asegurarInicio(); } catch (_e) {} }
+  // Esperar a que la SPA esté OPERABLE (buscador o modal) antes de actuar: Vue tarda en montar.
+  await waitFor(() => findSearchInput() || findActiveModal(), 12000, 120, 'ensureReady-operable').catch(() => {});
   return status();
 }
 
@@ -314,30 +361,63 @@ async function elegirTodosLosJugadores(timeout = 6000) {
   return false;
 }
 
-// Ejecuta la búsqueda: escribe alias → lupa → "Todos los jugadores" → ESPERA el refresco.
-// Devuelve true si detectó que la lista se refrescó (resultado real ya en pantalla).
+// CORROBORA que el input REALMENTE tenga el alias escrito y, si no, lo reescribe.
+// Vuetify re-renderiza la lista y a veces limpia/pisa el campo (o el menú le roba el foco):
+// escribíamos una vez, no volvíamos a mirar, y se buscaba con el campo VACÍO → "no existe" falso.
+async function _asegurarTextoBusqueda(alias, tries = 3) {
+  const want = normAlias(alias);
+  for (let i = 0; i < tries; i++) {
+    const input = findSearchInput();
+    if (!input) { await delay(200); continue; }
+    if (normAlias(input.value) === want) return input;          // ya está escrito
+    await setFieldAndVerify(input, String(alias).trim(), 3);
+    await delay(120);
+    const chk = findSearchInput();
+    if (chk && normAlias(chk.value) === want) return chk;        // verificado post-escritura
+    await delay(150);
+  }
+  return null;
+}
+
+// Ejecuta la búsqueda: escribe alias (verificado) → Enter → lupa/"Todos los jugadores" → espera refresco.
+// Devuelve { refresco, textoOk } — `refresco` es la ÚNICA prueba de que el resultado en pantalla es real.
 async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
-  const input = await waitFor(findSearchInput, timeout);
-  const ok = await setFieldAndVerify(input, String(alias).trim(), 4);
-  if (!ok) throw new Error('El campo de búsqueda no aceptó el alias.');
+  const wanted = String(alias).trim();
+  await waitFor(findSearchInput, timeout, 120, 'input-busqueda');
+
+  // 1) Escribir Y VERIFICAR (antes: si no aceptaba, tiraba error y cortaba todo el flujo).
+  let input = await _asegurarTextoBusqueda(wanted, 3);
+  if (!input) return { refresco: false, textoOk: false };
 
   const firmaAntes = firmaFilas(); // foto de la lista ANTES de buscar
 
-  const lupa = iconBtn('mdi-magnify');
-  if (lupa) clickElement(lupa);
-  await delay(250);
-  await elegirTodosLosJugadores(6000); // robusto: no deja el dropdown colgado
+  // 2) Disparar con ENTER (el camino más confiable, no depende del menú) y, si no dispara,
+  //    recién ahí el camino lupa → "Todos los jugadores".
+  try {
+    ['keydown', 'keypress', 'keyup'].forEach(function (t) {
+      input.dispatchEvent(new KeyboardEvent(t, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+    });
+  } catch (_) {}
+  await delay(350);
 
-  // Esperar a que la lista se REFRESQUE (firma distinta) = llegó el resultado real.
-  // Si no refresca en ~5s, reintentar la selección UNA vez (el menú a veces no dispara
-  // la búsqueda a la primera). Tope total 12s.
+  if (firmaFilas() === firmaAntes) {
+    const lupa = iconBtn('mdi-magnify');
+    if (lupa) clickElement(lupa);
+    await delay(250);
+    input = (await _asegurarTextoBusqueda(wanted, 2)) || input;  // el menú pudo limpiar el campo
+    await elegirTodosLosJugadores(6000);                          // robusto: no deja el dropdown colgado
+  }
+
+  // 3) Esperar a que la lista se REFRESQUE (firma distinta) = llegó el resultado real.
+  //    A los 5s reintenta el disparo UNA vez, re-verificando el texto antes. Tope 12s.
   const inicio = now();
   let reintentado = false;
   while (now() - inicio < 12000) {
     _chequearFreno('buscando');
-    if (firmaFilas() !== firmaAntes) { await delay(250); return true; }
+    if (firmaFilas() !== firmaAntes) { await delay(250); return { refresco: true, textoOk: true }; }
     if (!reintentado && now() - inicio > 5000) {
       reintentado = true;
+      input = (await _asegurarTextoBusqueda(wanted, 2)) || input;
       const l2 = iconBtn('mdi-magnify');
       if (l2) clickElement(l2);
       await delay(250);
@@ -346,7 +426,7 @@ async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
     await delay(150);
   }
   await delay(250);
-  return false; // no se detectó refresco (puede que el resultado sea idéntico al previo)
+  return { refresco: false, textoOk: true }; // no hubo refresco → NO se puede concluir nada
 }
 
 // ⛔ Núcleo estable: busca y (opcional) lee saldo. Deja _currentUser para las operaciones.
@@ -359,28 +439,50 @@ async function buscarUsuario(usuario, options = {}) {
   if (ready.needsLogin || ready.pageError) return ready;
 
   const wanted = String(usuario).trim();
-  const refresco = await ejecutarBusqueda(wanted, options.timeout || DEFAULT_TIMEOUT);
+  const INTENTOS = 3;
 
-  // Esperar la fila que COINCIDE con el alias buscado.
-  // ⚠ NO se concluye "no existe" por haber filas en pantalla: BET300 deja la lista
-  // anterior mientras responde la API, y ese heurístico daba falsos ERROR_OPERATIVO.
-  // Si la lista YA se refrescó, alcanza una ventana corta; si no, timeout completo.
-  const VENTANA = refresco ? 6000 : (options.timeout || DEFAULT_TIMEOUT);
-  const inicio = now();
-  let fila = null;
-  while (now() - inicio < VENTANA) {
-    if (pageNeedsLogin()) return status();
-    fila = buscarFilaPorAlias(wanted);
-    if (fila) break;
-    await delay(180);
-  }
-  if (!fila) {
-    return { ok: true, exists: false, user: wanted, message: 'No apareció el usuario buscado en BET300.' };
+  // ⚠ REGLA ANTI-FALSO-NEGATIVO: solo se concluye "NO existe" si la lista SE REFRESCÓ de verdad
+  // (firma distinta) y aun así el alias no apareció. Si la búsqueda no se ejecutó (campo vacío,
+  // menú colgado, API sin responder), NO se afirma nada: se REINTENTA, y si igual no se logra,
+  // se lanza ERROR TÉCNICO. Antes cualquiera de esas fallas devolvía exists:false → el panel
+  // decía "el usuario no existe" cuando en realidad nunca se llegó a buscar.
+  for (let intento = 1; intento <= INTENTOS; intento++) {
+    const r = await ejecutarBusqueda(wanted, options.timeout || DEFAULT_TIMEOUT);
+
+    // Esperar la fila que COINCIDE con el alias buscado. BET300 deja la lista anterior mientras
+    // responde la API, así que no alcanza con "hay filas": esperamos la fila exacta.
+    const VENTANA = (r && r.refresco) ? 6000 : 4000;
+    const inicio = now();
+    let fila = null;
+    while (now() - inicio < VENTANA) {
+      if (pageNeedsLogin()) return status();
+      fila = buscarFilaPorAlias(wanted);
+      if (fila) break;
+      await delay(180);
+    }
+
+    if (fila) {
+      _currentUser = aliasDeFila(fila);
+      return { ok: true, exists: true, user: _currentUser, balance: saldoDeFila(fila), intentos: intento };
+    }
+
+    // Lista refrescada + texto verificado y NO está el alias → NO existe (conclusión válida).
+    if (r && r.refresco && r.textoOk) {
+      return { ok: true, exists: false, user: wanted, message: 'No apareció el usuario buscado en BET300.', intentos: intento };
+    }
+
+    // Falla técnica → reintentar desde el inicio de la pantalla de carga.
+    console.warn('[buscar] intento ' + intento + '/' + INTENTOS + ' sin resultado confiable (texto '
+      + (r && r.textoOk ? 'OK' : 'NO SE ESCRIBIÓ') + ', refresco ' + (r && r.refresco ? 'sí' : 'NO') + ') — reintentando');
+    if (intento < INTENTOS) {
+      try { await _asegurarInicio(); } catch (_) {}
+      await delay(400);
+    }
   }
 
-  _currentUser = aliasDeFila(fila);
-  const balance = saldoDeFila(fila); // saldo del jugador (columna Cantidad)
-  return { ok: true, exists: true, user: _currentUser, balance };
+  // Agotados los intentos sin poder confirmar: se informa ERROR, NUNCA "no existe".
+  throw new Error('No se pudo ejecutar la búsqueda de "' + wanted + '" en BET300 tras ' + INTENTOS
+    + ' intentos (el campo o la lista no respondieron). NO se concluye que el usuario no exista — reintentá.');
 }
 
 // ── Carga / Descarga ─────────────────────────────────────────────────────────
@@ -571,6 +673,21 @@ async function crearUsuario(alias, _password, options = {}) {
   await confirmarModalFinal(); // BET300: acepta "Confirmar creación del jugador"
 
   const snack = await esperarSnackbarCapturado(captCrear, 7000);
+
+  // D (ESTRICTO): apenas figura "user_create_successfully" damos por creado y CERRAMOS TODO ya —
+  // nodo ya copió usuario+clave, el banner/modal final no se necesita (ni lo ve el operador). Si
+  // NO se detecta el banner, seguimos con el flujo de abajo como antes (no es absoluto).
+  if (snack && (snack.creado || /create_?successfully/i.test(snack.texto || ''))) {
+    await _cerrarTodoBet300();
+    return { ok: true, alias, password: CLAVE_ESTANDAR, message: 'Jugador creado (banner user_create_successfully).' };
+  }
+  // C: "Duplicated alias" → alias duplicado. Cerramos RÁPIDO con "Cerrar" para agilizar la cola
+  // (p.ej. si hay una carga esperando detrás mientras se intentaba crear).
+  if (snack && (snack.dup || /duplicated\s*alias/i.test(snack.texto || ''))) {
+    await _cerrarTodoBet300();
+    return { ok: false, alias, error: 'duplicado', message: 'El alias ya existe en BET300 (Duplicated alias).' };
+  }
+
   if (findActiveModal()) await cerrarModalActual();
 
   if (snack && snack.tipo === 'error') {
@@ -605,10 +722,81 @@ function readAgentBalance() {
   }
   return { raw: '', value: 0 };
 }
+// Item del menú lateral cuyo texto matchea (navegación IN-PAGE por el router de Vue, sin recargar).
+function findMenuItem(re) {
+  return visibleElements('.v-list-item, [role="option"], a, .v-btn').find(el => re.test(normalizeText(el.textContent))) || null;
+}
+// ── Balance de fichas del agente desde /agents/tokens-report ("Reporte de carga y descarga") ──
+// El header muestra el saldo del agente CON ERROR. La fuente confiable es esa página: lista cada
+// operación con su BALANCE de fichas; la fila MÁS RECIENTE (primera de datos, saltando "Totales")
+// tiene el balance ACTUAL. Columnas: Fecha | Tipo | Estado | Cantidad | Alias | Balance.
+function leerBalanceFichasReporte() {
+  const filas = visibleElements('table tbody tr, .v-table tbody tr, tbody tr, tr');
+  for (const tr of filas) {
+    const tds = Array.from(tr.querySelectorAll('td')).filter(isVisible);
+    if (tds.length < 6) continue;
+    const c0 = normalizeText(tds[0].textContent);
+    if (/totales/i.test(c0)) continue;                      // saltar la fila de Totales
+    if (!/\d{1,2}\/\d{1,2}\/\d{2,4}/.test(c0)) continue;     // fila de datos = empieza con fecha
+    const balTxt = normalizeText(tds[tds.length - 1].textContent); // última columna = Balance
+    if (/\d/.test(balTxt)) return { raw: balTxt, value: parseMoney(balTxt) };
+  }
+  return null;
+}
+// Navega a tokens-report (menú in-page o URL directa) y, si la tabla está vacía, clickea "Filtrar"
+// (la página tiene filtro de fecha + botón "Filtrar" con rango por defecto → sin eso, tabla vacía).
+async function irAReporteFichas(timeout = 12000) {
+  if (leerBalanceFichasReporte()) return true;
+  const t = now() + timeout;
+  let usedUrl = false;
+  while (now() < t) {
+    _chequearFreno('yendo a reporte de fichas');
+    if (leerBalanceFichasReporte()) return true;
+    if (!/tokens-report/i.test(location.href)) {
+      const it = findMenuItem(/reporte de carga|carga y descarga|tokens.?report/i);
+      if (it) { clickElement(it); }
+      else if (!usedUrl) { usedUrl = true; try { location.assign(BASE_URL + 'agents/tokens-report'); } catch (_e) {} }
+    } else if (!leerBalanceFichasReporte()) {
+      const filtrar = findByText(/^filtrar$/i, 'button, .v-btn');
+      if (filtrar) clickElement(filtrar);
+    }
+    const t2 = now() + 3000;
+    while (now() < t2) { if (leerBalanceFichasReporte()) return true; await delay(150); }
+  }
+  return !!leerBalanceFichasReporte();
+}
+// Vuelve a la sección con el buscador (tras leer fichas) por el menú, in-page.
+async function volverABusqueda(timeout = 8000) {
+  if (findSearchInput()) return true;
+  const cands = [/control de agentes/i, /agentes y jugadores/i, /agentes/i, /jugadores/i];
+  const t = now() + timeout;
+  while (now() < t) {
+    if (findSearchInput()) return true;
+    for (const re of cands) {
+      const it = findMenuItem(re);
+      if (it) { clickElement(it); const t2 = now() + 2500; while (now() < t2) { if (findSearchInput()) return true; await delay(150); } }
+    }
+    await delay(250);
+  }
+  return !!findSearchInput();
+}
 async function obtenerSaldoAgente(options = {}) {
   if (pageNeedsLogin()) return { ok: false, needsLogin: true };
-  await waitFor(() => readAgentBalance().value > 0, options.timeout || 6000).catch(() => {});
-  return { ok: true, balance: readAgentBalance() };
+  let result = null;
+  // BET300: el header trae el saldo con error → leemos la fila MÁS RECIENTE de tokens-report.
+  try {
+    await irAReporteFichas(options.timeout || 12000);
+    const bal = leerBalanceFichasReporte();
+    if (bal && bal.value > 0) result = { ok: true, balance: bal, fuente: 'tokens-report' };
+  } catch (_e) {}
+  if (!result) {
+    // Fallback: header (puede estar mal, pero es mejor que nada si el reporte no cargó).
+    await waitFor(() => readAgentBalance().value > 0, 4000).catch(() => {});
+    result = { ok: true, balance: readAgentBalance(), fuente: 'header' };
+  }
+  // VOLVER a la búsqueda tras leer las fichas — si no, quedaba colgado en el reporte.
+  try { if (!findSearchInput()) await volverABusqueda(8000); } catch (_e) {}
+  return result;
 }
 
 function irABusquedaUsuarios() {
@@ -616,6 +804,25 @@ function irABusquedaUsuarios() {
     try { location.assign(BASE_URL); } catch (_) {}
   }
   return { ok: true, url: BASE_URL };
+}
+
+// Verifica en qué página estamos y va al INICIO (Control de agentes / búsqueda = pantalla de carga)
+// SOLO si no estamos ya ahí — así no se recarga al pedo. Navega por el MENÚ (no recarga la SPA);
+// location.assign(BASE_URL) es último recurso. Lo llama ensureReady antes de cada operación.
+async function _asegurarInicio() {
+  if (findSearchInput()) return true;   // ya estamos en la pantalla de carga → no tocar nada
+  _navegandoAInicio = true;             // avisar el recorrido → una carga forzada espera a que termine
+  try {
+    // esperar a que monte el layout (venimos de un login recién / de otra vista como Estadísticas)
+    await waitFor(() => findSearchInput() || findMenuItem(/control de agentes/i) || firstVisible('.v-list-item'), 10000, 150, 'inicio-mount').catch(() => {});
+    if (findSearchInput()) return true;
+    // ir a "Control de agentes" por el menú (sin recargar); si no está el menú, recién ahí por URL
+    const item = findMenuItem(/control de agentes/i) || findByText(/control de agentes/i, '.v-list-item, a, button, [role="option"]');
+    if (item) { clickElement(item); await delay(400); }
+    else { try { location.assign(BASE_URL); } catch (_) {} }
+    await waitFor(findSearchInput, 12000, 150, 'inicio-buscador').catch(() => {});
+    return !!findSearchInput();
+  } finally { _navegandoAInicio = false; }
 }
 
 // ── Login ────────────────────────────────────────────────────────────────────
@@ -643,6 +850,8 @@ async function iniciarSesion(usuario, clave) {
   while (now() - inicio < 15000) {
     await delay(500);
     if (!pageNeedsLogin()) return { ok: true, message: 'Sesión iniciada.' };
+    // (NO forzamos navegación acá: cada operación, vía ensureReady, verifica la página y va al inicio
+    //  SOLO si no está en la pantalla de carga — así no se recarga al pedo.)
   }
   return { ok: false, message: 'No se pudo iniciar sesión en BET300. Verificá usuario y contraseña.' };
 }
@@ -671,7 +880,9 @@ ipcRenderer.on('drex:automation:run', async (event, request = {}) => {
   try {
     if (!Object.prototype.hasOwnProperty.call(api, method)) throw new Error(`Método no permitido: ${method}`);
     if (METODOS_OPERACION.has(method)) _abortOperacion = false;
-    const result = await api[method](...args);
+    // [perf] cronometrar las operaciones (buscar/carga/retiro/crear/clave) → un log por operación.
+    const _fn = api[method];
+    const result = METODOS_OPERACION.has(method) ? await _perfWrap(method, _fn)(...args) : await _fn(...args);
     ipcRenderer.send('drex:automation:result', { requestId, ok: true, result });
   } catch (error) {
     ipcRenderer.send('drex:automation:result', { requestId, ok: false, error: error.message || String(error) });
