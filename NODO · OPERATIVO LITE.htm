@@ -574,6 +574,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   #navChat::before{content:"💬"}
   #navJugadores::before{content:"🏅"}
   #navAuto::before{content:"⚡"}
+  #navUpdater::before{content:"🔄"}
   .sidebar > .nav-btn[onclick*="cerrarSesion"]::before{content:"🚪"}
   /* Globito con el nombre: el texto del botón está en color:transparent + font-size:0, así que
      sin esto la barra angosta era pura adivinanza. Sale del aria-label (una sola fuente). */
@@ -950,6 +951,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
            botón de nav se sacaron porque el panel se colaba visible en el Inicio. El procesador de
            la cola sigue corriendo en background; setBox() ignora los contenedores que ya no existen. -->
 
+      <!-- El updater vive acá, no flotando: arriba a la derecha es del panel de chat y cualquier
+           cosa fija ahí le cae encima. Es un botón más de la barra, con su globito como el resto. -->
+      <button id="navUpdater" class="nav-btn" aria-label="Actualizaciones" onclick="nodoUpdaterAbrir()">🔄 Actualizaciones</button>
       <button class="nav-btn" aria-label="Cerrar sesión" onclick="cerrarSesion()">🚪 Cerrar sesión</button>
     </aside>
 
@@ -2627,7 +2631,9 @@ function finalizarLogin(guardar=true){
   }
   document.getElementById("loginView").classList.add("hidden");
   document.getElementById("appView").classList.remove("hidden");
-  document.body.classList.add("app-lista");   // reubica la barra del updater (ver CSS #updaterBox)
+  // Adentro de la app el updater no flota: se abre desde el botón 🔄 de la barra izquierda.
+  document.body.classList.add("app-lista");
+  try{ nodoUpdaterMinimizar(true); }catch(_e){}
   setBox("operadorInfo",`
     <b>${operador.nombre||operador.NOMBRE}</b><br>
     <span class="badge badge-blue">Rol: ${operador.rol||"OPERADOR"}</span>
@@ -3908,50 +3914,19 @@ async function nodoInitUpdater(){
     try{ if(localStorage.getItem("nodo_updater_min")==="1") nodoUpdaterMinimizar(true); }catch(_e){}
   }catch(_e){}
 }
-// Mantiene el updater arriba a la derecha SIN pisar la cabecera del chat: le resta el ancho de lo
-// que haya ocupando esa esquina (el panel de chat del Inicio o la barra del chat abierto).
-function _updaterReubicar(){
-  try{
-    const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
-    if(!box && !chip) return;
-    let right=12;
-    const candidatos=[document.getElementById("v15ChatCompactCard"), document.querySelector("#viewChat .chat-toolbar")];
-    candidatos.forEach(function(el){
-      if(!el) return;
-      const r=el.getBoundingClientRect();
-      if(r.width<=0 || r.height<=0) return;                    // oculto o minimizado → no estorba
-      if(r.top > 120) return;                                  // no está en la esquina de arriba
-      if(r.right < window.innerWidth - 120) return;            // no llega al borde derecho
-      right=Math.max(right, Math.round(window.innerWidth - r.left) + 12);
-    });
-    [box,chip].forEach(function(el){
-      if(!el) return;
-      el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=right+"px";
-    });
-  }catch(_e){}
-}
-window._updaterReubicar=_updaterReubicar;
-try{
-  addEventListener("resize", _updaterReubicar);
-  // El panel de chat cambia de ancho al minimizarse/restaurarse: lo seguimos en vez de adivinar.
-  if(window.ResizeObserver){
-    const _ro=new ResizeObserver(function(){ _updaterReubicar(); });
-    addEventListener("DOMContentLoaded", function(){
-      const c=document.getElementById("v15ChatCompactCard"); if(c) _ro.observe(c);
-      const t=document.querySelector("#viewChat .chat-toolbar"); if(t) _ro.observe(t);
-      _updaterReubicar();
-    });
-  }
-  setTimeout(_updaterReubicar, 1500);
-}catch(_e){}
-
+// Abre/cierra la barra del updater desde el botón de la barra izquierda. Si ya está abierta,
+// el mismo botón la cierra (no hace falta ir a buscar el "—").
+window.nodoUpdaterAbrir=function(){
+  const box=document.getElementById("updaterBox");
+  const abierta = box && getComputedStyle(box).display !== "none";
+  nodoUpdaterMinimizar(abierta);
+};
 function nodoUpdaterMinimizar(min){
   try{
     const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
     if(box) box.style.display = min ? "none" : "flex";
     if(chip) chip.style.display = min ? "inline-flex" : "none";
     localStorage.setItem("nodo_updater_min", min ? "1" : "0");
-    _updaterReubicar();   // el plegado y el desplegado no miden lo mismo
   }catch(_e){}
 }
 async function nodoVolverVersionAnterior(){
@@ -15017,8 +14992,14 @@ async function ejecutarSolicitudPortalSimple(ctx){
       body:not(.nodo-chat-open) #viewChat .chat-panel{
         display:none!important;
       }
+      /* display:block MATABA el scroll de la bandeja: .chat-list es una columna flex y #chatList
+         saca su altura de ahí (flex:1 + overflow-y:auto). En block, #chatList crece con el
+         contenido, se pasa del alto de la tarjeta y .chat-list (overflow:hidden) lo recorta —
+         con 42 cerrados no había forma de bajar. Sigue ocupando todo el ancho, pero como flex. */
       body:not(.nodo-chat-open) #viewChat .chat-list{
-        display:block!important;
+        display:flex!important;
+        flex-direction:column!important;
+        min-height:0!important;
         width:100%!important;
       }
       .nodo-chat-back-hint{
@@ -15717,15 +15698,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
         // La consulta ya tomada se abre tocando la tarjeta: el botón "Abrir" duplicaba el gesto.
         // "Aceptar" SÍ sigue siendo botón — toma el ticket a tu nombre, no es sólo mirar.
         const clickeable = accepted && !t.cerrado;
-        // El estado (ABIERTO/CERRADO/EN ESPERA) ya lo dice la solapa en la que estás parado.
-        const meta = `${t.thread.length} msj · Sol. ${E(t.masterId||t.solicitudId||"")}`;
+        // Sin linea de estado: "ABIERTO" ya lo dice la solapa donde estás, y ni el contador de
+        // mensajes ni el N° de solicitud se usan para nada acá — el operador no decide con eso.
+        // Quedan avatar, usuario, último mensaje y hora, que es lo que se mira para elegir un chat.
         html+=`<div class="wq2-item ${active?"active":""} ${accepted?"chat-open-final":""}"
             ${clickeable?`onclick="aceptarTicketLocalStep2('${E(t.id)}')" style="cursor:pointer" title="Abrir la conversación"`:""}>
           <div class="wq2-avatar" style="background:${avatarColor(t.usuario)}">${iniciales(t.usuario)}</div>
           <div style="min-width:0">
             <div class="wq2-name">${E(t.usuario)}</div>
             <div class="wq2-msg">${E(t.mensaje||"")}</div>
-            <div class="wq2-state ${accepted?"open-final":""}">${meta}</div>
           </div>
           <div>
             <div class="wq2-meta">${hora(t.fecha)}</div>
@@ -17449,10 +17430,16 @@ body.nodo-chat-open .chat-tb-min{display:none!important}
 /* El puente inyecta ADEMÁS su propio "← Bandeja / Esc" flotando en la cabecera de la conversación.
    Con el de la barra es un botón repetido; Esc sigue haciendo lo mismo. */
 .nodo-chat-back-hint{display:none!important}
-/* El updater se queda arriba a la derecha, donde estuvo siempre. Lo único que hace falta es que
-   no le pise los botones a la cabecera del chat: _updaterReubicar() lo corre hacia la izquierda
-   justo lo que mide el panel de chat, midiéndolo del DOM. Así sigue bien si el chat se minimiza,
-   si cambia de ancho o si se cambia de vista, sin números mágicos. */
+/* ── Updater ───────────────────────────────────────────────────────────────────────────────
+   En el LOGIN sigue arriba a la derecha: esa esquina está vacía y ahí estuvo siempre.
+   Ya adentro, esa esquina es del panel de chat — probamos correrlo y termina cayendo dentro de
+   la cabecera del chat igual. Así que deja de flotar: pasa a ser un botón de la barra izquierda
+   (#navUpdater) y la barra completa se abre como globo pegado a la barra, sólo cuando la abrís. */
+body.app-lista #updaterMiniChip{display:none!important}
+body.app-lista #updaterBox{
+  top:auto!important;right:auto!important;left:84px!important;bottom:12px!important;
+  max-width:calc(100vw - 110px);flex-wrap:wrap;
+}
 </style>
 
 <script id="nodoBasePilotoJs">
