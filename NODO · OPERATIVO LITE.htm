@@ -9835,10 +9835,29 @@ window._cotejoConfirmarDecl=async function(){
   _cotejoLsSave(st.turno_id, ls); st.casos=ls.casos; st.resumen=ls.resumen;
   _cotejoRenderCasos();
 };
+// El badge mostraba el enum crudo de la base (SUGERENCIA_ENCONTRADA, APLICACION_PARCIAL, ESCALADA…).
+// El operador no tiene por qué saber qué significan — "no sé qué es escalada" fue textual.
+const _COTEJO_ESTADOS={
+  ABIERTA:               {t:'Sin resolver',        c:'#f5c518'},
+  SUGERENCIA_ENCONTRADA: {t:'Con pista',           c:'#7dd3fc'},
+  PARCIAL_ASIGNADA:      {t:'Compensada en parte', c:'#c1b3ff'},
+  AJUSTANDO:             {t:'Ajustando',           c:'#7dd3fc'},
+  APLICACION_PARCIAL:    {t:'Aplicada a medias',   c:'#fb923c'},
+  RESUELTA:              {t:'Resuelta',            c:'#22c55e'},
+  ESCALADA:              {t:'Pasada al superior',  c:'#a78bfa'},
+  ANULADA:               {t:'Anulada',             c:'#6b7688'}
+};
 function _cotejoEstadoBadge(e){
-  const map={ABIERTA:'#f5c518',SUGERENCIA_ENCONTRADA:'#7dd3fc',PARCIAL_ASIGNADA:'#c1b3ff',AJUSTANDO:'#7dd3fc',APLICACION_PARCIAL:'#fb923c',RESUELTA:'#22c55e',ESCALADA:'#a78bfa',ANULADA:'#6b7688'};
-  return '<span style="font-size:10px;font-weight:900;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.06);color:'+(map[e]||'#8b949e')+'">'+escapeHtml(e||'')+'</span>';
+  const m=_COTEJO_ESTADOS[e]||{t:String(e||''),c:'#8b949e'};
+  return '<span title="'+escapeHtml(String(e||''))+'" style="font-size:10px;font-weight:800;padding:2px 7px;border-radius:999px;background:rgba(255,255,255,.06);color:'+m.c+'">'+escapeHtml(m.t)+'</span>';
 }
+// Tonos de las tiras de pista, por tipo de acción.
+const _COTEJO_TONO={
+  verde:  {bg:'#122015', bd:'rgba(34,197,94,.32)'},
+  violeta:{bg:'#1b1430', bd:'rgba(167,139,250,.30)'},
+  rojo:   {bg:'#2a1215', bd:'rgba(248,113,113,.35)'},
+  neutro: {bg:'#151a22', bd:'#262d3a'}
+};
 function _cotejoRenderCasos(){
   const st=window._cotejoState, el=_cotejoUiModal();
   const abiertos=st.casos.filter(function(c){ return !['RESUELTA','ANULADA','ESCALADA'].includes(c.estado); });
@@ -9853,113 +9872,161 @@ function _cotejoRenderCasos(){
   const _FIN=['RESUELTA','ANULADA','ESCALADA'];
   const _activos=st.casos.filter(function(c){ return !_FIN.includes(c.estado); });
   const _cerrados=st.casos.filter(function(c){ return _FIN.includes(c.estado); });
+  // Qué sobrantes ya están ofrecidos como solución de algún faltante (las sugerencias siempre
+  // cuelgan del faltante, así que sin este mapa el sobrante queda "huérfano" en pantalla).
+  const contraparte={};
+  _activos.forEach(function(c){
+    if(c.tipo!=='FALTANTE') return;
+    const s=sugPorCaso[c.case_id], k=comboPorCaso[c.case_id];
+    if(s && s.caso_sobrante){ contraparte[String(s.caso_sobrante)]=c.wallet_nombre||''; return; }
+    if(k){ (k.partes||[]).forEach(function(p){ contraparte[String(p)]=c.wallet_nombre||''; }); return; }
+    _activos.forEach(function(s2){                       // los que ofrece la compensación parcial
+      if(s2.tipo==='SOBRANTE' && String(s2.wallet_id)!==String(c.wallet_id) && Number(s2.monto_disponible)>0)
+        contraparte[String(s2.case_id)]=c.wallet_nombre||'';
+    });
+  });
   const filas=_activos.map(function(c){
     const col=c.tipo==='FALTANTE'?'#f87171':'#f5c518';
-    let html='<div style="border:1px solid #262d3a;border-left:3px solid '+col+';border-radius:9px;padding:8px 10px;margin-top:6px;background:#10141b">'
-      + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-      +   '<b style="color:'+col+'">'+(c.tipo==='FALTANTE'?'▼ Falta':'▲ Sobra')+' '+money(c.monto_disponible)+'</b>'
-      +   '<span class="small" style="color:#8b949e">en <b>'+escapeHtml(c.wallet_nombre||c.wallet_id)+'</b> · #'+escapeHtml(String(c.case_id))+(c._local?' <span title="Aún no está el SQL en Supabase — caso local">📌</span>':'')+'</span>'
-      +   _cotejoEstadoBadge(c.estado)
-      + '</div>'
-      + (c.observaciones?'<div class="small" style="color:#6b7688;margin-top:2px">'+escapeHtml(String(c.observaciones))+'</div>':'')
-      // Mini-guía: los movimientos del turno de ESA billetera, para investigar el descuadre sin salir.
-      + '<div class="small" style="margin-top:4px"><a href="javascript:void 0" style="color:#7dd3fc" onclick="_cotejoToggleMovs(\''+escapeHtml(String(c.case_id))+'\')">🔎 Ver movimientos del turno de esta billetera</a></div>'
-      + '<div id="cotejoMovs_'+escapeHtml(String(c.case_id))+'" style="display:none;margin-top:4px;max-height:170px;overflow:auto;background:#0b0f15;border:1px solid #1e2530;border-radius:7px;padding:6px">'+_cotejoMovsHtml(c.wallet_id)+'</div>';
+    const cid=escapeHtml(String(c.case_id));
+    const _m=Math.round(Number(c.monto_disponible));
+    const _ex=(st.snap&&st.snap.extra)||{};
+    // ── Las pistas son OPCIONES con peso, no tiras apiladas ────────────────────────────────
+    // Antes se dibujaban hasta 8 tiras del mismo tamaño, todas con botón verde, y el operador no
+    // tenía cómo saber cuál era LA correcta. Ahora se ordenan por qué tan segura es la explicación
+    // y solo la mejor queda a la vista; el resto se despliega si la primera no convence.
+    const ops=[];
+    const op=function(peso, tono, texto, boton, rot){ ops.push({peso:peso, tono:tono, texto:texto, boton:boton||'', rot:rot||''}); };
+
     const sug=sugPorCaso[c.case_id];
-    if(sug && !['RESUELTA','ANULADA','ESCALADA'].includes(c.estado)){
+    if(sug){
       if(sug.tipo==='MOVER_RETIRO' && sug.candidatos.length){
-        html+='<div class="small" style="margin-top:5px;color:#c9d1d9">💡 '+(sug.confianza==='EXACTA'?'Coincidencia exacta':'Posibles (elegí)')+':</div>';
-        sug.candidatos.forEach(function(cd,ci){
-          html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:3px;padding:4px 8px;background:#151a22;border-radius:7px">'
-            + '<span style="flex:1">⬇ Retiro <b>'+escapeHtml(cd.usuario)+'</b> · '+money(cd.monto)+' anotado en '+escapeHtml(cd.billetera_nombre||'')+(cd.chunior_movimiento_id?' · N° '+escapeHtml(String(cd.chunior_movimiento_id)):'')+'</span>'
-            + '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoAplicarMoverRetiro(\''+escapeHtml(String(c.case_id))+'\',\''+escapeHtml(String(sug.caso_sobrante))+'\',\''+escapeHtml(String(cd.id))+'\')">Mover acá</button></div>';
-        });
+        // Un retiro concreto que explica el descuadre: la explicación más fuerte que hay.
+        const exacta=sug.confianza==='EXACTA';
+        const lista=sug.candidatos.map(function(cd){
+          return '<div style="display:flex;align-items:center;gap:8px;margin-top:4px">'
+            + '<span style="flex:1">⬇ Retiro de <b>'+escapeHtml(cd.usuario)+'</b> · '+money(cd.monto)+' anotado en '+escapeHtml(cd.billetera_nombre||'')+(cd.chunior_movimiento_id?' · N° '+escapeHtml(String(cd.chunior_movimiento_id)):'')+'</span>'
+            + '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoAplicarMoverRetiro(\''+cid+'\',\''+escapeHtml(String(sug.caso_sobrante))+'\',\''+escapeHtml(String(cd.id))+'\')">Mover acá</button></div>';
+        }).join('');
+        op(exacta?10:40, 'verde',
+          (exacta ? 'Este retiro quedó anotado en la billetera equivocada.'
+                  : 'Hay '+sug.candidatos.length+' retiros que podrían explicarlo — elegí cuál.') + lista);
       } else if(sug.tipo==='MOVER_RETIRO' && !sug.candidatos.length){
         // Par 1:1 detectado pero SIN retiro que lo explique → autoajuste genérico: transferencia
         // CONTABLE en Chunior (movimientointerno) de la billetera faltante → sobrante. No mueve
         // plata real: alinea lo anotado con lo que hay (falta en A = chunior alto; sobra en B = bajo).
         const sc=_cotejoCaso(sug.caso_sobrante)||{};
-        html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:5px;padding:4px 8px;background:#151a22;border-radius:7px">'
-          + '<span style="flex:1">💡 Concuerda con lo que sobra en <b>'+escapeHtml(sc.wallet_nombre||'')+'</b> (mismo monto, sin retiro que lo explique)</span>'
-          + '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoCompensar(\''+escapeHtml(String(c.case_id))+'\',\''+escapeHtml(String(sug.caso_sobrante))+'\')">⇄ Compensar (transferencia Chunior)</button></div>';
+        op(50, 'verde', 'Sobra exactamente lo mismo en <b>'+escapeHtml(sc.wallet_nombre||'')+'</b>, sin ningún retiro que lo explique.',
+          '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoCompensar(\''+cid+'\',\''+escapeHtml(String(sug.caso_sobrante))+'\')">⇄ Compensar (transferencia en Chunior)</button>');
       } else if(sug.tipo==='DEPO_EXISTENTE'){
-        html+='<div class="small" style="margin-top:5px;color:#c9d1d9">💡 Concuerda con un depo s/reclamar SIN usuario ya anotado — revisalo antes de crear otro.</div>';
+        op(35, 'violeta', 'Concuerda con un depo s/reclamar SIN usuario que <b>ya está anotado</b> — revisalo antes de crear otro.');
       }
     }
     // GUÍAS desde las fuentes REALES de Chunior (leídas en el snapshot): depos s/reclamar del
-    // turno y envíos a la billetera ERROR del turno. "Encontramos este depo que concuerda con lo
-    // que declarás que falta — ¿es esa carga?" / "Enviaste esta plata a ERROR y acá te falta esto".
-    const _ex=(st.snap&&st.snap.extra)||{};
-    if(!['RESUELTA','ANULADA','ESCALADA'].includes(c.estado)){
-      const _m=Math.round(Number(c.monto_disponible));
-      (_ex.depos||[]).filter(function(d){ return d.monto===_m; }).slice(0,2).forEach(function(d){
-        html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:5px;padding:4px 8px;background:#1b1430;border:1px solid rgba(167,139,250,.3);border-radius:7px">'
-          + '<span style="flex:1">💜 Hay un depo s/reclamar de <b>'+money(d.monto)+'</b> de este turno'+(d.id?' (N° '+escapeHtml(d.id)+')':'')+(d.cuenta?' en '+escapeHtml(d.cuenta):'')+' que concuerda'+(c.tipo==='FALTANTE'?' con lo que te falta — ¿es esa carga?':'')+'</span>'
-          + (d.id?'<button class="mini-btn green" style="font-size:11px" onclick="reclamarDepo(\''+escapeHtml(d.id)+'\',\''+escapeHtml(String(d.monto))+'\',\''+escapeHtml(d.cuenta||'')+'\')">✅ Reclamarlo</button>':'')+'</div>';
-      });
-      (_ex.errores||[]).filter(function(e){ return e.monto===_m; }).slice(0,2).forEach(function(e){
-        if(c.tipo==='FALTANTE'){
-          html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:5px;padding:4px 8px;background:#2a1215;border:1px solid rgba(248,113,113,.35);border-radius:7px">'
-            + '<span style="flex:1">🚫 Enviaste <b>'+money(e.monto)+'</b> a ERROR este turno'+(e.id?' (N° '+escapeHtml(e.id)+')':'')+'. Si este faltante ES ese error genuino, <b>no lo reclames</b> — cerralo como ya declarado.</span>'
-            + '<button class="mini-btn gray" style="font-size:11px" onclick="_cotejoCerrarPorError(\''+escapeHtml(String(c.case_id))+'\',\''+escapeHtml(String(e.id||''))+'\')">Cerrar: error ya declarado</button></div>';
-        } else {
-          html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:5px;padding:4px 8px;background:#122015;border:1px solid rgba(34,197,94,.3);border-radius:7px">'
-            + '<span style="flex:1">🚫 Enviaste <b>'+money(e.monto)+'</b> a ERROR este turno'+(e.id?' (N° '+escapeHtml(e.id)+')':'')+' y ahora SOBRA acá — la plata reapareció. ¿Recuperarla de ERROR?</span>'
-            + '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoRecuperarDeError(\''+escapeHtml(String(c.case_id))+'\',\''+escapeHtml(String(e.id||''))+'\')">⇄ Recuperar de ERROR</button></div>';
-        }
-      });
-      // SOBRANTE sin movimiento a ERROR que matchee EXACTO (ej: mandaste 40k juntos y sobran 20k,
-      // o el scraping no leyó la lista): si la billetera ERROR tiene saldo suficiente, ofrecemos
-      // recuperar IGUAL por el monto del caso — no depende del matching fino.
-      const _errW=_ex.errorWallet;
-      if(_errW && Number(_errW.saldo||0)>=_m && !(_ex.errores||[]).some(function(e){ return e.monto===_m; })){
-        if(c.tipo==='SOBRANTE'){
-          html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:5px;padding:4px 8px;background:#122015;border:1px solid rgba(34,197,94,.3);border-radius:7px">'
-            + '<span style="flex:1">🚫 La billetera <b>'+escapeHtml(_errW.nombre)+'</b> tiene <b>'+money(_errW.saldo)+'</b> declarados. Si este sobrante es plata que reapareció de un error, recuperá '+money(_m)+' de ahí.</span>'
-            + '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoRecuperarDeError(\''+escapeHtml(String(c.case_id))+'\',\'\')">⇄ Recuperar de ERROR</button></div>';
-        } else {
-          html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:5px;padding:4px 8px;background:#2a1215;border:1px solid rgba(248,113,113,.35);border-radius:7px">'
-            + '<span style="flex:1">🚫 <b>'+escapeHtml(_errW.nombre)+'</b> ya tiene <b>'+money(_errW.saldo)+'</b> declarados. Si esta falta YA está incluida ahí (error genuino), cerrala sin reclamar; si es NUEVA, usá "Enviar a ERROR".</span>'
-            + '<button class="mini-btn gray" style="font-size:11px" onclick="_cotejoCerrarPorError(\''+escapeHtml(String(c.case_id))+'\',\'\')">Cerrar: ya declarado</button></div>';
-        }
+    // turno y envíos a la billetera ERROR del turno.
+    (_ex.depos||[]).filter(function(d){ return d.monto===_m; }).slice(0,2).forEach(function(d){
+      op(30, 'violeta',
+        'Hay un depo s/reclamar de <b>'+money(d.monto)+'</b> de este turno'+(d.id?' (N° '+escapeHtml(d.id)+')':'')+(d.cuenta?' en '+escapeHtml(d.cuenta):'')
+        + (c.tipo==='FALTANTE'?' por el mismo monto — ¿es esa carga?':' por el mismo monto.'),
+        d.id?('<button class="mini-btn green" style="font-size:11px" onclick="reclamarDepo(\''+escapeHtml(d.id)+'\',\''+escapeHtml(String(d.monto))+'\',\''+escapeHtml(d.cuenta||'')+'\')">✅ Reclamarlo</button>'):'');
+    });
+    (_ex.errores||[]).filter(function(e){ return e.monto===_m; }).slice(0,2).forEach(function(e){
+      if(c.tipo==='FALTANTE'){
+        op(20, 'rojo', 'Mandaste <b>'+money(e.monto)+'</b> a ERROR este turno'+(e.id?' (N° '+escapeHtml(e.id)+')':'')+'. Si esta falta ES ese error, <b>no la reclames</b>: ya está declarada.',
+          '<button class="mini-btn gray" style="font-size:11px" onclick="_cotejoCerrarPorError(\''+cid+'\',\''+escapeHtml(String(e.id||''))+'\')">Cerrar: error ya declarado</button>');
+      } else {
+        op(20, 'verde', 'Mandaste <b>'+money(e.monto)+'</b> a ERROR este turno'+(e.id?' (N° '+escapeHtml(e.id)+')':'')+' y ahora sobra acá — la plata reapareció.',
+          '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoRecuperarDeError(\''+cid+'\',\''+escapeHtml(String(e.id||''))+'\')">⇄ Recuperar de ERROR</button>');
+      }
+    });
+    // SOBRANTE sin movimiento a ERROR que matchee EXACTO (ej: mandaste 40k juntos y sobran 20k,
+    // o el scraping no leyó la lista): si la billetera ERROR tiene saldo suficiente, ofrecemos
+    // recuperar IGUAL por el monto del caso — no depende del matching fino.
+    const _errW=_ex.errorWallet;
+    if(_errW && Number(_errW.saldo||0)>=_m && !(_ex.errores||[]).some(function(e){ return e.monto===_m; })){
+      if(c.tipo==='SOBRANTE'){
+        op(80, 'verde', '<b>'+escapeHtml(_errW.nombre)+'</b> tiene '+money(_errW.saldo)+' declarados. Si esto es plata que reapareció de un error, recuperá '+money(_m)+' de ahí.',
+          '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoRecuperarDeError(\''+cid+'\',\'\')">⇄ Recuperar de ERROR</button>');
+      } else {
+        op(80, 'rojo', '<b>'+escapeHtml(_errW.nombre)+'</b> ya tiene '+money(_errW.saldo)+' declarados. Si esta falta ya está incluida ahí, cerrala; si es nueva, usá "Enviar a ERROR".',
+          '<button class="mini-btn gray" style="font-size:11px" onclick="_cotejoCerrarPorError(\''+cid+'\',\'\')">Cerrar: ya declarado</button>');
       }
     }
     // COMPENSACIÓN PARCIAL (montos DISTINTOS): falta 70.800 acá y sobran 90.800 allá → se
     // transfiere el MÍNIMO común y el resto queda como caso vivo (PARCIAL_ASIGNADA). Es el caso
     // que el 1:1 exacto no cubría. Se sugiere, el operador confirma.
-    if(c.tipo==='FALTANTE' && !sug && !comboPorCaso[c.case_id] && !['RESUELTA','ANULADA','ESCALADA'].includes(c.estado)){
+    if(c.tipo==='FALTANTE' && !sug && !comboPorCaso[c.case_id]){
       _activos.filter(function(s2){ return s2.tipo==='SOBRANTE' && String(s2.wallet_id)!==String(c.wallet_id) && Number(s2.monto_disponible)>0; })
         .slice(0,3).forEach(function(s2){
           const mm=Math.min(Number(c.monto_disponible), Number(s2.monto_disponible));
           if(!(mm>0)) return;
           const restoF=Number(c.monto_disponible)-mm, restoS=Number(s2.monto_disponible)-mm;
-          html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:5px;padding:4px 8px;background:#151a22;border:1px solid rgba(34,197,94,.3);border-radius:7px">'
-            + '<span style="flex:1">💡 Sobran <b>'+money(s2.monto_disponible)+'</b> en <b>'+escapeHtml(s2.wallet_nombre||'')+'</b> — se puede compensar <b>'+money(mm)+'</b>'
-            + (restoS>0?(' · quedarían '+money(restoS)+' sobrantes allá'):'')
-            + (restoF>0?(' · quedarían '+money(restoF)+' faltantes acá'):'')+'</span>'
-            + '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoCompensarParcial(\''+escapeHtml(String(c.case_id))+'\',\''+escapeHtml(String(s2.case_id))+'\')">⇄ Compensar '+money(mm)+'</button></div>';
+          op(70, 'neutro',
+            'Sobran <b>'+money(s2.monto_disponible)+'</b> en <b>'+escapeHtml(s2.wallet_nombre||'')+'</b> — se puede compensar '+money(mm)+'.'
+            + (restoS>0?(' Quedarían '+money(restoS)+' sobrando allá.'):'')
+            + (restoF>0?(' Quedarían '+money(restoF)+' faltando acá.'):''),
+            '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoCompensarParcial(\''+cid+'\',\''+escapeHtml(String(s2.case_id))+'\')">⇄ Compensar '+money(mm)+'</button>');
         });
     }
     // COMBINACIÓN (10+5=15): el motor la sugiere pero NUNCA la auto-elige — el operador confirma.
     const combo=(!sug)?comboPorCaso[c.case_id]:null;
-    if(combo && !['RESUELTA','ANULADA','ESCALADA'].includes(c.estado)){
+    if(combo){
       const partesTxt=combo.partes.map(function(pid){ const p=_cotejoCaso(pid)||{}; return escapeHtml(p.wallet_nombre||'')+' ('+money(p.monto_disponible||0)+')'; }).join(' + ');
-      html+='<div class="small" style="display:flex;align-items:center;gap:8px;margin-top:5px;padding:4px 8px;background:#151a22;border-radius:7px">'
-        + '<span style="flex:1">💡 Se cubre combinando: '+partesTxt+'</span>'
-        + '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoCompensarCombo(\''+escapeHtml(String(c.case_id))+'\',\''+combo.partes.map(String).join(',')+'\')">⇄ Compensar combinación</button></div>';
+      op(60, 'neutro', 'Se cubre juntando varias: '+partesTxt+'.',
+        '<button class="mini-btn green" style="font-size:11px" onclick="_cotejoCompensarCombo(\''+cid+'\',\''+combo.partes.map(String).join(',')+'\')">⇄ Compensar combinación</button>');
     }
-    if(!['RESUELTA','ANULADA','ESCALADA'].includes(c.estado)){
-      html+='<div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">';
-      // Pre-relleno del usuario: si hay una consulta del portal abierta, su usuario viene de ahí.
-      const _usrPre=(window.__nodoChatCurrentTicket&&window.__nodoChatCurrentTicket.usuario)||'';
-      if(c.tipo==='SOBRANTE') html+='<input type="text" id="cotejoDepoUsr_'+escapeHtml(String(c.case_id))+'" value="'+escapeHtml(_usrPre)+'" placeholder="usuario (opcional)" style="width:125px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 7px;font-size:11px;margin:0">'
-        + '<button class="mini-btn purple" style="font-size:11px" onclick="_cotejoCrearDepo(\''+escapeHtml(String(c.case_id))+'\')">＋ Anotar depo s/reclamar</button>';
-      if(c.tipo==='FALTANTE' && (st.snap&&st.snap.extra&&st.snap.extra.errorWallet))
-        html+='<button class="mini-btn red" style="font-size:11px" onclick="_cotejoEnviarAError(\''+escapeHtml(String(c.case_id))+'\')" title="Declara la falta: transferencia contable de esta billetera a la billetera ERROR de Chunior (como lo hacés a mano)">🚫 Enviar a ERROR</button>';
-      html+='<button class="mini-btn gray" style="font-size:11px" onclick="_cotejoIgnorar(\''+escapeHtml(String(c.case_id))+'\')">Ignorar</button>'
-        + '<button class="mini-btn" style="font-size:11px;background:#3b2a63;color:#d6c9ff" onclick="_cotejoEscalarCaso(\''+escapeHtml(String(c.case_id))+'\')" title="El caso queda marcado para que lo revise el superior">⏫ Pasar al superior</button></div>';
+
+    // La tarjeta del SOBRANTE decía "sin pistas" aunque el faltante de al lado ya ofreciera
+    // compensarlo con él: las sugerencias cuelgan siempre del faltante. Lo decimos explícito para
+    // que el operador no lo lea como "acá no hay nada que hacer".
+    if(c.tipo==='SOBRANTE' && !ops.length && contraparte[String(c.case_id)]){
+      op(90, 'neutro', 'Es la contraparte de lo que falta en <b>'+escapeHtml(contraparte[String(c.case_id)])+'</b> — se resuelve desde esa tarjeta.', '', 'Dónde se resuelve');
     }
-    return html+'</div>';
+
+    // ── Render: la mejor pista arriba, el resto plegado ────────────────────────────────────
+    ops.sort(function(a,b){ return a.peso-b.peso; });
+    const tira=function(o, destacada){
+      const t=_COTEJO_TONO[o.tono]||_COTEJO_TONO.neutro;
+      return '<div class="small" style="margin-top:'+(destacada?'6':'4')+'px;border:1px solid '+t.bd+';background:'+t.bg+';border-radius:8px;padding:'+(destacada?'7px 9px':'6px 9px')+';color:#c9d1d9;line-height:1.35">'
+        + (destacada?'<div style="font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:#8b949e;margin-bottom:3px">'+(o.rot||'Lo más probable')+'</div>':'')
+        + o.texto + (o.boton?('<div style="margin-top:5px">'+o.boton+'</div>'):'')
+        + '</div>';
+    };
+    let pistas='';
+    if(!ops.length){
+      pistas='<div class="small" style="margin-top:6px;color:#6b7688">Sin pistas automáticas — mirá los movimientos del turno para ubicar el descuadre.</div>';
+    } else {
+      pistas=tira(ops[0], true);
+      if(ops.length>1){
+        pistas+='<div class="small" style="margin-top:4px"><a href="javascript:void 0" style="color:#8b949e" onclick="var d=document.getElementById(\'cotejoOps_'+cid+'\');if(d)d.style.display=d.style.display===\'none\'?\'block\':\'none\'">▸ otras '+(ops.length-1)+' posibilidad'+(ops.length>2?'es':'')+'</a></div>'
+          + '<div id="cotejoOps_'+cid+'" style="display:none">'+ops.slice(1).map(function(o){ return tira(o,false); }).join('')+'</div>';
+      }
+    }
+
+    // Acciones manuales: son la salida cuando ninguna pista sirve, así que van al final y en chico.
+    let acciones='<div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">';
+    const _usrPre=(window.__nodoChatCurrentTicket&&window.__nodoChatCurrentTicket.usuario)||'';   // consulta del portal abierta
+    if(c.tipo==='SOBRANTE') acciones+='<input type="text" id="cotejoDepoUsr_'+cid+'" value="'+escapeHtml(_usrPre)+'" placeholder="usuario (opcional)" style="width:125px;background:#0d1117;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:4px 7px;font-size:11px;margin:0">'
+      + '<button class="mini-btn purple" style="font-size:11px" onclick="_cotejoCrearDepo(\''+cid+'\')">＋ Anotar depo s/reclamar</button>';
+    if(c.tipo==='FALTANTE' && _ex.errorWallet)
+      acciones+='<button class="mini-btn red" style="font-size:11px" onclick="_cotejoEnviarAError(\''+cid+'\')" title="Declara la falta: transferencia contable de esta billetera a la billetera ERROR de Chunior (como lo hacés a mano)">🚫 Enviar a ERROR</button>';
+    acciones+='<span style="margin-left:auto;display:flex;gap:6px">'
+      + '<button class="mini-btn gray" style="font-size:11px" onclick="_cotejoIgnorar(\''+cid+'\')">Ignorar</button>'
+      + '<button class="mini-btn" style="font-size:11px;background:#3b2a63;color:#d6c9ff" onclick="_cotejoEscalarCaso(\''+cid+'\')" title="Queda marcado para que lo revise el superior del turno siguiente">⏫ Pasar al superior</button>'
+      + '</span></div>';
+
+    return '<div style="border:1px solid #262d3a;border-left:3px solid '+col+';border-radius:9px;padding:9px 11px;margin-top:7px;background:#10141b">'
+      + '<div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap">'
+      +   '<b style="color:'+col+';font-size:14px">'+(c.tipo==='FALTANTE'?'▼ Falta':'▲ Sobra')+' '+money(c.monto_disponible)+'</b>'
+      +   '<span class="small" style="color:#8b949e">en <b style="color:#c9d1d9">'+escapeHtml(c.wallet_nombre||c.wallet_id)+'</b></span>'
+      +   (c.estado!=='ABIERTA'?_cotejoEstadoBadge(c.estado):'')
+      +   '<span class="small" style="margin-left:auto;color:#4d5766;font-size:10px">#'+cid+(c._local?' <span title="Aún no está el SQL en Supabase — caso local">📌</span>':'')+'</span>'
+      + '</div>'
+      + (c.observaciones?'<div class="small" style="color:#6b7688;margin-top:2px">'+escapeHtml(String(c.observaciones))+'</div>':'')
+      + pistas
+      + '<div class="small" style="margin-top:5px"><a href="javascript:void 0" style="color:#7dd3fc" onclick="_cotejoToggleMovs(\''+cid+'\')">🔎 Ver movimientos del turno de esta billetera</a></div>'
+      + '<div id="cotejoMovs_'+cid+'" style="display:none;margin-top:4px;max-height:170px;overflow:auto;background:#0b0f15;border:1px solid #1e2530;border-radius:7px;padding:6px">'+_cotejoMovsHtml(c.wallet_id)+'</div>'
+      + acciones
+      + '</div>';
   }).join('');
   // Tabla resumen estilo "cage report" (conciliación de caja de casino): fila por billetera,
   // Anotado (Chunior) | Declarado (banco) | Diferencia, con totales. Muestra TODO, incluso las OK.
@@ -9998,9 +10065,27 @@ function _cotejoRenderCasos(){
           + '</div>';
       }).join('')
     + '</div>') : '';
+  // Cabecera de estado: lo primero que tiene que saber el operador es si el turno cierra o no.
+  // Antes había que sumar las tarjetas a ojo para saber cuánto quedaba sin explicar.
+  const _tFalta=_activos.filter(function(x){ return x.tipo==='FALTANTE'; }).reduce(function(a,b){ return a+Number(b.monto_disponible||0); },0);
+  const _tSobra=_activos.filter(function(x){ return x.tipo==='SOBRANTE'; }).reduce(function(a,b){ return a+Number(b.monto_disponible||0); },0);
+  const cabecera = _activos.length
+    ? '<div style="display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:7px 11px;border-radius:9px;background:rgba(245,197,24,.09);border:1px solid rgba(245,197,24,.35);margin-bottom:9px">'
+      + '<span style="font-size:13px;line-height:1">⚠️</span>'
+      + '<b style="font-size:11.5px;letter-spacing:.5px;text-transform:uppercase;color:#f5c518">'+_activos.length+' sin resolver</b>'
+      + '<span class="small" style="color:#8b949e">'
+      +   (_tFalta?('falta <b style="color:#f87171">'+money(_tFalta)+'</b>'):'')
+      +   ((_tFalta&&_tSobra)?' · ':'')
+      +   (_tSobra?('sobra <b style="color:#f5c518">'+money(_tSobra)+'</b>'):'')
+      + '</span></div>'
+    : '<div style="display:flex;align-items:center;gap:9px;padding:7px 11px;border-radius:9px;background:rgba(63,185,80,.10);border:1px solid rgba(63,185,80,.38);margin-bottom:9px">'
+      + '<span style="font-size:13px;line-height:1">✅</span>'
+      + '<b style="font-size:11.5px;letter-spacing:.5px;text-transform:uppercase;color:#3fb950">Turno cuadrado</b>'
+      + '<span class="small" style="color:#8b949e">no queda nada abierto</span></div>';
   el.innerHTML=_cotejoWrap(
-    resumenHtml
-    + (filas||'<div class="alert-box" style="padding:10px">✓ Sin casos abiertos en este turno.</div>')
+    cabecera
+    + resumenHtml
+    + filas
     + cerradosHtml
     + '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;flex-wrap:wrap">'
     +   '<span style="display:flex;gap:8px"><button class="mini-btn green" style="font-size:11px;font-weight:800" onclick="_cotejoAutoCompensar()" title="Cruza todos los faltantes con todos los sobrantes y hace las transferencias solo. Lo que quede es lo que realmente falta/sobra en el cierre.">⚡ Auto-cotejar todo</button>'
