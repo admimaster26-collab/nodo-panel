@@ -12,6 +12,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>NODO · OPERATIVO LITE</title>
+<link rel="icon" href="icons/icon-n.png">
 
 <style>
 *{box-sizing:border-box;margin:0;padding:0;font-family:'Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased}
@@ -107,7 +108,19 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 .macro-btn.bil:hover{background:#1e321e}
 .macro-edit-row{grid-column:1/-1;display:flex;justify-content:flex-end;padding-top:4px;border-top:1px solid #2e3444}
 #chatInput{min-height:42px;max-height:110px;margin:0;padding:11px 12px;resize:none;border-radius:14px;font-size:15px;background:#fff;color:#111}
-.toast{position:fixed;top:20px;right:20px;background:var(--blue);color:#fff;padding:14px 18px;border-radius:14px;z-index:99999;font-weight:bold;box-shadow:0 10px 30px rgba(0,0,0,.35)}
+/* Avisos en cascada. Antes cada toast era position:fixed en top/right:20px → se apilaban
+   EXACTAMENTE uno encima del otro (solo se leía el último) y caían justo sobre el panel de chat.
+   Ahora van arriba al centro, en columna, y entran/salen con fade. */
+#toastStack{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:99999;
+  display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;max-width:min(560px,92vw)}
+.toast{pointer-events:auto;background:var(--blue);color:#fff;padding:11px 17px;border-radius:12px;
+  font-weight:700;font-size:13px;line-height:1.35;text-align:center;max-width:100%;word-break:break-word;
+  border:1px solid rgba(255,255,255,.13);box-shadow:0 12px 34px rgba(0,0,0,.45);
+  opacity:0;transform:translateY(-10px) scale(.97);
+  transition:opacity .22s ease,transform .22s cubic-bezier(.2,.9,.3,1)}
+.toast.entrando{opacity:1;transform:none}
+.toast.saliendo{opacity:0;transform:translateY(-8px) scale(.97)}
+@media(prefers-reduced-motion:reduce){.toast{transition:opacity .15s linear}}
 #watchdogBanner{position:fixed;top:0;left:0;right:0;background:linear-gradient(90deg,#7a1818,#f04438,#7a1818);color:#fff;padding:12px 18px;font-weight:700;z-index:99998;display:flex;justify-content:space-between;align-items:center;gap:12px;box-shadow:0 6px 18px rgba(0,0,0,.5);animation:wdPulse 1.4s ease-in-out infinite}
 @keyframes wdPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.25)}}
 #watchdogBanner button{background:#fff;color:#7a1818;border:none;border-radius:10px;padding:7px 14px;font-weight:800;cursor:pointer;font-size:12px}
@@ -614,7 +627,12 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     position:fixed!important;top:9px!important;right:9px!important;bottom:9px!important;left:75px!important;width:auto!important;height:auto!important;z-index:80!important;box-shadow:0 18px 60px rgba(0,0,0,.55);border-color:rgba(89,107,255,.42)!important;
   }
   body.chat-expanded .chat-layout{grid-template-columns:340px minmax(0,1fr)!important}
-  body.chat-expanded .chat-list-head{padding:14px!important}.chat-full-back{display:inline-flex}
+  body.chat-expanded .chat-list-head{padding:14px!important}
+  /* Un solo botón que cambia según dónde estás: "← Bandeja" con una conversación abierta,
+     "⟩ Minimizar" en la bandeja. Antes .chat-full-back NO estaba scopeado a body.chat-expanded,
+     así que en desktop se veían los dos a la vez y "Bandeja" no llevaba a ningún lado. */
+  body.chat-expanded .chat-full-back{display:inline-flex}
+  body.chat-expanded .chat-tb-min{display:none}
   body.chat-expanded .chat-item{padding:13px 12px!important}
   body.chat-expanded .chat-item-title{font-size:14px!important}
   body.chat-expanded .chat-head{padding:14px 16px!important;min-height:62px!important}
@@ -871,7 +889,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 <button id="updaterMiniChip" onclick="nodoUpdaterMinimizar(false)" title="Actualizaciones" style="position:fixed;top:10px;right:12px;z-index:100000;display:none;background:#151a24;border:1px solid #272b36;border-radius:999px;width:34px;height:34px;color:#8b949e;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.45);font-size:15px">🔄</button>
 <div id="loginView" class="login-wrap">
   <div class="login-card">
-    <img src="icons/icon-512.png" class="logo" alt="NODO">
+    <img src="icons/icon-n.png" class="logo" alt="NODO">
     <h2 style="margin-bottom:6px">PANEL OPERATIVO LITE</h2>
     <div class="small" style="margin-bottom:18px;color:var(--muted)">Usá tus credenciales del backoffice. NODO valida con Chunior.</div>
     <label>Usuario</label>
@@ -892,7 +910,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 
   <div class="layout" id="appLayout">
     <aside class="sidebar" id="sidebar">
-      <img src="icons/icon-512.png" class="logo" alt="NODO">
+      <img src="icons/icon-n.png" class="logo" alt="NODO">
       <div class="card"><div id="operadorInfo"></div></div>
 
       <div id="agentBalanceCard" class="card hidden" style="background:linear-gradient(135deg,#0d3321,#11371f);border-color:rgba(63,185,80,.3)">
@@ -924,7 +942,8 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
             <h1 style="font-size:26px">Inicio operativo</h1>
             <div class="small">Billeteras, operaciones y solicitudes pendientes.</div>
           </div>
-          <button class="mini-btn blue" onclick="refrescarTodo(true)">🔄 Actualizar</button>
+          <!-- Sin botón "Actualizar": billeteras cada 20s, solicitudes cada 60s + broadcast en vivo,
+               y refrescarTodo() corre solo después de cada operación. Apretarlo no adelantaba nada. -->
         </div>
 
         <div id="alertas"></div>
@@ -1145,8 +1164,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
           </div>
           <div class="chat-toolbar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <button class="chat-tb-btn chat-full-back" onclick="cerrarChatExpandido()" title="Volver a la bandeja (Esc)">← Bandeja <span style="opacity:.55;font-weight:700;font-size:10px;border:1px solid currentColor;border-radius:5px;padding:0 4px;margin-left:3px">Esc</span></button>
-            <button class="chat-tb-btn" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú">⟩ Minimizar</button>
-            <button class="chat-tb-btn primary" onclick="cargarChats(true)" title="Recargar las conversaciones">🔄 Actualizar</button>
+            <button class="chat-tb-btn chat-tb-min" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú">⟩ Minimizar</button>
             <button class="chat-tb-btn ok" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button>
           </div>
         </div>
@@ -1525,7 +1543,29 @@ function money(v){return Number(v||0).toLocaleString("es-AR",{style:"currency",c
 function normalizar(v){return String(v||"").trim().toUpperCase()}
 function setBox(id,html){const el=document.getElementById(id);if(el)el.innerHTML=html}
 function val(id){return document.getElementById(id)?.value||""}
-function toast(msg,type="blue"){const div=document.createElement("div");div.className="toast";div.style.background=type==="red"?"#f04438":type==="green"?"#12b76a":"#3d5afe";div.innerText=msg;document.body.appendChild(div);setTimeout(()=>div.remove(),3500)}
+// Avisos apilados con fade. El tope de 4 evita que una tanda de operaciones tape media pantalla:
+// al llegar el quinto, el más viejo se va con su animación en vez de acumularse.
+const _TOAST_MAX = 4;
+function _toastQuitar(el){
+  if(!el || el._saliendo) return;
+  el._saliendo = true;
+  el.classList.remove("entrando"); el.classList.add("saliendo");
+  setTimeout(function(){ try{ el.remove(); }catch(_e){} }, 240);
+}
+function toast(msg,type="blue"){
+  let stack=document.getElementById("toastStack");
+  if(!stack){ stack=document.createElement("div"); stack.id="toastStack"; document.body.appendChild(stack); }
+  const div=document.createElement("div");
+  div.className="toast";
+  div.style.background = type==="red" ? "#f04438" : type==="green" ? "#12b76a" : "#3d5afe";
+  div.innerText=msg;
+  stack.appendChild(div);
+  const vivos=[].slice.call(stack.children).filter(function(x){ return !x._saliendo; });
+  while(vivos.length>_TOAST_MAX) _toastQuitar(vivos.shift());
+  requestAnimationFrame(function(){ div.classList.add("entrando"); });
+  setTimeout(function(){ _toastQuitar(div); }, 3500);
+  return div;
+}
 function formatFecha(fechaRaw){
   if(!fechaRaw) return "";
 
@@ -2706,6 +2746,7 @@ function finalizarLogin(guardar=true){
   }
   document.getElementById("loginView").classList.add("hidden");
   document.getElementById("appView").classList.remove("hidden");
+  document.body.classList.add("app-lista");   // reubica la barra del updater (ver CSS #updaterBox)
   setBox("operadorInfo",`
     <b>${operador.nombre||operador.NOMBRE}</b><br>
     <span class="badge badge-blue">Rol: ${operador.rol||"OPERADOR"}</span>
@@ -17397,6 +17438,16 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
   box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none;
 }
 @media(max-width:900px){#nodoPilotoBadge{left:12px;bottom:12px}}
+/* La barra del updater arranca arriba a la derecha — bien en el login, donde no hay nada.
+   Ya adentro de la app ahí vive la cabecera del panel de chat y le tapaba los botones.
+   Con la sesión abierta baja al ángulo inferior izquierdo, apoyada sobre el badge del piloto:
+   es la única esquina que no comparte con el chat ni con la barra de navegación. */
+body.app-lista #updaterBox,
+body.app-lista #updaterMiniChip{top:auto!important;right:auto!important;left:84px!important;bottom:46px!important}
+@media(max-width:900px){
+  body.app-lista #updaterBox,
+  body.app-lista #updaterMiniChip{left:12px!important;bottom:52px!important}
+}
 </style>
 
 <script id="nodoBasePilotoJs">

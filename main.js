@@ -3,6 +3,10 @@ const fs      = require('node:fs');
 const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const { createClient } = require('@supabase/supabase-js');
 
+// Ícono de la app (la N verde). Va en TODAS las ventanas: sin `icon`, Electron le pone su propio
+// logo por defecto a cada una y en la barra de tareas aparecían ventanas ajenas al panel.
+const APP_ICON = path.join(__dirname, 'icons', 'icon-n.png');
+
 // ── Auto-actualización (electron-updater, chequeo MANUAL desde el panel) ──────
 // autoDownload=false: solo busca y avisa; el operador decide bajar/instalar
 // desde el botón del panel. Así ninguna oficina se actualiza sola mientras
@@ -325,6 +329,7 @@ function createMainWindow() {
     minWidth: 900,
     minHeight:600,
     title: 'NODO · OPERATIVO',
+    icon:  APP_ICON,
     backgroundColor: '#0e1014', // evita el flash blanco mientras carga / al despertar
     webPreferences: {
       preload:               path.join(__dirname, 'app-preload.js'),
@@ -458,6 +463,7 @@ function createAgentWindow(url = AGENT_URL) {
     width:  1400,
     height: 900,
     title:  'Agentes — Cargas automáticas',
+    icon:   APP_ICON,
     show:   false,
     webPreferences: {
       preload:              AGENT_PRELOAD,
@@ -501,6 +507,7 @@ function createChuniorWindow() {
     width:  1200,
     height: 800,
     title:  'Chunior — Backoffice',
+    icon:   APP_ICON,
     backgroundColor: '#ffffff',
     webPreferences: {
       contextIsolation:     true,
@@ -723,6 +730,7 @@ function createVerifyWindow() {
     width:  1200,
     height: 800,
     title:  'Verificación — Login usuarios',
+    icon:   APP_ICON,
     show:   false,
     webPreferences: {
       preload:          AGENT_PRELOAD,
@@ -768,6 +776,9 @@ async function sendVerification(usuario) {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 app.whenReady().then(async () => {
+  // Windows agrupa por AppUserModelID: sin esto la barra de tareas y las notificaciones del
+  // sistema usan el ícono genérico de Electron en vez del de la app.
+  try { app.setAppUserModelId('com.nodooperativo.app'); } catch (_e) {}
   await configurarProxyElectronV15();
   createMainWindow();
   createChuniorWindow();

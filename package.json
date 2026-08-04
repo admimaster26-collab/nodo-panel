@@ -44,7 +44,7 @@
       "node_modules/**/*"
     ],
     "win": {
-      "icon": "icons/icon-512.png",
+      "icon": "icons/icon-n.png",
       "target": [
         {
           "target": "nsis",
