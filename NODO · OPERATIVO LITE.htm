@@ -156,6 +156,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 .bil-mini-card{background:var(--card2);border:1px solid #30384a;border-radius:14px;padding:12px;position:relative;cursor:default}
 .bil-mini-card.en-landing{border-color:rgba(61,90,254,.7);box-shadow:0 0 0 1px rgba(61,90,254,.25)}
 .bil-mini-saldo{font-size:21px;font-weight:900;color:#12b76a;margin-top:6px;letter-spacing:-.5px}
+/* En rojo cuando la billetera está en negativo — antes se veía verde como cualquier otra. */
+.bil-mini-saldo.bil-neg{color:#f87171}
+.bil-mini-card.bil-card-neg{border-color:rgba(248,113,113,.55);box-shadow:0 0 0 1px rgba(248,113,113,.2)}
 .bil-mini-nombre{font-weight:700;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bil-mini-tipo{font-size:11px;color:var(--muted);margin-top:2px}
 .bil-landing-badge{position:absolute;top:8px;right:8px;font-size:9px;background:rgba(61,90,254,.2);color:#7d8dff;border-radius:5px;padding:2px 5px;font-weight:700;letter-spacing:.4px}
@@ -581,7 +584,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     background:#1b2230;color:#e6edf3;border:1px solid #333c4d;border-radius:9px;
     padding:6px 11px;font-size:12px;font-weight:700;line-height:1;white-space:nowrap;
     box-shadow:0 10px 28px rgba(0,0,0,.55);
-    opacity:0;pointer-events:none;z-index:1200;
+    opacity:0;pointer-events:none;z-index:99998;  /* arriba de cualquier tarjeta (las hay con z:35) */
     transition:opacity .14s ease,transform .14s ease;
   }
   .sidebar > .nav-btn:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}
@@ -646,11 +649,6 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   }
   body.chat-expanded .chat-layout{grid-template-columns:340px minmax(0,1fr)!important}
   body.chat-expanded .chat-list-head{padding:14px!important}
-  /* Un solo botón que cambia según dónde estás: "← Bandeja" con una conversación abierta,
-     "⟩ Minimizar" en la bandeja. Antes .chat-full-back NO estaba scopeado a body.chat-expanded,
-     así que en desktop se veían los dos a la vez y "Bandeja" no llevaba a ningún lado. */
-  body.chat-expanded .chat-full-back{display:inline-flex}
-  body.chat-expanded .chat-tb-min{display:none}
   body.chat-expanded .chat-item{padding:13px 12px!important}
   body.chat-expanded .chat-item-title{font-size:14px!important}
   body.chat-expanded .chat-head{padding:14px 16px!important;min-height:62px!important}
@@ -904,7 +902,9 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   <span id="updaterStatusTxt"></span>
   <button id="updaterMinBtn" onclick="nodoUpdaterMinimizar(true)" title="Minimizar" style="background:transparent;border:0;color:#6b7688;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">—</button>
 </div>
-<button id="updaterMiniChip" onclick="nodoUpdaterMinimizar(false)" title="Actualizaciones" style="position:fixed;top:10px;right:12px;z-index:100000;display:none;background:#151a24;border:1px solid #272b36;border-radius:999px;width:34px;height:34px;color:#8b949e;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.45);font-size:15px">🔄</button>
+<!-- Plegado: muestra la VERSIÓN, no un 🔄 pelado. Como círculo gris anónimo no se entendía que
+     ahí vivían las actualizaciones, y al mudarse de esquina directamente "desapareció". -->
+<button id="updaterMiniChip" onclick="nodoUpdaterMinimizar(false)" title="Versión y actualizaciones — clic para abrir" style="position:fixed;top:10px;right:12px;z-index:100000;display:none;align-items:center;gap:5px;background:#151a24;border:1px solid #272b36;border-radius:999px;height:28px;padding:0 11px;color:#8b949e;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.45);font-size:11px;font-weight:700;white-space:nowrap">🔄 <span id="updaterMiniVer">—</span></button>
 <div id="loginView" class="login-wrap">
   <div class="login-card">
     <img src="icons/icon-n.png" class="logo" alt="NODO">
@@ -1182,7 +1182,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
           </div>
           <div class="chat-toolbar" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
             <button class="chat-tb-btn chat-full-back" onclick="cerrarChatExpandido()" title="Volver a la bandeja (Esc)">← Bandeja <span style="opacity:.55;font-weight:700;font-size:10px;border:1px solid currentColor;border-radius:5px;padding:0 4px;margin-left:3px">Esc</span></button>
-            <button class="chat-tb-btn chat-tb-min" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú">⟩ Minimizar</button>
+            <button class="chat-tb-btn chat-tb-min" onclick="window.nodoChatMin && nodoChatMin(true)" title="Minimizar el chat · se reabre tocando Chat en el menú">— Minimizar</button>
             <button class="chat-tb-btn ok" onclick="window.nodoChatMarkAllRead && nodoChatMarkAllRead()" title="Marcar todas las conversaciones como leídas">✓ Marcar leídas</button>
           </div>
         </div>
@@ -3209,20 +3209,38 @@ function renderBillerasInicio(){
     return;
   }
   const difsMap={}; try{ (window.__bilDifs||[]).forEach(function(d){ difsMap[String(d.id)]=d; }); }catch(_e){}
+  // ── Espejo de Chunior ────────────────────────────────────────────────────────────────────
+  // Chunior es la verdad del saldo, así que el Inicio muestra su número y su orden, no lo que
+  // quedó guardado en la base (que se atrasa) ni el alfabético del RPC. Los dos mapas los llena
+  // la lectura del breadcrumb (sincronizarBilleterasChunior + _leerSaldosChuniorPasivo).
+  const _saldosCh = window.__nodoChuniorWalletSaldoByUid || {};
+  const _ordenCh  = window.__nodoChuniorOrdenUids || [];
+  if(_ordenCh.length){
+    const _pos = {}; _ordenCh.forEach(function(u,i){ _pos[String(u)] = i; });
+    lista.sort(function(a,b){
+      const pa=_pos[String(a.CHUNIOR_UID||'')], pb=_pos[String(b.CHUNIOR_UID||'')];
+      if(pa===undefined && pb===undefined) return 0;
+      if(pa===undefined) return 1;          // las que Chunior no lista van al final
+      if(pb===undefined) return -1;
+      return pa-pb;
+    });
+  }
   el.innerHTML = lista.map(function(b){
     const enLanding = normalizar(b.SELECCIONADA_MANUAL)==="SI";
-    const saldo = Number(b.SALDO||0);
+    const _uid = String(b.CHUNIOR_UID||'');
+    const saldo = (_uid && _saldosCh[_uid]!==undefined) ? Number(_saldosCh[_uid]) : Number(b.SALDO||0);
+    const neg = saldo < 0;
     const tipo = b.TIPO || b.BANCO || (b.CHUNIOR_UID ? 'Chunior' : '—');
     const subt = (enLanding ? 'EN PORTAL · ' : '') + tipo;
     const nombreMostrar = b.NOMBRE_CHUNIOR || b.NOMBRE_VISIBLE || b.BILLETERA_NOMBRE || '—';
     const dif = difsMap[String(b.ID_BILLETERA)];
     const difHtml = dif ? '<div class="bil-mini-dif">⚠ dif '+(dif.diff>0?'+':'')+money(dif.diff)+'</div>' : '';
     const difTitle = dif ? ' · ⚠ Chunior '+money(dif.actual)+' vs esperado '+money(dif.esperado)+' (dif '+(dif.diff>0?'+':'')+money(dif.diff)+') — ¿faltó anotar una operación?' : '';
-    return '<div class="bil-mini-card'+(enLanding?' en-landing':'')+(dif?' bil-mini-dif-on':'')+'" title="'+escapeHtml(nombreMostrar+' · '+money(saldo)+difTitle)+'">'+
+    return '<div class="bil-mini-card'+(enLanding?' en-landing':'')+(dif?' bil-mini-dif-on':'')+(neg?' bil-card-neg':'')+'" title="'+escapeHtml(nombreMostrar+' · '+money(saldo)+difTitle)+'">'+
       (enLanding?'<span class="bil-landing-badge">LANDING</span>':'')+
       '<div class="bil-mini-nombre">'+escapeHtml(nombreMostrar)+'</div>'+
       '<div class="bil-mini-tipo">'+escapeHtml(subt)+'</div>'+
-      '<div class="bil-mini-saldo">'+money(saldo)+'</div>'+
+      '<div class="bil-mini-saldo'+(neg?' bil-neg':'')+'">'+money(saldo)+'</div>'+
       difHtml+
       '</div>';
   }).join('');
@@ -4018,6 +4036,8 @@ async function nodoInitUpdater(){
     const v = await window.updaterAPI.getVersion();
     const el=document.getElementById("updaterVersionTxt");
     if(el && v && v.version) el.textContent = "v"+v.version;
+    const mv=document.getElementById("updaterMiniVer");
+    if(mv && v && v.version) mv.textContent = "v"+v.version;   // el plegado también dice la versión
     // Mostrar el botón "Volver" solo si la función existe (app instalada con updater).
     const rb=document.getElementById("updaterRollbackBtn"); if(rb) rb.style.display="";
     window.updaterAPI.onStatus(nodoUpdaterStatus);
@@ -4029,8 +4049,7 @@ function nodoUpdaterMinimizar(min){
   try{
     const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
     if(box) box.style.display = min ? "none" : "flex";
-    if(chip) chip.style.display = min ? "flex" : "none";
-    if(chip) chip.style.alignItems="center", chip.style.justifyContent="center";
+    if(chip) chip.style.display = min ? "inline-flex" : "none";
     localStorage.setItem("nodo_updater_min", min ? "1" : "0");
   }catch(_e){}
 }
@@ -9442,15 +9461,23 @@ async function sincronizarBilleterasChunior(silencioso){
       '  var m=t.match(/^(\\d+)\\s*-\\s*(.+)$/);' +
       '  return {uid:String(o.value), nombre:(m?m[2].trim():t)};' +
       '});' +
-      'var balances={};' +
+      'var balances={};var orden=[];' +
       'document.querySelectorAll(".breadcrumbs .billetera").forEach(function(sp){' +
       '  var uid=String(sp.id||"");' +
       '  var txt=(sp.textContent||"").trim();' +
-      '  var mm=txt.match(/^(.+?):\\s*\\$?([\\d.,]+)/);' +
-      '  if(mm){balances[uid]={nombre:mm[1].trim(), saldo:parseFloat(mm[2].replace(/\\./g,"").replace(",","."))};}' +
+      // El signo puede venir ANTES o DESPUÉS del $ ("-$1.500" / "$-1.500"), o entre paréntesis.
+      // El regex viejo era ([\d.,]+): se comía el menos y una billetera en rojo se mostraba en verde.
+      '  var mm=txt.match(/^(.+?):\\s*(\\()?\\s*(-)?\\s*\\$?\\s*(-)?\\s*([\\d.,]+)/);' +
+      '  if(mm){' +
+      '    var neg=!!(mm[2]||mm[3]||mm[4]);' +
+      '    balances[uid]={nombre:mm[1].trim(), saldo:(neg?-1:1)*parseFloat(mm[5].replace(/\\./g,"").replace(",","."))};' +
+      '    orden.push(uid);' +
+      '  }' +
       '});' +
       'var body=(document.body&&document.body.innerText)||"";' +
-      'return {opts:opts, balances:balances, body:body.slice(0,500)};' +
+      // orden = el mismo que ve el operador en Chunior. Un objeto no sirve: las claves numéricas
+      // ("905","921") se reordenan solas de menor a mayor y perdíamos el orden real.
+      'return {opts:opts, balances:balances, orden:orden, body:body.slice(0,500)};' +
       '})()'
     );
   } catch(e){
@@ -9486,6 +9513,7 @@ async function sincronizarBilleterasChunior(silencioso){
   });
   window.__nodoChuniorWalletUids = uidsDetectados;
   window.__nodoChuniorWalletSaldoByUid = saldoMap;
+  if(Array.isArray(data.orden) && data.orden.length) window.__nodoChuniorOrdenUids = data.orden.map(String);
   window.__nodoChuniorWalletNombreByUid = nombreMap;
   window.__nodoOficinaDetectada = (window.oficinaId || '');
   window.__nodoPuestoDetectado  = (window.pcOperativa || pcOperativa || '');
@@ -9549,6 +9577,41 @@ async function sincronizarBilleterasChunior(silencioso){
 // Debounce 2.5s (una ráfaga de anotaciones = un solo sync) y si hay una operación en curso se
 // reprograma (no navegar Chunior en el medio de otra anotación).
 let _syncBilTimer = null;
+// ── Lectura PASIVA de los saldos de Chunior ───────────────────────────────────────────────
+// NO navega, NO recarga, NO pega a ninguna API: sólo lee el breadcrumb de la ventana de Chunior
+// tal como está. Cuando el operador anota algo a MANO en Chunior, esa página se recarga sola y
+// el panel se entera en la vuelta siguiente. Antes los saldos sólo se movían tras anotaciones
+// hechas desde el panel, así que un movimiento manual dejaba el Inicio mintiendo hasta el
+// próximo sync completo.
+let _bilPasivoFirma = '';
+async function _leerSaldosChuniorPasivo(){
+  if(!window.chunior || !window.chunior.exec) return;
+  if(!_nodoListo) return;
+  if(window._cotejoDeclarando) return;                                              // declaración ciega en curso
+  if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0) return;        // no pisar una operación
+  if(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes>0)) return;
+  let filas=null;
+  try{
+    filas = await window.chunior.exec(
+      '(function(){var o=[];document.querySelectorAll(".breadcrumbs .billetera").forEach(function(sp){'
+      + 'var t=(sp.textContent||"").trim();'
+      + 'var m=t.match(/^(.+?):\\s*(\\()?\\s*(-)?\\s*\\$?\\s*(-)?\\s*([\\d.,]+)/);'
+      + 'if(m)o.push({uid:String(sp.id||""),nombre:m[1].trim(),'
+      + '  saldo:((m[2]||m[3]||m[4])?-1:1)*parseFloat(m[5].replace(/\\./g,"").replace(",","."))});'
+      + '});return o;})()'
+    );
+  }catch(_e){ return; }                       // Chunior en otra página o sin breadcrumb: no pasa nada
+  if(!Array.isArray(filas) || !filas.length) return;
+  const firma = filas.map(function(f){ return f.uid+':'+f.saldo; }).join('|');
+  if(firma === _bilPasivoFirma) return;       // nada cambió → no repintamos al pedo
+  _bilPasivoFirma = firma;
+  const mapa = window.__nodoChuniorWalletSaldoByUid || (window.__nodoChuniorWalletSaldoByUid = {});
+  filas.forEach(function(f){ mapa[String(f.uid)] = Number(f.saldo); });
+  window.__nodoChuniorOrdenUids = filas.map(function(f){ return String(f.uid); });
+  try{ renderBillerasInicio(); }catch(_e){}
+}
+try{ setInterval(function(){ _leerSaldosChuniorPasivo().catch(function(){}); }, 12000); }catch(_e){}
+
 window._syncBilleterasTrasAnotacion = function(){
   try{ clearTimeout(_syncBilTimer); }catch(_e){}
   _syncBilTimer = setTimeout(function tick(){
@@ -15739,18 +15802,26 @@ async function ejecutarSolicitudPortalSimple(ctx){
       pool.forEach(t=>{
         const active=U(window.__nodoChatCurrentUser||"")===U(t.usuario);
         const accepted=!!t.accepted;
-        html+=`<div class="wq2-item ${active?"active":""} ${accepted?"chat-open-final":""}">
+        // La consulta ya tomada se abre tocando la tarjeta: el botón "Abrir" duplicaba el gesto.
+        // "Aceptar" SÍ sigue siendo botón — toma el ticket a tu nombre, no es sólo mirar.
+        const clickeable = accepted && !t.cerrado;
+        // El estado (ABIERTO/CERRADO/EN ESPERA) ya lo dice la solapa en la que estás parado.
+        const meta = `${t.thread.length} msj · Sol. ${E(t.masterId||t.solicitudId||"")}`;
+        html+=`<div class="wq2-item ${active?"active":""} ${accepted?"chat-open-final":""}"
+            ${clickeable?`onclick="aceptarTicketLocalStep2('${E(t.id)}')" style="cursor:pointer" title="Abrir la conversación"`:""}>
           <div class="wq2-avatar" style="background:${avatarColor(t.usuario)}">${iniciales(t.usuario)}</div>
           <div style="min-width:0">
             <div class="wq2-name">${E(t.usuario)}</div>
             <div class="wq2-msg">${E(t.mensaje||"")}</div>
-            <div class="wq2-state ${accepted?"open-final":""}">${t.cerrado?"CERRADO":accepted?"ABIERTO":"EN ESPERA"} · ${t.thread.length} msj · Sol. ${E(t.masterId||t.solicitudId||"")}</div>
+            <div class="wq2-state ${accepted?"open-final":""}">${meta}</div>
           </div>
           <div>
             <div class="wq2-meta">${hora(t.fecha)}</div>
             ${t.cerrado
-              ? `<button class="wq2-accept" style="background:#7c3aed" onclick="reabrirConsultaWq2('${E(t.id)}')" title="Reabrir esta consulta para seguir escribiéndole al cliente">↩ Reabrir</button>`
-              : `<button class="wq2-accept" style="${accepted?"background:#16a34a":""}" onclick="aceptarTicketLocalStep2('${E(t.id)}')">${accepted?"Abrir":"Aceptar"}</button>`}
+              ? `<button class="wq2-accept" style="background:#7c3aed" onclick="event.stopPropagation();reabrirConsultaWq2('${E(t.id)}')" title="Reabrir esta consulta para seguir escribiéndole al cliente">↩ Reabrir</button>`
+              : accepted
+                ? ``
+                : `<button class="wq2-accept" onclick="event.stopPropagation();aceptarTicketLocalStep2('${E(t.id)}')">Aceptar</button>`}
           </div>
         </div>`;
       });
@@ -17456,6 +17527,16 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
   box-shadow:0 6px 24px rgba(0,0,0,.35);pointer-events:none;
 }
 @media(max-width:900px){#nodoPilotoBadge{left:12px;bottom:12px}}
+/* ── Barra del chat: UN botón que cambia según dónde estás ───────────────────────────────
+   El estado real de "hay una conversación abierta" es body.nodo-chat-open, que lo pone el puente
+   del portal (V15.4) — que es el chat que se usa. Antes esto colgaba de body.chat-expanded, que
+   ese chat NUNCA setea: el botón no cambiaba nunca y encima "← Bandeja" se veía siempre, incluso
+   estando ya en la bandeja, donde no lleva a ningún lado. */
+body.nodo-chat-open .chat-full-back{display:inline-flex!important}
+body.nodo-chat-open .chat-tb-min{display:none!important}
+/* El puente inyecta ADEMÁS su propio "← Bandeja / Esc" flotando en la cabecera de la conversación.
+   Con el de la barra es un botón repetido; Esc sigue haciendo lo mismo. */
+.nodo-chat-back-hint{display:none!important}
 /* La barra del updater arranca arriba a la derecha — bien en el login, donde no hay nada.
    Ya adentro de la app ahí vive la cabecera del panel de chat y le tapaba los botones.
    Con la sesión abierta baja al ángulo inferior izquierdo, apoyada sobre el badge del piloto:
