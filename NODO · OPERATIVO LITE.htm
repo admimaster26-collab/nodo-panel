@@ -574,7 +574,6 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   #navChat::before{content:"💬"}
   #navJugadores::before{content:"🏅"}
   #navAuto::before{content:"⚡"}
-  #navUpdater::before{content:"🔄"}
   .sidebar > .nav-btn[onclick*="cerrarSesion"]::before{content:"🚪"}
   /* Globito con el nombre: el texto del botón está en color:transparent + font-size:0, así que
      sin esto la barra angosta era pura adivinanza. Sale del aria-label (una sola fuente). */
@@ -951,9 +950,6 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
            botón de nav se sacaron porque el panel se colaba visible en el Inicio. El procesador de
            la cola sigue corriendo en background; setBox() ignora los contenedores que ya no existen. -->
 
-      <!-- El updater vive acá, no flotando: arriba a la derecha es del panel de chat y cualquier
-           cosa fija ahí le cae encima. Es un botón más de la barra, con su globito como el resto. -->
-      <button id="navUpdater" class="nav-btn" aria-label="Actualizaciones" onclick="nodoUpdaterAbrir()">🔄 Actualizaciones</button>
       <button class="nav-btn" aria-label="Cerrar sesión" onclick="cerrarSesion()">🚪 Cerrar sesión</button>
     </aside>
 
@@ -2631,9 +2627,8 @@ function finalizarLogin(guardar=true){
   }
   document.getElementById("loginView").classList.add("hidden");
   document.getElementById("appView").classList.remove("hidden");
-  // Adentro de la app el updater no flota: se abre desde el botón 🔄 de la barra izquierda.
   document.body.classList.add("app-lista");
-  try{ nodoUpdaterMinimizar(true); }catch(_e){}
+  try{ _updaterAnclar(); }catch(_e){}
   setBox("operadorInfo",`
     <b>${operador.nombre||operador.NOMBRE}</b><br>
     <span class="badge badge-blue">Rol: ${operador.rol||"OPERADOR"}</span>
@@ -3914,13 +3909,28 @@ async function nodoInitUpdater(){
     try{ if(localStorage.getItem("nodo_updater_min")==="1") nodoUpdaterMinimizar(true); }catch(_e){}
   }catch(_e){}
 }
-// Abre/cierra la barra del updater desde el botón de la barra izquierda. Si ya está abierta,
-// el mismo botón la cierra (no hace falta ir a buscar el "—").
-window.nodoUpdaterAbrir=function(){
-  const box=document.getElementById("updaterBox");
-  const abierta = box && getComputedStyle(box).display !== "none";
-  nodoUpdaterMinimizar(abierta);
-};
+// Arriba a la derecha, pero apoyado en el borde izquierdo del panel de chat: ahí está el hueco
+// que queda arriba del botón "Rechequear". Se mide del DOM, así sigue bien si el chat se minimiza.
+function _updaterAnclar(){
+  try{
+    const chat=document.getElementById("viewChat");
+    let right=12;
+    if(chat){
+      const r=chat.getBoundingClientRect();
+      if(r.width>0 && r.right>window.innerWidth-60) right=Math.round(window.innerWidth-r.left)+14;
+    }
+    ["updaterBox","updaterMiniChip"].forEach(function(id){
+      const el=document.getElementById(id);
+      if(el){ el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=right+"px"; }
+    });
+  }catch(_e){}
+}
+window._updaterAnclar=_updaterAnclar;
+try{
+  addEventListener("resize", _updaterAnclar);
+  setTimeout(_updaterAnclar, 1200);
+  setInterval(_updaterAnclar, 5000);   // el panel de chat se minimiza/restaura sin avisar
+}catch(_e){}
 function nodoUpdaterMinimizar(min){
   try{
     const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
@@ -17425,21 +17435,14 @@ body.nodo-chat-open #viewChat .chat-compose{flex-shrink:0!important;width:100%!i
    del portal (V15.4) — que es el chat que se usa. Antes esto colgaba de body.chat-expanded, que
    ese chat NUNCA setea: el botón no cambiaba nunca y encima "← Bandeja" se veía siempre, incluso
    estando ya en la bandeja, donde no lleva a ningún lado. */
-body.nodo-chat-open .chat-full-back{display:inline-flex!important}
-body.nodo-chat-open .chat-tb-min{display:none!important}
-/* El puente inyecta ADEMÁS su propio "← Bandeja / Esc" flotando en la cabecera de la conversación.
-   Con el de la barra es un botón repetido; Esc sigue haciendo lo mismo. */
-.nodo-chat-back-hint{display:none!important}
+/* Con una conversación abierta, la cabecera "Chat interno / Bandeja / Marcar leídas" no pinta
+   nada: no estás en la bandeja. Se oculta entera y el volver queda donde ya estaba y funcionaba
+   bien, dentro de la conversación (.nodo-chat-back-hint) — así deja de estar duplicado. */
+body.nodo-chat-open #viewChat > div:first-child{display:none!important}
 /* ── Updater ───────────────────────────────────────────────────────────────────────────────
-   En el LOGIN sigue arriba a la derecha: esa esquina está vacía y ahí estuvo siempre.
-   Ya adentro, esa esquina es del panel de chat — probamos correrlo y termina cayendo dentro de
-   la cabecera del chat igual. Así que deja de flotar: pasa a ser un botón de la barra izquierda
-   (#navUpdater) y la barra completa se abre como globo pegado a la barra, sólo cuando la abrís. */
-body.app-lista #updaterMiniChip{display:none!important}
-body.app-lista #updaterBox{
-  top:auto!important;right:auto!important;left:84px!important;bottom:12px!important;
-  max-width:calc(100vw - 110px);flex-wrap:wrap;
-}
+   Vuelve a la esquina de arriba a la derecha. Lo único: el borde derecho se apoya en el panel de
+   chat (que arranca donde termina la tarjeta de fichas), así queda justo arriba de "Rechequear",
+   que es espacio libre, y no le pisa nada al chat. Lo calcula _updaterAnclar(). */
 </style>
 
 <script id="nodoBasePilotoJs">
