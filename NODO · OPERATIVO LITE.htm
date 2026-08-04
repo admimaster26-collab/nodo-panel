@@ -333,7 +333,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     border-radius:18px;
     border:1px solid var(--line);
     background:linear-gradient(180deg,#111722,#0b0f16);
-    overflow:hidden;
+    overflow:visible;   /* si no, el globito de cada botón se corta contra el borde de la barra */
   }
   #appView .sidebar .logo{
     width:40px;
@@ -341,7 +341,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     object-fit:contain;
     border-radius:12px;
     margin:0 auto 12px;
-    background:#f7d84a;
+    background:transparent;   /* la N verde ya trae su forma; el chip amarillo era del ícono viejo */
   }
   #appView .sidebar > .card,
   #agentBalanceCard{
@@ -358,7 +358,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     display:flex;
     align-items:center;
     justify-content:center;
-    overflow:hidden;
+    overflow:visible;   /* el globito sale del botón (ver .sidebar > .nav-btn::after) */
   }
   .nav-btn::first-letter{font-size:16px}
   .nav-btn .badge-alert{
@@ -563,21 +563,39 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     font-size:17px;
     line-height:1;
   }
-  #navInicio::before{content:"\2302"}
-  #navSolicitudes::before{content:"\21E9"}
-  #navBilleteras::before{content:"\25AC"}
-  #navChat::before{content:"\2709"}
-  #navJugadores::before{content:"\2605"}
-  #navAuto::before{content:"\26A1"}
-  #navVerificaciones::before{content:"\2315"}
-  .sidebar > .nav-btn[onclick*="cerrarSesion"]::before{content:"\21B5"}
+  /* Íconos: antes eran glifos tipográficos (⌂ ⇩ ▬ ✉ ★ ↵) que no se leían como nada.
+     Ahora el mismo emoji que ya está en el texto del botón. */
+  #navInicio::before{content:"🏠"}
+  #navSolicitudes::before{content:"📋"}
+  #navBilleteras::before{content:"💳"}
+  #navChat::before{content:"💬"}
+  #navJugadores::before{content:"🏅"}
+  #navAuto::before{content:"⚡"}
+  .sidebar > .nav-btn[onclick*="cerrarSesion"]::before{content:"🚪"}
+  /* Globito con el nombre: el texto del botón está en color:transparent + font-size:0, así que
+     sin esto la barra angosta era pura adivinanza. Sale del aria-label (una sola fuente). */
+  .sidebar > .nav-btn::after{
+    content:attr(aria-label);
+    position:absolute;left:calc(100% + 9px);top:50%;
+    transform:translateY(-50%) translateX(-5px);
+    background:#1b2230;color:#e6edf3;border:1px solid #333c4d;border-radius:9px;
+    padding:6px 11px;font-size:12px;font-weight:700;line-height:1;white-space:nowrap;
+    box-shadow:0 10px 28px rgba(0,0,0,.55);
+    opacity:0;pointer-events:none;z-index:1200;
+    transition:opacity .14s ease,transform .14s ease;
+  }
+  .sidebar > .nav-btn:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}
+  @media(prefers-reduced-motion:reduce){
+    .sidebar > .nav-btn::after{transition:opacity .12s linear;transform:translateY(-50%)}
+    .sidebar > .nav-btn:hover::after{transform:translateY(-50%)}
+  }
   #appView .sidebar .logo{
     display:block;
     width:42px;
     height:42px;
     border-radius:13px;
     padding:0;
-    object-fit:cover;
+    object-fit:contain;   /* cover recortaba la N verde contra los bordes del cuadro */
   }
   #viewInicio > div:first-child{
     margin-bottom:10px!important;
@@ -922,17 +940,17 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
         <div id="watchdogIndicator" title="Watchdog que compara saldos de Drex y Chunior cada minuto">🔄 Watchdog inactivo</div>
       </div>
 
-      <button id="navInicio" class="nav-btn active" onclick="mostrarVista('inicio')">🏠 Inicio</button>
-      <button id="navSolicitudes" class="nav-btn" onclick="mostrarVista('solicitudes')">📋 Solicitudes <span id="badgeSolicitudes" class="badge-alert hidden">0</span></button>
-      <button id="navBilleteras" class="nav-btn" onclick="mostrarVista('billeteras')">💳 Billeteras</button>
-      <button id="navChat" class="nav-btn" onclick="mostrarVista('chat')">💬 Chat <span id="badgeChat" class="badge-alert badge-chat hidden">0</span></button>
-      <button id="navJugadores" class="nav-btn" onclick="mostrarVista('jugadores')">🏅 Jugadores</button>
-      <button id="navAuto" class="nav-btn hidden" onclick="mostrarVista('auto')" style="border:1px solid rgba(124,58,237,.5)">⚡ Automatización</button>
+      <button id="navInicio" aria-label="Inicio" class="nav-btn active" onclick="mostrarVista('inicio')">🏠 Inicio</button>
+      <button id="navSolicitudes" aria-label="Solicitudes" class="nav-btn" onclick="mostrarVista('solicitudes')">📋 Solicitudes <span id="badgeSolicitudes" class="badge-alert hidden">0</span></button>
+      <button id="navBilleteras" aria-label="Billeteras" class="nav-btn" onclick="mostrarVista('billeteras')">💳 Billeteras</button>
+      <button id="navChat" aria-label="Chat" class="nav-btn" onclick="mostrarVista('chat')">💬 Chat <span id="badgeChat" class="badge-alert badge-chat hidden">0</span></button>
+      <button id="navJugadores" aria-label="Jugadores" class="nav-btn" onclick="mostrarVista('jugadores')">🏅 Jugadores</button>
+      <button id="navAuto" aria-label="Automatización" class="nav-btn hidden" onclick="mostrarVista('auto')" style="border:1px solid rgba(124,58,237,.5)">⚡ Automatización</button>
       <!-- Apartado "🔍 Verificaciones" ELIMINADO (pedido del user): la sección viewVerificaciones y su
            botón de nav se sacaron porque el panel se colaba visible en el Inicio. El procesador de
            la cola sigue corriendo en background; setBox() ignora los contenedores que ya no existen. -->
 
-      <button class="nav-btn" onclick="cerrarSesion()">🚪 Cerrar sesión</button>
+      <button class="nav-btn" aria-label="Cerrar sesión" onclick="cerrarSesion()">🚪 Cerrar sesión</button>
     </aside>
 
     <main class="main">
