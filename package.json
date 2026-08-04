@@ -1,11 +1,11 @@
 {
   "name": "nodo-operativo",
-  "version": "1.1.40",
+  "version": "1.1.41",
   "description": "NODO · OPERATIVO — Panel de operaciones",
   "main": "main.js",
   "scripts": {
-    "start": "set \"ELECTRON_RUN_AS_NODE=\" && electron .",
-    "dev": "set \"ELECTRON_RUN_AS_NODE=\" && electron . --dev",
+    "start": "set \"ELECTRON_RUN_AS_NODE=\" && electron . --remote-debugging-port=9222",
+    "dev": "set \"ELECTRON_RUN_AS_NODE=\" && electron . --dev --remote-debugging-port=9222",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
     "release": "electron-builder --win --publish always"

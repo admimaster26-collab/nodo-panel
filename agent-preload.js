@@ -686,6 +686,42 @@ async function ensureUserSearchReady() {
 // ⛔ FLUJO BLINDADO — NO MODIFICAR (parte del core de carga/retiro estable).
 // La espera del resultado-que-coincide y la lectura de saldo pre/post están
 // calibradas. Tag git: estable-flujo-carga.
+// CORROBORA que el campo de búsqueda REALMENTE tenga el alias y, si React lo limpió, lo reescribe.
+// (Mismo problema que en BET300: el input se vacía entre el tipeo y el click de buscar → se
+// buscaba con la caja VACÍA y eso devolvía "no existe".)
+async function _asegurarTextoBusquedaDrex(alias, tries = 3) {
+  const target = String(alias).trim();
+  for (let i = 0; i < tries; i++) {
+    const input = findSearchInput();
+    if (!input) { await delay(200); continue; }
+    if (String(input.value || '').trim() === target) return input;
+    await setReactInputAndVerify(input, target, 3);
+    await delay(120);
+    const chk = findSearchInput();
+    if (chk && String(chk.value || '').trim() === target) return chk;
+    await delay(150);
+  }
+  return null;
+}
+// Diario de fallas persistente → se consulta con window.__nodoBusquedaFallas
+function _logFallaBusquedaDrex(datos) {
+  try {
+    const K = 'nodo_busqueda_fallas';
+    const arr = JSON.parse(localStorage.getItem(K) || '[]');
+    arr.push(Object.assign({ ts: new Date().toISOString(), backend: 'drex', url: location.href }, datos));
+    localStorage.setItem(K, JSON.stringify(arr.slice(-40)));
+  } catch (_e) {}
+}
+try {
+  Object.defineProperty(window, '__nodoBusquedaFallas', {
+    get() { try { return JSON.parse(localStorage.getItem('nodo_busqueda_fallas') || '[]'); } catch (_e) { return []; } }
+  });
+} catch (_e) {}
+
+function _normAliasDrex(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '');
+}
+
 async function buscarUsuario(usuario, options = {}) {
   if (!usuario || String(usuario).trim().length < 3) {
     throw new Error('El usuario debe tener al menos 3 caracteres.');
@@ -694,46 +730,57 @@ async function buscarUsuario(usuario, options = {}) {
   const ready = await ensureUserSearchReady();
   if (ready.needsLogin) return ready;
 
-  const searchInput = await waitFor(findSearchInput, options.timeout || DEFAULT_TIMEOUT);
-  const wantedClean = String(usuario).trim();
-  // Inyecta con verificación: si React no aceptó el valor a los 120ms, reintenta.
-  const seteado = await setReactInputAndVerify(searchInput, wantedClean, 4);
-  if (!seteado) {
-    return { ok: false, exists: false, user: wantedClean, message: 'El campo de búsqueda no aceptó el alias después de varios intentos.' };
-  }
-
   const wanted = String(usuario).trim();
-  function normAlias(s) {
-    return String(s || '').toLowerCase().normalize('NFD').replace(new RegExp('[\u0300-\u036f]','g'), '').replace(/\s+/g, '');
-  }
-  const wantedNorm = normAlias(wanted);
-
-  // Click buscar y esperar el resultado QUE COINCIDE con lo buscado.
-  // Ignoramos resultados viejos (de una busqueda anterior) que tardan en limpiarse.
-  clickElement(await waitFor(() => firstVisible(SELECTORS.searchButton), options.timeout || DEFAULT_TIMEOUT));
-  await delay(350);
-
+  const wantedNorm = _normAliasDrex(wanted);
   const TIMEOUT = options.timeout || DEFAULT_TIMEOUT;
-  const inicioBusqueda = now();
+  const INTENTOS = 3;
   let matchedAlias = null;
-  let huboNoResults = false;
 
-  while (now() - inicioBusqueda < TIMEOUT) {
-    await cerrarModalSesionInvalida();
-    if (pageNeedsLogin()) return status();
-    const players = visibleElements(SELECTORS.playerAlias);
-    const match = players.find(el => normAlias(normalizeText(el.textContent)) === wantedNorm);
-    if (match) { matchedAlias = normalizeText(match.textContent); break; }
-    if (firstVisible(SELECTORS.noResults)) {
-      const m2 = visibleElements(SELECTORS.playerAlias).find(el => normAlias(normalizeText(el.textContent)) === wantedNorm);
-      if (m2) { matchedAlias = normalizeText(m2.textContent); break; }
-      huboNoResults = true; break;
+  // ANTI-FALSO-NEGATIVO: solo se concluye "NO existe" cuando la página lo dice de verdad
+  // (SELECTORS.noResults). Si el campo no aceptó el texto o la búsqueda no respondió, NO se afirma
+  // nada: se REINTENTA y, si igual no se logra, se lanza ERROR TÉCNICO. Antes esos dos casos
+  // devolvían exists:false → el panel decía "el usuario no existe" sin haber buscado nunca.
+  for (let intento = 1; intento <= INTENTOS && !matchedAlias; intento++) {
+    await waitFor(findSearchInput, TIMEOUT);
+    const input = await _asegurarTextoBusquedaDrex(wanted, 3);
+    if (!input) {
+      _logFallaBusquedaDrex({ alias: wanted, intento: intento, motivo: 'campo-no-acepto-texto', inputAhora: ((findSearchInput() || {}).value || '') });
+      console.warn('[buscar] intento ' + intento + '/' + INTENTOS + ': el campo no aceptó el alias — reintentando');
+      await delay(400); continue;
     }
-    await delay(180);
+
+    clickElement(await waitFor(() => firstVisible(SELECTORS.searchButton), TIMEOUT));
+    await delay(350);
+
+    const inicioBusqueda = now();
+    let huboNoResults = false;
+    while (now() - inicioBusqueda < TIMEOUT) {
+      await cerrarModalSesionInvalida();
+      if (pageNeedsLogin()) return status();
+      const match = visibleElements(SELECTORS.playerAlias).find(el => _normAliasDrex(normalizeText(el.textContent)) === wantedNorm);
+      if (match) { matchedAlias = normalizeText(match.textContent); break; }
+      if (firstVisible(SELECTORS.noResults)) {
+        const m2 = visibleElements(SELECTORS.playerAlias).find(el => _normAliasDrex(normalizeText(el.textContent)) === wantedNorm);
+        if (m2) { matchedAlias = normalizeText(m2.textContent); break; }
+        huboNoResults = true; break;
+      }
+      await delay(180);
+    }
+    if (matchedAlias) break;
+
+    // La página dijo explícitamente "sin resultados" → conclusión VÁLIDA: no existe.
+    if (huboNoResults) {
+      return { ok: true, exists: false, user: wanted, message: 'Sin resultados para ' + wanted, intentos: intento };
+    }
+    // Timeout sin veredicto de la página → falla TÉCNICA, no es "no existe".
+    _logFallaBusquedaDrex({ alias: wanted, intento: intento, motivo: 'timeout-sin-veredicto', inputAhora: ((findSearchInput() || {}).value || ''), filas: visibleElements(SELECTORS.playerAlias).length });
+    console.warn('[buscar] intento ' + intento + '/' + INTENTOS + ': la búsqueda no respondió (sin match ni "sin resultados") — reintentando');
+    await delay(400);
   }
 
   if (!matchedAlias) {
-    return { ok: true, exists: false, user: wanted, message: huboNoResults ? ('Sin resultados para ' + wanted) : 'No aparecio el usuario buscado.' };
+    throw new Error('No se pudo ejecutar la búsqueda de "' + wanted + '" en Agentes tras ' + INTENTOS
+      + ' intentos (el campo o la lista no respondieron). NO se concluye que el usuario no exista — reintenta.');
   }
   const playerAlias = matchedAlias;
 

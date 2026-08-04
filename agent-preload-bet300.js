@@ -361,6 +361,37 @@ async function elegirTodosLosJugadores(timeout = 6000) {
   return false;
 }
 
+// ── Diario de fallas de búsqueda (persistente) ──────────────────────────────
+// La traba es INTERMITENTE: no se puede estar mirando la consola justo cuando pasa. Guardamos cada
+// fallo en localStorage de la ventana de Agentes para poder revisarlo después:
+//   window.__nodoBusquedaFallas   → últimas 40 fallas con su contexto
+function _logFallaBusqueda(datos) {
+  try {
+    const K = 'nodo_busqueda_fallas';
+    const arr = JSON.parse(localStorage.getItem(K) || '[]');
+    arr.push(Object.assign({ ts: new Date().toISOString(), url: location.href }, datos));
+    localStorage.setItem(K, JSON.stringify(arr.slice(-40)));
+  } catch (_e) {}
+}
+try {
+  Object.defineProperty(window, '__nodoBusquedaFallas', {
+    get() { try { return JSON.parse(localStorage.getItem('nodo_busqueda_fallas') || '[]'); } catch (_e) { return []; } }
+  });
+} catch (_e) {}
+
+// ¿La lista en pantalla CORRESPONDE a esta búsqueda? Señal mucho más fiable que "la firma cambió":
+//   · lista vacía  → BET300 ya respondió "no hay resultados" (buscar un alias inexistente)
+//   · todas las filas visibles matchean el término → la lista YA está filtrada por esta búsqueda
+// Sin esto, buscar un usuario inexistente (vacío→vacío) o re-buscar al mismo (misma firma) parecían
+// "la búsqueda no se ejecutó" → 3 reintentos y error, aunque el resultado estuviera en pantalla.
+function _listaCorrespondeA(alias) {
+  const want = normAlias(alias);
+  if (!want) return false;
+  const filas = filasJugador();
+  if (!filas.length) return true;
+  return filas.every(r => normAlias(aliasDeFila(r)).indexOf(want) >= 0);
+}
+
 // CORROBORA que el input REALMENTE tenga el alias escrito y, si no, lo reescribe.
 // Vuetify re-renderiza la lista y a veces limpia/pisa el campo (o el menú le roba el foco):
 // escribíamos una vez, no volvíamos a mirar, y se buscaba con el campo VACÍO → "no existe" falso.
@@ -414,7 +445,8 @@ async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
   let reintentado = false;
   while (now() - inicio < 12000) {
     _chequearFreno('buscando');
-    if (firmaFilas() !== firmaAntes) { await delay(250); return { refresco: true, textoOk: true }; }
+    // Refresco = la lista cambió O ya corresponde a lo buscado (vacía / todas matchean).
+    if (firmaFilas() !== firmaAntes || _listaCorrespondeA(wanted)) { await delay(250); return { refresco: true, textoOk: true }; }
     if (!reintentado && now() - inicio > 5000) {
       reintentado = true;
       input = (await _asegurarTextoBusqueda(wanted, 2)) || input;
@@ -426,6 +458,10 @@ async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
     await delay(150);
   }
   await delay(250);
+  // Último chequeo antes de rendirnos: puede que la lista ya corresponda a lo buscado aunque la
+  // firma nunca haya cambiado (lista vacía, o el mismo usuario que ya estaba en pantalla).
+  if (_listaCorrespondeA(wanted)) return { refresco: true, textoOk: true };
+  console.warn('[buscar] sin refresco tras 12s · filas en pantalla: ' + filasJugador().length + ' · input="' + ((findSearchInput() || {}).value || '') + '"');
   return { refresco: false, textoOk: true }; // no hubo refresco → NO se puede concluir nada
 }
 
@@ -474,6 +510,14 @@ async function buscarUsuario(usuario, options = {}) {
     // Falla técnica → reintentar desde el inicio de la pantalla de carga.
     console.warn('[buscar] intento ' + intento + '/' + INTENTOS + ' sin resultado confiable (texto '
       + (r && r.textoOk ? 'OK' : 'NO SE ESCRIBIÓ') + ', refresco ' + (r && r.refresco ? 'sí' : 'NO') + ') — reintentando');
+    _logFallaBusqueda({
+      alias: wanted, intento: intento, de: INTENTOS,
+      textoOk: !!(r && r.textoOk), refresco: !!(r && r.refresco),
+      inputAhora: ((findSearchInput() || {}).value || ''),
+      filasVisibles: filasJugador().length,
+      modalAbierto: !!findActiveModal(),
+      necesitaLogin: pageNeedsLogin(), bloqueada: pageIsBlocked()
+    });
     if (intento < INTENTOS) {
       try { await _asegurarInicio(); } catch (_) {}
       await delay(400);

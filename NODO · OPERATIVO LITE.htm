@@ -1426,10 +1426,19 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Supabase: primero el bundle LOCAL (viene en node_modules, va empaquetado en el build).
+     Sin esto, si el CDN no responde, window.supabase queda undefined → createClient tira →
+     el bloque entero muere y TODOS los let/const globales quedan en TDZ: la app arranca
+     "viva" pero cada función explota con "Cannot access X before initialization". -->
+<script src="node_modules/@supabase/supabase-js/dist/umd/supabase.js"></script>
+<script>
+  if(!(window.supabase && window.supabase.createClient)){
+    document.write('<scr'+'ipt src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"><\/scr'+'ipt>');
+  }
+</script>
 
 <script>
-const API_URL = "https://script.google.com/macros/s/AKfycbwvZGRAOxBLNIQ52mlED6ZlsOkpAd2PicOvmlZFBTKptXR5lnC_n87w-awDvowmktI8/exec";
+const API_URL ="https://script.google.com/macros/s/AKfycbwvZGRAOxBLNIQ52mlED6ZlsOkpAd2PicOvmlZFBTKptXR5lnC_n87w-awDvowmktI8/exec";
 
 // Unificado al mismo Supabase que Portal y Admi (pjvvyvfcwjoocjqvdror).
 // ROLLBACK si el panel no loguea (RPCs faltantes en el proyecto nuevo):
@@ -1437,9 +1446,13 @@ const API_URL = "https://script.google.com/macros/s/AKfycbwvZGRAOxBLNIQ52mlED6Zl
 //   SUPABASE_KEY = "sb_publishable_UlAN1ifdqpTj9pDIwFU0vg_S7AIU5Sg"
 const SUPABASE_URL = "https://pjvvyvfcwjoocjqvdror.supabase.co";
 const SUPABASE_KEY = "sb_publishable_NYqRoKptTgcL90VAVF2kqA_Gl06mEUF";
-const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
-  global: { headers: { "x-panel-secret": (localStorage.getItem("nodo_panel_data_secret") || "nodo-panel-data-2026") } }
-});
+// Guarda: si ni el bundle local ni el CDN cargaron, NO tiramos acá. Un throw en el top-level
+// de este script deja todos los globals en TDZ y la app queda inutilizable en silencio.
+const supabaseClient = (window.supabase && window.supabase.createClient)
+  ? window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
+      global: { headers: { "x-panel-secret": (localStorage.getItem("nodo_panel_data_secret") || "nodo-panel-data-2026") } }
+    })
+  : (console.error('[NODO] Supabase NO cargó (ni local ni CDN) — la app sigue viva pero sin base.'), null);
 
 // ── Push API (configurable por oficina via localStorage) ──────────────────
 window.PUSH_API_URL = localStorage.getItem("nodo_push_api_url") || "https://portal-bet300-a4xj.vercel.app/api/send-push";
@@ -2193,6 +2206,10 @@ function renderTablaJugadores(lista){
 function _blEsParcial(r){ return /PARCIAL/i.test(String((r&&r.notas)||'')); }
 function _blFmtGap(ms){ if(ms==null) return ''; const h=Math.floor(ms/3600000), m=Math.floor((ms%3600000)/60000); return (h>0?h+'h':'')+(m>0?(h>0?' ':'')+m+'min':'')||'0min'; }
 function _blIsoDay(offset){ const d=new Date(); d.setDate(d.getDate()-(offset||0)); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
+// Ventana de 24hs en ms: la usa el fetch (retrovisor del modo día) y el gap pareado.
+// var y no const: se referencia desde muy abajo del mismo script; si algo tira arriba,
+// var sigue resolviendo por window en vez de quedar muerto en TDZ.
+var _BL_H24 = 24*60*60*1000;
 
 async function verificarRetiro24h(usuario) {
   const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).getTime();
@@ -5161,13 +5178,6 @@ function _bilLedgerAdd(bilId, tipo, monto, estado){
   // El operador tiene la obligación del 1 a 1 entre lo anotado y la billetera → el cotejo es la
   // herramienta para verificarlo, no un acumulador paralelo que se desincronizaba y avisaba al pedo.
   return;
-  // eslint-disable-next-line no-unreachable
-  if(!bilId) return;
-  if(estado && String(estado).toUpperCase()!=='OK') return; // solo ops efectivas
-  const t=String(tipo||'').toUpperCase(); const signo=t==='CARGA'?1:t==='RETIRO'?-1:0; if(!signo) return;
-  const m=Math.abs(Number(monto||0)); if(!m) return;
-  const led=_bilLedgerAll(); const k=String(bilId); const L=led[k]||{base:null,ops:0};
-  L.ops=Number(L.ops||0)+signo*m; led[k]=L; _bilLedgerSave(led);
 }
 window._bilLedgerAdd = _bilLedgerAdd;
 // Compara esperado vs real (llamar DESPUÉS de sincronizar Chunior, con billeteras[].SALDO ya real)
@@ -5179,26 +5189,6 @@ window._chequearDiferenciasBilletera = function(){
   try{ localStorage.removeItem(BIL_LEDGER_KEY); }catch(_e){}
   window.__bilDifs = [];
   return [];
-  // eslint-disable-next-line no-unreachable
-  const led=_bilLedgerAll(); const difs=[];
-  (billeteras||[]).forEach(function(b){
-    const id=String(b.ID_BILLETERA); const actual=Number(b.SALDO||0); const L=led[id];
-    if(L && typeof L.base==='number'){
-      const esperado=L.base+Number(L.ops||0); const diff=esperado-actual;
-      if(Math.abs(diff)>=_BIL_DIF_UMBRAL) difs.push({id:b.ID_BILLETERA, nombre:b.NOMBRE_VISIBLE||id, esperado:esperado, actual:actual, diff:diff, ops:Number(L.ops||0)});
-    }
-    led[id]={base:actual, ops:0}; // re-basar al real (arranca de cero hasta la próxima sync)
-  });
-  _bilLedgerSave(led);
-  window.__bilDifs = difs;
-  if(difs.length){
-    try{
-      difs.sort((a,b)=>Math.abs(b.diff)-Math.abs(a.diff));
-      const top=difs[0]; const extra=difs.length>1?(' · +'+(difs.length-1)+' billetera(s) más'):'';
-      toast('⚠ Diferencia con Chunior · '+top.nombre+': real '+money(top.actual)+' vs esperado '+money(top.esperado)+' ('+(top.diff>0?'+':'')+money(top.diff)+')'+extra+' — ¿faltó anotar una carga?', 'yellow');
-    }catch(_e){}
-  }
-  return difs;
 };
 // ── Atribución por turno (portado del colega, v1.1.39) ───────────────────────
 // Toma el operador REALMENTE logueado en Chunior (#user-tools strong) y actualiza operador.usuario
@@ -7333,12 +7323,21 @@ async function _watchdogLeer(){
   let drexNeedsLogin = false;
   let chuniorReachable = false;
   try {
-    if(window.ctrlElectron?.drexAutomation){
-      const r = await window.ctrlElectron.drexAutomation('obtenerSaldoAgente');
+    // La lectura de fichas es PERIÓDICA: si la cola está ocupada, SALTEA esta vuelta en vez de
+    // encolarse (así no se apilan lecturas viejas que después se disparan todas juntas: era el
+    // "vuelve a lanzarse"). Y si corre, va POR LA COLA — antes iba directo y se metía en medio de
+    // una carga/retiro, navegando la ventana y volándole el modal a la operación en curso.
+    const _colaOcupada = !!(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes > 0));
+    if(window.ctrlElectron?.drexAutomation && !_colaOcupada){
+      const r = await _drexEncolar('obtenerSaldoAgente(watchdog)', function(){
+        return window.ctrlElectron.drexAutomation('obtenerSaldoAgente');
+      }, { silencioso:true });   // tarea de fondo: no molesta al operador con toasts
       if(r){
         if(r.needsLogin) drexNeedsLogin = true;
         if(r.balance && typeof r.balance.value === 'number') drexFichas = r.balance.value;
       }
+    } else if(_colaOcupada){
+      console.log('[watchdog] fichas: hay una operación en curso → se saltea esta vuelta');
     }
   } catch(_){}
   try {
@@ -8072,15 +8071,75 @@ async function _resolverAliasParaCasino(usuario){
   }
 }
 
-async function callDrex(method, ...args){
-  // Solo buscarUsuario resuelve el alias inteligentemente.
-  // crearUsuario / cambiarClave NO se tocan.
-  if(method === 'buscarUsuario' && args.length > 0 && typeof args[0] === 'string'){
-    const aliasFinal = await _resolverAliasParaCasino(args[0]);
-    // Reenviamos los args extra (ej: options { skipBalance: true })
-    return window.ctrlElectron.drexAutomation('buscarUsuario', aliasFinal, ...args.slice(1));
+// ══════════════════════════════════════════════════════════════════════════
+// COLA SERIAL DE AGENTES — una sola ventana, un solo script a la vez.
+// Antes cada flujo disparaba su automatización cuando se le cantaba y se pisaban: el watchdog de
+// fichas (obtenerSaldoAgente) navegaba la ventana en medio de un retiro y le volaba el modal
+// → "No se encontró el botón Enviar", y la operación quedaba a medias sin retomar.
+// Ahora TODO pasa por acá y se ejecuta de a uno, en orden de llegada.
+//   · Un fallo NO rompe la cadena (la siguiente tarea arranca igual).
+//   · Tope por tarea: si una se cuelga, se destraba la cola en vez de bloquear el panel para siempre.
+//   · ⛔ Cancelar NO se encola: es el freno de emergencia, tiene que pasar por encima.
+// Estado visible en consola: window._drexCola  → {activo, pendientes}
+// ══════════════════════════════════════════════════════════════════════════
+window._drexCola = { activo:null, pendientes:0 };
+let _drexColaP = Promise.resolve();
+const _DREX_TAREA_MAX_MS = 120000;
+// Nombres lindos para el operador (los métodos internos no le dicen nada).
+const _DREX_NOMBRE = { buscarUsuario:'buscar usuario', cargarSaldo:'carga', retirarSaldo:'retiro',
+  crearUsuario:'crear usuario', cambiarClave:'cambiar clave', obtenerSaldoAgente:'leer fichas',
+  iniciarSesion:'iniciar sesión', verifyUser:'verificar usuario' };
+function _drexEncolar(nombre, fn, opts){
+  const st = window._drexCola;
+  const silencioso = !!(opts && opts.silencioso);
+  // FEEDBACK: si entra detrás de otra cosa, avisamos que está EN COLA (no trabado). Sin esto el
+  // operador aprieta, no pasa nada visible y parece que la app se colgó.
+  if(!silencioso && st.activo){
+    const enCurso = _DREX_NOMBRE[st.activo.nombre] || st.activo.nombre;
+    const mio = _DREX_NOMBRE[nombre] || nombre;
+    try{ toast('⏳ "'+mio+'" queda en cola · terminando "'+enCurso+'"'+(st.pendientes>1?(' · '+st.pendientes+' esperando'):''), 'blue'); }catch(_e){}
   }
-  return window.ctrlElectron.drexAutomation(method, ...args);
+  st.pendientes++;
+  const correr = function(){
+    st.activo = { nombre:nombre, desde:Date.now() };
+    const t0 = Date.now();
+    let _to = null;
+    return Promise.race([
+      Promise.resolve().then(fn),
+      new Promise(function(_res, rej){
+        _to = setTimeout(function(){
+          rej(new Error('La tarea "'+nombre+'" superó '+Math.round(_DREX_TAREA_MAX_MS/1000)+'s · se destrabó la cola'));
+        }, _DREX_TAREA_MAX_MS);
+      })
+    ]).finally(function(){
+      if(_to) clearTimeout(_to);
+      const ms = Date.now()-t0;
+      if(ms > 8000) console.warn('[cola] '+nombre+' tardó '+ms+'ms · pendientes: '+(st.pendientes-1));
+      st.activo = null;
+      if(st.pendientes > 0) st.pendientes--;
+      // Avisar que la cola sigue con lo que quedó (así el operador ve que retoma solo).
+      if(!silencioso && st.pendientes > 0){
+        try{ toast('▶ Sigo con lo que quedó · '+st.pendientes+' en cola', 'blue'); }catch(_e){}
+      }
+    });
+  };
+  const p = _drexColaP.then(correr, correr);   // corre igual si la anterior falló
+  _drexColaP = p.then(function(){}, function(){});  // la cadena nunca se corta
+  return p;
+}
+async function callDrex(method, ...args){
+  // El freno de emergencia NO espera en la cola (si no, no frenaría nada).
+  if(method === 'abortarOperacion') return window.ctrlElectron.drexAutomation(method, ...args);
+  return _drexEncolar(method, async function(){
+    // Solo buscarUsuario resuelve el alias inteligentemente.
+    // crearUsuario / cambiarClave NO se tocan.
+    if(method === 'buscarUsuario' && args.length > 0 && typeof args[0] === 'string'){
+      const aliasFinal = await _resolverAliasParaCasino(args[0]);
+      // Reenviamos los args extra (ej: options { skipBalance: true })
+      return window.ctrlElectron.drexAutomation('buscarUsuario', aliasFinal, ...args.slice(1));
+    }
+    return window.ctrlElectron.drexAutomation(method, ...args);
+  });
 }
 
 // Auto-registra o reconoce un usuario después de una operación exitosa.
@@ -9411,14 +9470,23 @@ async function _cotejoScrapeLista(url){
     const t0=Date.now(); let listo=false;
     while(Date.now()-t0<9000){ listo=await window.chunior.exec('(function(){return !!(document.getElementById("result_list")||document.querySelector(".paginator,#changelist"));})()').catch(function(){return false;}); if(listo)break; await new Promise(function(r){setTimeout(r,300);}); }
     if(!listo) return [];
+    // Lee TODAS las celdas con su clase y su texto, y después elige por clase O por patrón de texto
+    // (mismo criterio que verDepositosSinReclamar, que sí funciona). Antes se exigía la clase
+    // `field-creation` exacta: si esa página la nombraba distinto, la fecha salía null y el filtro
+    // por turno descartaba TODAS las filas → el cotejo leía 0 depos y 0 errores.
     const filas = await window.chunior.exec(
       '(function(){var out=[];var trs=document.querySelectorAll("#result_list tbody tr");'+
       'for(var i=0;i<trs.length&&i<80;i++){var tr=trs[i];'+
       ' var a=tr.querySelector("th a[href],td a[href]");var id=null;if(a){var mh=(a.getAttribute("href")||"").match(/(\\d{3,})/);if(mh)id=mh[1];}'+
-      ' var cre=tr.querySelector("td.field-creation, .field-creation");'+
-      ' var mon=tr.querySelector(\'td.field-monto, .field-monto, td.field-as_money, .field-as_money, td[class*="monto"], td[class*="importe"]\');'+
-      ' var cu=tr.querySelector(\'td[class*="cuenta"],td[class*="destino"],td[class*="billetera"]\');'+
-      ' out.push({id:id,creacion:(cre?cre.textContent:"").trim(),monto:(mon?mon.textContent:"").trim(),cuenta:(cu?cu.textContent:"").trim(),texto:(tr.textContent||"").replace(/\\s+/g," ").trim().substring(0,300)});'+
+      ' var tds=tr.querySelectorAll("th,td");var cells=[];'+
+      ' for(var j=0;j<tds.length;j++){cells.push({c:(tds[j].className||""),t:(tds[j].textContent||"").replace(/\\s+/g," ").trim()});}'+
+      ' function pick(clsRe,txtRe){var x=cells.filter(function(y){return clsRe.test(y.c)&&y.t;})[0];'+
+      '   if(x)return x.t; if(txtRe){x=cells.filter(function(y){return txtRe.test(y.t);})[0]; if(x)return x.t;} return "";}'+
+      ' out.push({id:id,'+
+      '   creacion:pick(/creation|fecha|creado|date/i,/\\d{2}[-\\/]\\d{2}[-\\/]\\d{4}/),'+
+      '   monto:pick(/monto|money|importe/i,/\\$/),'+
+      '   cuenta:pick(/cuenta|destino|billetera|wallet/i,null),'+
+      '   texto:(tr.textContent||"").replace(/\\s+/g," ").trim().substring(0,300)});'+
       '}return out;})()'
     ).catch(function(){return [];});
     return Array.isArray(filas)?filas:[];
@@ -9441,20 +9509,32 @@ window.cotejoSnapshot = async function(){
   // Fuentes REALES de Chunior para las guías del cotejo (no solo el historial del panel):
   // depos s/reclamar del TURNO + transferencias a la billetera ERROR del TURNO. Best-effort:
   // si el scraping falla, el cotejo sigue sin guías (no se rompe).
+  // Filtra al turno vigente, PERO si ninguna fila trajo fecha parseable no descarta todo en
+  // silencio (eso dejaba el cotejo sin guías y parecía que "no revisa nada"): en ese caso las deja
+  // pasar y avisa por consola, para que el operador vea las coincidencias igual.
+  const _filtrarTurno = function(arr, etiqueta){
+    const conFecha = arr.filter(function(x){ return x.ts !== null; });
+    if(!arr.length) return [];
+    if(!conFecha.length){
+      console.warn('[cotejo] '+etiqueta+': '+arr.length+' fila(s) SIN fecha parseable → no se filtra por turno (revisá el formato de la lista en Chunior)');
+      return arr.filter(function(x){ return x.monto>0; });
+    }
+    return conFecha.filter(function(x){ return x.monto>0 && x.ts>=iniMs; });
+  };
   let depos=[], errores=[];
   try{
-    depos = (await _cotejoScrapeLista(CHUNIOR_BASE+'/transacciones/depositossinreclamar/')).map(function(f){
+    depos = _filtrarTurno((await _cotejoScrapeLista(CHUNIOR_BASE+'/transacciones/depositossinreclamar/')).map(function(f){
       const t=_chuParsearFechaCreacion(f.creacion);
       return { id:f.id, ts:t, monto:Math.round(_adminChuParseMonto(f.monto||f.texto)||0), cuenta:f.cuenta||'', texto:f.texto };
-    }).filter(function(d){ return d.monto>0 && d.ts!==null && d.ts>=iniMs; });
+    }), 'depos s/reclamar');
   }catch(_e){}
   try{
     if(bilError){
       const nomErr=String(bilError.NOMBRE_VISIBLE||'').toLowerCase();
-      errores = (await _cotejoScrapeLista(CHUNIOR_BASE+'/transacciones/movimientointerno/')).map(function(f){
+      errores = _filtrarTurno((await _cotejoScrapeLista(CHUNIOR_BASE+'/transacciones/movimientointerno/')).map(function(f){
         const t=_chuParsearFechaCreacion(f.creacion);
         return { id:f.id, ts:t, monto:Math.round(_adminChuParseMonto(f.monto||f.texto)||0), texto:f.texto };
-      }).filter(function(m){ return m.monto>0 && m.ts!==null && m.ts>=iniMs && m.texto.toLowerCase().indexOf(nomErr)>=0; });
+      }), 'movimientos a ERROR').filter(function(m){ return m.texto.toLowerCase().indexOf(nomErr)>=0; });
     }
   }catch(_e){}
   return { ok:true, snapshot_id:'snap_'+ts+'_'+Math.random().toString(36).slice(2,7), turno_id:_cotejoTurnoId(ts), inicio_turno_ms:iniMs, ts:ts, saldos:saldos,
@@ -9527,6 +9607,20 @@ window._cotejoMatch = _cotejoMatch; window._cotejoTurnoId = _cotejoTurnoId;
 window._cotejoFmtMiles = function(n){
   n = Math.abs(Number(String(n==null?'':n).replace(/[^\d]/g,''))||0);
   return n ? n.toLocaleString('es-AR') : '';
+};
+// Variante que CONSERVA el signo (recarga administrativa: un monto negativo DESCUENTA fichas).
+window._fmtMilesConSigno = function(v){
+  const s = String(v==null?'':v);
+  const neg = /^\s*-/.test(s);
+  const n = Math.abs(Number(s.replace(/[^\d]/g,''))||0);
+  return (n ? (neg?'-':'')+n.toLocaleString('es-AR') : (neg?'-':''));
+};
+// Parseo con signo: "-1.500" → -1500
+window._parseMontoConSigno = function(v){
+  const s = String(v==null?'':v);
+  const neg = /^\s*-/.test(s);
+  const n = Math.abs(Number(s.replace(/[^\d]/g,''))||0);
+  return neg ? -n : n;
 };
 function _cotejoLsKey(turno){ return 'nodo_cotejo_'+turno; }
 function _cotejoLsLoad(turno){ try{ return JSON.parse(localStorage.getItem(_cotejoLsKey(turno))||'{"casos":[],"seq":0}'); }catch(_e){ return {casos:[],seq:0}; } }
@@ -10664,7 +10758,8 @@ async function registrarRecargaFichasChunior(monto){
     + 'var puesto="";'
     + 'if(sel){ var op=Array.prototype.filter.call(sel.options,function(x){return x.value;})[0];'
     + '  if(op){ sel.value=op.value; puesto=(op.textContent||"").trim(); sel.dispatchEvent(new Event("change",{bubbles:true})); } }'
-    + 'm.value=' + JSON.stringify(String(Math.abs(Number(monto)||0))) + ';'
+    // Monto CON SIGNO: negativo descuenta fichas del puesto (no se usa Math.abs a propósito).
+    + 'm.value=' + JSON.stringify(String(Number(monto)||0)) + ';'
     + 'm.dispatchEvent(new Event("input",{bubbles:true})); m.dispatchEvent(new Event("change",{bubbles:true}));'
     + 'b.click(); return {ok:true, puesto:puesto};'
     + '})()'
@@ -10681,22 +10776,24 @@ async function registrarRecargaFichasChunior(monto){
 }
 window.abrirModalRecargaFichas = function(){
   abrirModal('🎰 Recarga administrativa de fichas',
-    '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Suma fichas al <b>puesto actual</b> en Chunior (el puesto se selecciona solo: es el único de la lista). No toca billeteras ni saldos de jugadores.</div>'
-    + '<label>Monto</label><input id="recFichasMonto" type="text" inputmode="numeric" autocomplete="off" placeholder="Ej: 500000" oninput="this.value=window._cotejoFmtMiles(this.value)" style="width:100%;text-align:right;font-weight:800;font-size:17px">',
+    '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Ajusta las fichas del <b>puesto actual</b> en Chunior (el puesto se selecciona solo: es el único de la lista). No toca billeteras ni saldos de jugadores.<br><b style="color:#fdba74">Monto negativo (con "−") DESCUENTA fichas.</b></div>'
+    + '<label>Monto <span class="small" style="color:#8b949e;font-weight:400">· ej: 500000 suma · -500000 descuenta</span></label>'
+    + '<input id="recFichasMonto" type="text" inputmode="text" autocomplete="off" placeholder="Ej: 500000 o -500000" oninput="this.value=window._fmtMilesConSigno(this.value)" style="width:100%;text-align:right;font-weight:800;font-size:17px">',
     async function(){
-      const monto=Math.abs(Number(String((document.getElementById('recFichasMonto')||{}).value||'').replace(/[^\d]/g,''))||0);
+      const monto=window._parseMontoConSigno((document.getElementById('recFichasMonto')||{}).value||'');
       if(!monto){ toast('Ingresá el monto.','red'); return; }
       cerrarModal();
-      if(!confirm('¿Recargar '+money(monto)+' de fichas al puesto actual en Chunior?')) return;
-      toast('🎰 Recargando '+money(monto)+' fichas...','blue');
+      const _esNeg = monto<0;
+      if(!confirm((_esNeg?'¿DESCONTAR ':'¿Recargar ')+money(Math.abs(monto))+' de fichas '+(_esNeg?'del':'al')+' puesto actual en Chunior?')) return;
+      toast((_esNeg?'🎰 Descontando ':'🎰 Recargando ')+money(Math.abs(monto))+' fichas...','blue');
       _wdLock();
       let r; try{ r=await registrarRecargaFichasChunior(monto); }catch(e){ r={ok:false,error:e.message||'error'}; }
       finally{ _wdUnlock(); }
       if(r && r.ok){
-        toast('🎰 Recarga de '+money(monto)+' enviada'+(r.puesto?(' · '+r.puesto):''),'green');
+        toast('🎰 '+(_esNeg?'Descuento':'Recarga')+' de '+money(Math.abs(monto))+' enviado'+(r.puesto?(' · '+r.puesto):''),'green');
         try{ await registrarEnHistorial({ usuario:'RECARGA FICHAS', tipo:'RECARGA_FICHAS', monto:monto,
           billetera_id:null, billetera_nombre:null, origen:'ADMIN', estado:'OK',
-          notas:'Recarga administrativa de fichas'+(r.puesto?(' · '+r.puesto):'')+(r.mensaje?(' · '+r.mensaje):'') }); }catch(_e){}
+          notas:(_esNeg?'DESCUENTO administrativo de fichas':'Recarga administrativa de fichas')+(r.puesto?(' · '+r.puesto):'')+(r.mensaje?(' · '+r.mensaje):'') }); }catch(_e){}
         try{ await cargarHistorial(); }catch(_e){}
         _watchdogTrigger(1500);
       } else toast('⚠️ No se pudo recargar: '+((r&&r.error)||'sin detalle'),'red');
@@ -11753,7 +11850,12 @@ if(window.ctrlElectron){
         const _saldoChk = (window._retiroSaldoCheck||{})[String(s.USUARIO||"").toLowerCase()];
         const _esRetiroS = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
         const _accS = _esRetiroS ? '#fb923c' : (String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="CARGA" ? '#22c55e' : ''); // 🟠 retiro · 🟢 carga
-        const _saldoBadge = (_esRetiroS && _saldoChk) ? `<div style="font-size:10px;font-weight:800;margin-top:2px;color:${_saldoChk.suficiente?'#22c55e':'#ef4444'}">saldo ${esc(_saldoChk.raw||"")}${_saldoChk.suficiente?' ✓':' ⚠ no alcanza'}</div>` : "";
+        // Si declaró MÁS de lo que tiene pero igual hay fichas retirables, ofrecemos el retiro por
+        // lo que HAY (típico: un cero de más) → abre el modal de parcial ya ajustado al saldo real.
+        const _sugS = (_esRetiroS && _saldoChk && !_saldoChk.suficiente && _saldoChk.confiable && window._retiroMontoSugerido)
+          ? window._retiroMontoSugerido(Number(s.MONTO_REAL||s.MONTO_DECLARADO||0), Number(_saldoChk.saldo||0)) : null;
+        const _saldoBadge = (_esRetiroS && _saldoChk) ? `<div style="font-size:10px;font-weight:800;margin-top:2px;color:${_saldoChk.suficiente?'#22c55e':'#ef4444'}">saldo ${esc(_saldoChk.raw||"")}${_saldoChk.suficiente?' ✓':' ⚠ no alcanza'}</div>`
+          + (_sugS ? `<button class="mini-btn" style="margin-top:3px;background:#ea580c;color:#fff;font-weight:800;font-size:10px" onclick="_retiroAjustarASaldo(${id})" title="${_sugS.motivo==='ceros'?'Declaró con '+_sugS.ceros+' cero(s) de más — quiso este monto':'No alcanza: retirar todo lo que tiene'}">✔ Retirar ${esc(money(_sugS.monto))}</button>` : "") : "";
         const _pp = (window._retiroParcialInfo ? window._retiroParcialInfo(s) : {restante:Number(s.MONTO_REAL||s.MONTO_DECLARADO||0),pagado:0,total:Number(s.MONTO_REAL||s.MONTO_DECLARADO||0),hasProg:false});
         const _montoCell = (_esRetiroS && _pp.hasProg)
           ? `${money(_pp.restante)}<div style="font-size:10px;font-weight:800;margin-top:2px;color:#a78bfa">parcial · pagado ${money(_pp.pagado)} de ${money(_pp.total)}</div>`
@@ -11795,44 +11897,6 @@ if(window.ctrlElectron){
     // acá SIEMPRE delegamos en el historial unificado (portado de NexoBetaChan · "tal cual mi nodo").
     try{ if(typeof renderHistorialUnificado === 'function'){ renderHistorialUnificado(); return; } }catch(_e){}
     return;
-    // ── código legacy de la tabla de solicitudes (Titular + Ver), ya NO se ejecuta ──
-    // SOPORTE va al chat, no a solicitudes
-    const arr = (V154P.solicitudes || []).filter(s => String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
-
-    if(!arr.length){
-      box.innerHTML = '<div class="alert-box">No hay solicitudes Portal para mostrar.</div>';
-      return;
-    }
-
-    let html = '<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Tipo</th><th>Usuario</th><th>Titular</th><th>Monto</th><th>Estado</th><th>Acción</th></tr></thead><tbody>';
-    html += arr.map(s => {
-      const id = Number(s.ID || s.SOLICITUD_ID || 0);
-      const tomada = ["EN_REVISION","EN_PROCESO"].includes(String(s.ESTADO||"").toUpperCase());
-      const cerrada = estadoCerrado(s.ESTADO);
-      const acciones = cerrada
-        ? `<button class="mini-btn blue" onclick="v154pDetalleSolicitud(${id})">Ver</button>`
-        : `${tomada?`<button class="mini-btn yellow" disabled>Tomada</button>`:`<button class="mini-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`}
-          <button class="mini-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>
-          ${String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO"?`<button class="mini-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>`:""}
-          <button class="mini-btn blue" onclick="v154pDetalleSolicitud(${id})">Ver</button>
-          <button class="mini-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>`;
-      const _ppT = (window._retiroParcialInfo ? window._retiroParcialInfo(s) : {restante:Number(s.MONTO_REAL||s.MONTO_DECLARADO||0),pagado:0,total:Number(s.MONTO_REAL||s.MONTO_DECLARADO||0),hasProg:false});
-      const _esRetT = String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="RETIRO";
-      const _montoCellT = (_esRetT && _ppT.hasProg)
-        ? `${money(_ppT.restante)}<br><span class="small" style="color:#a78bfa;font-weight:700">pagado ${money(_ppT.pagado)}/${money(_ppT.total)}</span>`
-        : money(s.MONTO_REAL || s.MONTO_DECLARADO || 0);
-      return `<tr>
-        <td>${fecha(s.FECHA_CREACION)}</td>
-        <td>${esc(s.TIPO || "-")}</td>
-        <td><b>${esc(s.USUARIO || "-")}</b><br><span class="small">${esc(s.ORIGEN || "PORTAL")}</span></td>
-        <td>${esc(s.TITULAR || s.NOMBRE_COMPLETO || "-")}</td>
-        <td>${_montoCellT}</td>
-        <td>${typeof estadoBadge === "function" ? estadoBadge(s.ESTADO) : esc(s.ESTADO || "-")}</td>
-        <td>${acciones}</td>
-      </tr>`;
-    }).join("");
-    html += '</tbody></table></div>';
-    box.innerHTML = html;
   }
 
   
@@ -12185,6 +12249,25 @@ window.abrirModalRetiroV2 = function(id){
 // Billeteras utilizables para pagar: excluye error/promos/REFERIDOS, y oculta las que
 // NO aportan al total (saldo < 5% del objetivo) — no tiene sentido mostrar $38k para un
 // retiro de $5M. Siempre deja al menos las 4 más grandes por si hace falta.
+const RV2_MIN_RETIRABLE = 5000;   // con 5.000 fichas o más, el retiro es viable (criterio operativo)
+// Qué monto ofrecer cuando el usuario declaró MÁS de lo que tiene.
+// Criterio del operador: se respeta lo que el usuario QUISO teclear, no se le da todo el saldo.
+//   pidió 200.000 y tiene 203.015 → quiso 20.000... no: 200.000/10 = 20.000 entra → SÍ, 20.000.
+//   Dicho de otra forma: si hubiera querido TODO habría tecleado 250 (con el cero de más);
+//   como tecleó 200, quiere 20 — le sacamos el cero al DECLARADO, no lo capamos al saldo.
+// Si sacando ceros nunca entra, recién ahí se ofrece todo lo que tiene.
+window._retiroMontoSugerido = function(declarado, saldo){
+  declarado = Math.abs(Number(declarado)||0); saldo = Math.abs(Number(saldo)||0);
+  if(!(declarado>0) || !(saldo>0)) return null;
+  if(declarado <= saldo + 0.5) return null;                 // alcanza → no hay nada que ajustar
+  // El "cero de más" solo es creíble si lo declarado es MUY superior al saldo (≥3x). Si declaró
+  // 60.000 y tiene 55.000 no se comió un cero: quiso ~todo, y ofrecerle 6.000 sería 10x menos.
+  const unCero = declarado/10;
+  if(declarado >= saldo*3 && unCero <= saldo + 0.5 && unCero >= RV2_MIN_RETIRABLE && Number.isInteger(unCero))
+    return { monto:unCero, motivo:'ceros', ceros:1 };
+  if(saldo >= RV2_MIN_RETIRABLE) return { monto:Math.floor(saldo), motivo:'todo' };
+  return null;                                              // ni con todo el saldo llega al mínimo
+};
 const _RV2_EXCL = /error|promo|referid/i;
 const _RV2_MIN_SALDO = 200000; // billeteras con menos de $200k no se usan para retiros
 function _rv2BilsUsables(objetivo){
@@ -12208,6 +12291,49 @@ function _rv2TotalSel(){
 window._rv2Toggle = function(bid){ const st=window._retiroV2; if(!st) return; bid=String(bid); st.sel[bid]=!st.sel[bid]; if(st.sel[bid] && !st.montos[bid]){ const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); const falta=Math.max(0, st.objetivo - _rv2TotalSel()); st.montos[bid]= window._montoRedondo?window._montoRedondo(Math.min(Number(b&&b.SALDO||0), falta)):Math.min(Number(b&&b.SALDO||0), falta); } _rv2Render(); };
 window._rv2SetMonto = function(bid, val){ const st=window._retiroV2; if(!st) return; st.montos[String(bid)] = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 window._rv2SetParcialOk = function(v){ if(window._retiroV2) window._retiroV2.parcialAceptado = !!v; };
+// Fija el retiro al SALDO REAL del usuario (declaró de más). Al mover el objetivo, `montoTotal`
+// del cierre pasa a ser ese monto → el retiro cierra COMPLETO, sin dejar un parcial fantasma por
+// la diferencia mal declarada. Re-sugiere las billeteras para el monto nuevo.
+// Atajo desde la card de pendientes: abre el modal de retiro YA ajustado al saldo real del usuario.
+window._retiroAjustarASaldo = function(id){
+  const chk=(window._retiroSaldoCheck||{});
+  let saldo=0, declarado=0;
+  try{
+    const S=(window.V154P&&V154P.solicitudes)||[];
+    const s=S.find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+    const u=String((s&&s.USUARIO)||'').toLowerCase();
+    saldo=Number((chk[u]||{}).saldo||0);
+    declarado=Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO))||0);
+  }catch(_e){}
+  const sug=window._retiroMontoSugerido(declarado, saldo);
+  if(!sug){ toast('No hay un monto retirable para ajustar.','yellow'); return; }
+  const txt = sug.motivo==='ceros'
+    ? ('Declaró '+money(declarado)+' y tiene '+money(saldo)+'.\nLe sobra'+(sug.ceros>1?'n':'')+' '+sug.ceros+' cero'+(sug.ceros>1?'s':'')+': quiso retirar '+money(sug.monto)+'.\n\n¿Abrir el retiro por '+money(sug.monto)+'?')
+    : ('Declaró '+money(declarado)+' y tiene '+money(saldo)+'.\nNo es cuestión de ceros.\n\n¿Abrir el retiro por todo lo que tiene ('+money(sug.monto)+')?');
+  if(!confirm(txt)) return;
+  if(typeof abrirModalRetiroV2!=='function'){ toast('Modal de retiro no disponible.','red'); return; }
+  abrirModalRetiroV2(id);
+  // Cuando el modal terminó de montar, fijamos el objetivo al monto sugerido.
+  setTimeout(function(){ try{ if(window._retiroV2){ window._retiroV2.saldoReal=saldo; window._rv2AjustarASaldo(sug.monto); } }catch(_e){} }, 350);
+};
+window._rv2AjustarASaldo = function(montoFijo){
+  const st=window._retiroV2; if(!st) return;
+  let nuevo = Math.abs(Number(montoFijo)||0);
+  if(!nuevo){                                    // sin monto explícito → lo calculamos
+    const s = window._retiroMontoSugerido(st.objetivo, st.saldoReal||0);
+    nuevo = s ? s.monto : 0;
+  }
+  if(!(nuevo>0)) return;
+  st.objetivo = nuevo;
+  st.sel={}; st.montos={};
+  try{
+    const rep = recomendarRepartoRetiro(nuevo);
+    (rep.reparto||[]).forEach(function(x){ st.sel[String(x.id)]=true; st.montos[String(x.id)]=x.usar; });
+  }catch(_e){}
+  _rv2Render();
+  try{ toast('Retiro ajustado a '+money(nuevo)+' (lo que el usuario tiene)','blue'); }catch(_e){}
+  _rv2LeerSaldo();
+};
 window._rv2SetObjetivo = function(val){ const st=window._retiroV2; if(!st) return; st.objetivo = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 // Formato de miles en vivo (5.000.000) para que no marean los ceros. Parsea solo dígitos.
 function _rv2FmtMiles(n){ n = Math.abs(Number(String(n).replace(/[^\d]/g,''))||0); return n ? n.toLocaleString('es-AR') : ''; }
@@ -12298,7 +12424,21 @@ async function _rv2LeerSaldo(){
       st.saldoReal = b.balance.value;
       if(e){
         if(st.saldoReal<=0.5) e.innerHTML='<b style="color:#f87171">⚠ Sin fichas para retirar (saldo '+escapeHtml((b.balance.raw||money(0)).trim())+')</b>';
-        else e.innerHTML='💰 Saldo real: <b style="color:'+(st.saldoReal+0.5>=st.objetivo?'#22c55e':'#f5c518')+'">'+escapeHtml((b.balance.raw||money(st.saldoReal)).trim())+'</b>';
+        else {
+          const _alcanza = st.saldoReal+0.5>=st.objetivo;
+          e.innerHTML='💰 Saldo real: <b style="color:'+(_alcanza?'#22c55e':'#f5c518')+'">'+escapeHtml((b.balance.raw||money(st.saldoReal)).trim())+'</b>';
+          // AUTO-AJUSTE: el usuario declaró MÁS de lo que tiene (típico: un cero de más). Si igual
+          // tiene fichas retirables (≥ RV2_MIN_RETIRABLE), ofrecemos fijar el retiro a lo que HAY:
+          // se respeta su intención de retirar, y como el objetivo pasa a ser el total real, el
+          // retiro cierra COMPLETO (no queda un "parcial" fantasma por la diferencia declarada).
+          const _sug = !_alcanza ? window._retiroMontoSugerido(st.objetivo, st.saldoReal) : null;
+          if(_sug){
+            e.innerHTML += '<div style="margin-top:6px;padding:6px 9px;border-radius:8px;background:rgba(245,197,24,.1);border:1px solid rgba(245,197,24,.45);text-align:left">'
+              + '<div style="font-size:11px;color:#fde68a;font-weight:700">⚠ Declaró '+money(st.objetivo)+' y tiene '+money(st.saldoReal)
+              +   (_sug.motivo==='ceros' ? (' — le sobra'+(_sug.ceros>1?'n':'')+' '+_sug.ceros+' cero'+(_sug.ceros>1?'s':'')+': quiso '+money(_sug.monto)) : ' — no es cuestión de ceros')+'</div>'
+              + '<button type="button" class="mini-btn" style="margin-top:5px;background:#ea580c;color:#fff;font-weight:800;font-size:11px" onclick="_rv2AjustarASaldo('+_sug.monto+')">✔ Retirar '+money(_sug.monto)+(_sug.motivo==='todo'?' (todo lo que tiene)':'')+'</button></div>';
+          }
+        }
       }
     } else if(e){ e.innerHTML='No se pudo leer el saldo del usuario.'; }
   }catch(_e){}
