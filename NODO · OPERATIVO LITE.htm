@@ -7871,66 +7871,136 @@ function abrirModalVincular(usuarioSugerido, telefono, prefill, desdeChat){
     }, "Verificar y vincular");
   setTimeout(_altaCotejoTrigger, 150);   // cotejo inicial con lo que ya vino pre-cargado
 }
-// Construye el HTML del cotejo. Verifica el USUARIO por su cuenta, el TELÉFONO por su cuenta, y
-// además CRUZA: si el usuario existe con otro teléfono, o si el teléfono es de otra persona, lo
-// dice explícito ("NO corresponden entre sí"). onPick = función global que recibe (usuario, telefono).
-function _altaCotejoHtml(uDecl, tDecl, r, onPick){
+// Construye la TARJETA del cotejo. Verifica el USUARIO por su cuenta, el TELÉFONO por su cuenta,
+// y además CRUZA ambos.
+// Diseño: la tarjeta ARRANCA con el veredicto (semáforo). Antes el veredicto quedaba abajo de todo,
+// después de 6 líneas de datos crudos, y el alias se repetía 4 veces → el operador tenía que leer
+// todo para saber si podía seguir. Ahora: estado de un vistazo, y el detalle solo si aporta.
+// onPick = función global que recibe (usuario, telefono). titulo = contexto (esquina derecha).
+function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
   const esc=escapeHtml, tN=_altaNormTel(tDecl);
   const telsDe=function(c){ return ((c&&c.telefonos)||[]).map(_altaNormTel).filter(Boolean); };
-  const chip=function(u,t,label,bg){
-    return '<button type="button" onclick="'+onPick+'(\''+esc(String(u).replace(/'/g,"\\'"))+'\',\''+esc(String(t||''))+'\')" style="cursor:pointer;background:'+(bg||'#161b22')+';border:1px solid #30363d;color:#e6edf3;border-radius:7px;padding:3px 8px;font-size:11px;margin:3px 3px 0 0">'+label+'</button>';
-  };
   const uOk=r.usuario.exacto, tOk=r.telefono.exacto;
-  const rot=function(t){ return '<div class="small" style="color:#8b949e;font-weight:800;font-size:9px;text-transform:uppercase;margin-top:5px">'+t+'</div>'; };
-  let html='', alerta=false;
+  const duenoTel = tOk?_altaNormU(tOk.usuario):null;
+  const uReal    = uOk?_altaNormU(uOk.usuario):null;
+  const uDeclN   = _altaNormU(uDecl);
+
+  // Un chip solo tiene sentido si CAMBIA algo: si sugiere lo mismo que ya declaró el cliente era
+  // ruido puro (el caso más común mostraba "✔ usar aylinssf" justo debajo de "aylinssf").
+  // forzar=true para los chips del pie, donde elegir entre las dos personas SÍ es la decisión.
+  const chip=function(u,t,label,tono,forzar){
+    if(!forzar && _altaNormU(u)===uDeclN && (!t || _altaNormTel(t)===tN)) return '';
+    const c = tono==='rojo' ? '#ff7b72' : tono==='ambar' ? '#e3b341' : '#58a6ff';
+    return '<button type="button" onclick="'+onPick+'(\''+esc(String(u).replace(/'/g,"\\'"))+'\',\''+esc(String(t||''))+'\')"'
+      + ' style="cursor:pointer;background:rgba(255,255,255,.04);border:1px solid '+c+'66;color:'+c
+      + ';border-radius:999px;padding:3px 9px;font-size:10.5px;font-weight:700;margin:4px 4px 0 0">'+label+'</button>';
+  };
+  // Fila de dato: rótulo fijo a la izquierda para que usuario y teléfono queden alineados.
+  const fila=function(rot, valor, badge, badgeCol, extra){
+    return '<div style="display:grid;grid-template-columns:60px 1fr;gap:9px;align-items:baseline;padding:3px 0">'
+      +   '<span style="font-size:9px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:#6e7681">'+rot+'</span>'
+      +   '<div style="min-width:0">'
+      +     '<span style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12.5px;font-weight:700;color:#f0f6fc;word-break:break-all">'+valor+'</span>'
+      +     (badge?'<span style="font-size:10.5px;color:'+badgeCol+';margin-left:7px">'+badge+'</span>':'')
+      +     (extra||'')
+      +   '</div>'
+      + '</div>';
+  };
+  const sub=function(t){ return '<div style="font-size:10.5px;color:#8b949e;margin-top:1px">'+t+'</div>'; };
+
+  let filas='', alerta=false;
   // ── 1) USUARIO declarado (INDEPENDIENTE del teléfono) ──
   if(uDecl){
-    html+=rot('Usuario declarado: '+esc(uDecl));
     if(uOk){
       const tl=telsDe(uOk);
-      html+='<div class="small" style="color:#22c55e">✅ Existe'+(tl.length?(' · 📱 '+esc(tl.join(' / '))):' · sin teléfono registrado')+'</div>';
+      // El teléfono del usuario solo se muestra si NO es el declarado; si no, se repite en la fila de abajo.
+      const otroTel = tl.filter(function(x){ return x!==tN; })[0];
+      filas+=fila('Usuario', esc(uDecl), '✓ en sistema', '#3fb950',
+        otroTel ? sub('registrado con 📱 '+esc(otroTel))
+                : (tl.length ? '' : sub('sin teléfono registrado')));
     } else if(r.usuario.similares.length){
       alerta=true;
-      html+='<div class="small" style="color:#f5c518">⚠️ No figura tal cual. En sistema hay:</div><div>'
-        + r.usuario.similares.map(function(c){ const tl=telsDe(c); return chip(c.usuario, tl[0]||tN, '✔ '+esc(c.usuario)+(tl.length?(' · 📱 '+esc(tl[0])):''), '#3b2a09'); }).join('')+'</div>';
+      filas+=fila('Usuario', esc(uDecl), '⚠ no figura así', '#e3b341',
+        '<div>'+r.usuario.similares.map(function(c){ const tl=telsDe(c);
+          return chip(c.usuario, tl[0]||tN, esc(c.usuario)+(tl.length?(' · '+esc(tl[0])):''), 'ambar'); }).join('')+'</div>');
     } else {
-      html+='<div class="small" style="color:#8b949e">🆕 Sin antecedentes (alta nueva).</div>';
+      filas+=fila('Usuario', esc(uDecl), '🆕 sin antecedentes', '#8b949e', '');
     }
   }
   // ── 2) TELÉFONO declarado (INDEPENDIENTE del usuario) ──
   if(tN.length>=6){
-    html+=rot('Teléfono declarado: '+esc(tN));
     if(tOk){
-      html+='<div class="small" style="color:#e6edf3">📱 Pertenece a <b>'+esc(tOk.usuario)+'</b></div><div>'
-        + chip(tOk.usuario, tN, '✔ usar '+esc(tOk.usuario), '#1e3a5f')+'</div>';
+      const mismoDueno = duenoTel===uReal || duenoTel===uDeclN;
+      if(mismoDueno){
+        filas+=fila('Teléfono', esc(tN), '✓ mismo dueño', '#3fb950', '');
+      } else {
+        const grave = !!uDecl;                       // sin usuario declarado es dato, no contradicción
+        if(grave) alerta=true;
+        filas+=fila('Teléfono', esc(tN),
+          (grave?'⚠ es de ':'📱 es de ')+'<b>'+esc(tOk.usuario)+'</b>', grave?'#e3b341':'#58a6ff',
+          '<div>'+chip(tOk.usuario, tN, 'usar '+esc(tOk.usuario), grave?'ambar':'azul')+'</div>');
+      }
     } else if(r.telefono.similares.length){
       alerta=true;
-      html+='<div class="small" style="color:#f5c518">⚠️ No figura · parecidos (¿un dígito de más/menos?):</div><div>'
-        + r.telefono.similares.map(function(c){ return chip(c.usuario, c._tel, '✔ '+esc(c.usuario)+' · 📱 '+esc(c._tel), '#3b2a09'); }).join('')+'</div>';
+      filas+=fila('Teléfono', esc(tN), '⚠ no figura', '#e3b341',
+        sub('¿un dígito de más o de menos?')
+        + '<div>'+r.telefono.similares.map(function(c){
+            return chip(c.usuario, c._tel, esc(c.usuario)+' · '+esc(c._tel), 'ambar'); }).join('')+'</div>');
     } else {
-      html+='<div class="small" style="color:#8b949e">🆕 Sin antecedentes.</div>';
+      filas+=fila('Teléfono', esc(tN), '🆕 sin antecedentes', '#8b949e', '');
     }
   }
   // ── 3) CRUCE: ¿el usuario y el teléfono son de la MISMA persona? ──
+  // Solo se escribe el pie cuando hay algo que DECIDIR. Si coinciden, ya lo dice el semáforo.
+  let pie='', conflicto=false;
   if(uDecl && tN.length>=6){
-    const cajaR='margin-top:6px;padding:5px 7px;background:rgba(251,146,60,.12);border:1px solid rgba(251,146,60,.45);border-radius:7px;color:#fdba74';
-    const cajaA='margin-top:6px;padding:5px 7px;background:rgba(245,197,24,.12);border:1px solid rgba(245,197,24,.4);border-radius:7px;color:#fde68a';
-    const duenoTel = tOk?_altaNormU(tOk.usuario):null;
-    const uReal    = uOk?_altaNormU(uOk.usuario):null;
     if(uReal && duenoTel && duenoTel!==uReal){
-      alerta=true;
-      html+='<div class="small" style="'+cajaR+'">🚨 <b>NO corresponden entre sí</b>: «'+esc(uOk.usuario)+'» y el teléfono de «'+esc(tOk.usuario)+'» son de personas DISTINTAS.</div>';
-    } else if(uReal && duenoTel && duenoTel===uReal){
-      html+='<div class="small" style="margin-top:6px;color:#22c55e">✅ Usuario y teléfono son de la misma persona.</div>';
+      conflicto=true;
+      pie='<b>'+esc(uOk.usuario)+'</b> y el teléfono de <b>'+esc(tOk.usuario)+'</b> son personas distintas.'
+        + '<div>'+chip(uOk.usuario, telsDe(uOk)[0]||'', 'seguir con '+esc(uOk.usuario), 'rojo', true)
+        +        chip(tOk.usuario, tN, 'seguir con '+esc(tOk.usuario), 'rojo', true)+'</div>';
+    } else if(!uReal && duenoTel && duenoTel!==uDeclN){
+      // Si el dueño del teléfono es uno de los ALIAS PARECIDOS, no es un choque de personas: es el
+      // typo que el cotejo está para agarrar. Marcarlo rojo era una alarma falsa, y el rojo que
+      // suena de más se termina ignorando justo cuando el choque es real.
+      const esTypo = (r.usuario.similares||[]).some(function(c){ return _altaNormU(c.usuario)===duenoTel; });
+      if(esTypo){
+        alerta=true;
+        pie='El teléfono es de <b>'+esc(tOk.usuario)+'</b> — parece que escribió mal el alias.';
+      } else {
+        conflicto=true;
+        pie='<b>'+esc(uDecl)+'</b> no existe, y ese teléfono ya es de <b>'+esc(tOk.usuario)+'</b>.';
+      }
     } else if(uReal && !duenoTel && telsDe(uOk).length && telsDe(uOk).indexOf(tN)<0){
       alerta=true;
-      html+='<div class="small" style="'+cajaA+'">⚠️ <b>'+esc(uOk.usuario)+'</b> ya tiene otro teléfono (📱 '+esc(telsDe(uOk)[0])+') — el declarado no coincide.</div>';
-    } else if(!uReal && duenoTel && duenoTel!==_altaNormU(uDecl)){
-      alerta=true;
-      html+='<div class="small" style="'+cajaR+'">🚨 «'+esc(uDecl)+'» no existe, y ese teléfono <b>ya es de «'+esc(tOk.usuario)+'»</b>.</div>';
+      pie='<b>'+esc(uOk.usuario)+'</b> figura con otro teléfono — el declarado no coincide.';
     }
   }
-  return { html:html, alerta:alerta };
+
+  const nivel = conflicto ? 'conflicto' : alerta ? 'revisar' : (uOk||tOk) ? 'ok' : 'nuevo';
+  const T = {
+    ok:        { c:'#3fb950', bg:'rgba(63,185,80,.10)',  bd:'rgba(63,185,80,.38)',  ico:'✅' },
+    nuevo:     { c:'#58a6ff', bg:'rgba(88,166,255,.09)', bd:'rgba(88,166,255,.32)', ico:'🆕' },
+    revisar:   { c:'#e3b341', bg:'rgba(227,179,65,.11)', bd:'rgba(227,179,65,.42)', ico:'⚠️' },
+    conflicto: { c:'#ff7b72', bg:'rgba(248,81,73,.12)',  bd:'rgba(248,81,73,.50)',  ico:'🚨' }
+  }[nivel];
+  const etiqueta = nivel==='conflicto' ? 'No coinciden'
+                 : nivel==='revisar'   ? 'Revisar'
+                 : nivel==='nuevo'     ? 'Alta nueva'
+                 : (uOk&&tOk)          ? 'Coinciden'
+                 : uOk                 ? 'Usuario en sistema' : 'Teléfono en sistema';
+
+  const html =
+      '<div style="border:1px solid '+T.bd+';border-radius:10px;background:#0d1117;overflow:hidden">'
+    +   '<div style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:'+T.bg+';border-bottom:1px solid '+T.bd+'">'
+    +     '<span style="font-size:12px;line-height:1">'+T.ico+'</span>'
+    +     '<span style="font-weight:800;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:'+T.c+'">'+etiqueta+'</span>'
+    +     (titulo?'<span style="margin-left:auto;font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:#6e7681;white-space:nowrap">'+esc(titulo)+'</span>':'')
+    +   '</div>'
+    +   '<div style="padding:5px 10px 7px">'+filas+'</div>'
+    +   (pie?'<div style="padding:6px 10px;border-top:1px solid '+T.bd+';background:'+T.bg+';font-size:11.5px;line-height:1.35;color:'+T.c+'">'+pie+'</div>':'')
+    + '</div>';
+  return { html:html, alerta:(nivel==='conflicto'||nivel==='revisar'), nivel:nivel };
 }
 // Cotejo en VIVO dentro del modal (debounce 500ms): usuario y teléfono se verifican por SEPARADO.
 let _altaCotejoTimer=null;
@@ -7948,10 +8018,9 @@ async function _altaCotejoRender(){
   if(uDecl.length<3 && _altaNormTel(t).length<6){ box.innerHTML=''; return; }
   box.innerHTML='<div class="small" style="color:#8b949e">🔎 cotejando en la base…</div>';
   let r; try{ r=await window.altaCotejarDatos(uDecl,t); }catch(_e){ box.innerHTML=''; return; }
-  const out=_altaCotejoHtml(uDecl, t, r, '_altaUsarSugerencia');
-  box.innerHTML='<div style="background:#0d1117;border:1px solid '+(out.alerta?'rgba(245,197,24,.45)':'#262d3a')+';border-radius:9px;padding:8px 10px">'
-    + (uInp?'':'<div class="small" style="color:#8b949e;margin-bottom:2px">Cotejando lo que declaró el cliente (todavía no escribiste el usuario real)</div>')
-    + out.html + '</div>';
+  // El rótulo de la esquina avisa que todavía se está cotejando lo del cliente y no el usuario real.
+  const out=_altaCotejoHtml(uDecl, t, r, '_altaUsarSugerencia', uInp?'':'declaró el cliente');
+  box.innerHTML=out.html;
 }
 // Modal de RESULTADO del alta/validación: simple (no el modal de error de antes), para VER lo que
 // quedó agendado y tener a mano el mensaje de ingreso. La ficha ya está en la base local y se
@@ -7997,10 +8066,8 @@ window._altaCotejoConsulta = async function(ticket){
   cont.innerHTML='<div class="small" style="color:#8b949e">🔎 cotejando usuario y teléfono en la base…</div>';
   let r; try{ r=await window.altaCotejarDatos(uDecl,tDecl); }catch(_e){ cont.innerHTML=''; return; }
   if(cont.dataset.key!==key) return;  // llegó otro ticket mientras tanto
-  const out=_altaCotejoHtml(uDecl, tDecl, r, '_altaAbrirVincular');
-  cont.innerHTML='<div style="background:#0d1117;border:1px solid '+(out.alerta?'rgba(245,197,24,.45)':'#262d3a')+';border-radius:9px;padding:7px 9px;margin-top:6px">'
-    + '<div class="small" style="color:#8b949e;font-weight:800;text-transform:uppercase;font-size:9px">Cotejo previo · lo que declaró el cliente</div>'
-    + out.html + '</div>';
+  const out=_altaCotejoHtml(uDecl, tDecl, r, '_altaAbrirVincular', 'declaró el cliente');
+  cont.innerHTML='<div style="margin-top:6px">'+out.html+'</div>';
 };
 // Chip del cotejo de la consulta → abre "Validar y vincular" ya cargado con esos datos.
 window._altaAbrirVincular=function(usuario, telefono){ try{ abrirModalVincular(usuario, telefono, true, true); }catch(_e){} };
