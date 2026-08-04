@@ -1240,150 +1240,13 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
         </div>
       </section>
 
+      <!-- Jugadores = CRM operativo. El markup viejo (crear usuario, importar CSV, filtros por
+           nivel/turno/estado, tablaJugadores) vivía acá y se veía cada vez que entrabas, hasta que
+           renderCRM() pisaba el innerHTML entero un segundo después — o sea que ya era código
+           muerto que sólo servía para mostrar una pantalla vieja mientras cargaba. Ahora queda el
+           contenedor con un cartel de carga y lo llena renderCRM(). -->
       <section id="viewJugadores" class="hidden">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px">
-          <div>
-            <h1 style="font-size:26px">🏅 Jugadores</h1>
-            <div class="small">Usuarios registrados · score · distribución de cargas por turno (TM/TT/TN).</div>
-          </div>
-          <button class="mini-btn blue" onclick="cargarJugadores()">🔄 Actualizar</button>
-        </div>
-
-        <!-- Stats resumen -->
-        <div class="card" style="margin-bottom:12px;padding:14px">
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px">
-            <div class="stat-card" style="padding:12px"><div class="stat-title">Total</div><div class="stat-value" id="jugTotalCount" style="font-size:22px">—</div></div>
-            <div class="stat-card" style="padding:12px"><div class="stat-title" style="color:#fdb022">VIP/Pref.</div><div class="stat-value" id="jugVipCount" style="font-size:22px;color:#fdb022">—</div></div>
-            <div class="stat-card" style="padding:12px"><div class="stat-title" style="color:#12b76a">Confiables</div><div class="stat-value" id="jugConfiableCount" style="font-size:22px;color:#12b76a">—</div></div>
-            <div class="stat-card" style="padding:12px"><div class="stat-title">Nuevos</div><div class="stat-value" id="jugNuevoCount" style="font-size:22px">—</div></div>
-          </div>
-        </div>
-
-        <!-- Crear usuario -->
-        <div class="card" style="margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <b>➕ Crear usuario</b>
-            <button class="mini-btn gray" onclick="toggleCrear()" id="btnToggleCrear">Mostrar</button>
-          </div>
-          <div id="formCrearUsuario" class="hidden">
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">
-              <div><label class="small">Usuario</label><input id="jugNuevoUsuario" placeholder="sin espacios" autocapitalize="none" style="margin-top:4px"></div>
-              <div><label class="small">Nombre completo</label><input id="jugNuevoNombre" placeholder="Nombre" style="margin-top:4px"></div>
-              <div><label class="small">Teléfono</label><input id="jugNuevoTelefono" placeholder="5491123..." style="margin-top:4px"></div>
-              <div><label class="small">PC</label><input id="jugNuevoPc" placeholder="SANCHEZ" style="margin-top:4px"></div>
-              <div><label class="small">Clave (default: 12345a)</label><input id="jugNuevoClave" placeholder="12345a" style="margin-top:4px"></div>
-            </div>
-            <div id="jugCrearMsg"></div>
-            <button class="btn btn-green" style="max-width:220px" onclick="crearUsuarioPanel()">Crear usuario</button>
-          </div>
-        </div>
-
-        <!-- Importar CSV -->
-        <div class="card" style="margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <b>📥 Importar planilla CSV</b>
-            <button class="mini-btn gray" onclick="toggleImportar()" id="btnToggleImportar">Mostrar</button>
-          </div>
-          <div id="formImportarCSV" class="hidden">
-            <div class="small" style="margin-bottom:12px;color:var(--muted);line-height:1.5">
-              Importa usuarios desde una planilla CSV exportada (formato Sánchez Ofi: 22 columnas A–V).<br>
-              Si el usuario ya existe, se actualizan los campos del CSV sin tocar nombre/teléfono que cargó él mismo.
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">
-              <div>
-                <label class="small">PC destino</label>
-                <input id="csvPc" placeholder="SANCHEZ" value="SANCHEZ" style="margin-top:4px">
-              </div>
-              <div>
-                <label class="small">Archivo CSV</label>
-                <input id="csvFile" type="file" accept=".csv,text/csv" style="margin-top:4px;padding:8px">
-              </div>
-            </div>
-            <div id="csvProgreso" class="hidden" style="margin:10px 0">
-              <div style="background:#1c2230;border-radius:8px;overflow:hidden;height:14px">
-                <div id="csvProgresoBar" style="height:100%;background:linear-gradient(90deg,#3d5afe,#12b76a);width:0%;transition:width .2s"></div>
-              </div>
-              <div id="csvProgresoTxt" class="small" style="margin-top:6px;text-align:center"></div>
-            </div>
-            <div id="csvMsg"></div>
-            <button class="btn btn-primary" style="max-width:240px" onclick="importarCSV()">Importar planilla</button>
-          </div>
-        </div>
-
-        <!-- Importar operaciones del agente (agent_operations CSV) -->
-        <div class="card" style="margin-bottom:12px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-            <b>📊 Importar operaciones del agente</b>
-            <button class="mini-btn gray" onclick="toggleOpsCsv()" id="btnToggleOpsCsv">Mostrar</button>
-          </div>
-          <div id="formOpsCsv" class="hidden">
-            <div class="small" style="margin-bottom:12px;color:var(--muted);line-height:1.5">
-              Importa el CSV de operaciones del backoffice (<b>agent_operations*.csv</b>).<br>
-              Formato: <code style="background:#0e1525;padding:2px 6px;border-radius:4px">sep=,</code> en línea 1, encabezados en línea 2 (Fecha, Estado, Cantidad, Tipo, Alias, Balance).<br>
-              Los <b>aliases</b> únicos se agregan a la base de usuarios como verificados (bypass de verificación).<br>
-              Los usuarios con <b>retiro en las últimas 24hs</b> se agregan al chequeo de blacklist automáticamente.
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:10px">
-              <div>
-                <label class="small">PC destino</label>
-                <input id="opsCsvPc" placeholder="SANCHEZ" style="margin-top:4px">
-              </div>
-              <div>
-                <label class="small">Archivo CSV de operaciones</label>
-                <input id="opsCsvFile" type="file" accept=".csv,text/csv" style="margin-top:4px;padding:8px">
-              </div>
-            </div>
-            <div id="opsCsvProgreso" class="hidden" style="margin:10px 0">
-              <div style="background:#1c2230;border-radius:8px;overflow:hidden;height:14px">
-                <div id="opsCsvProgresoBar" style="height:100%;background:linear-gradient(90deg,#7c3aed,#3d5afe);width:0%;transition:width .2s"></div>
-              </div>
-              <div id="opsCsvProgresoTxt" class="small" style="margin-top:6px;text-align:center"></div>
-            </div>
-            <div id="opsCsvMsg"></div>
-            <button class="btn btn-primary" style="max-width:280px" onclick="importarOperacionesCSV()">Importar operaciones</button>
-          </div>
-        </div>
-
-        <!-- Filtros + tabla -->
-        <div class="card">
-          <div style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap">
-            <input id="jugFiltroTexto" placeholder="Buscar usuario / nombre..." oninput="filtrarJugadores()" style="max-width:220px">
-            <select id="jugFiltroNivel" onchange="filtrarJugadores()">
-              <option value="">Todos los niveles</option>
-              <option value="VIP">VIP</option>
-              <option value="Preferencial">Preferencial</option>
-              <option value="Confiable">Confiable</option>
-              <option value="Regular">Regular</option>
-              <option value="Nuevo">Nuevo</option>
-            </select>
-            <select id="jugFiltroPc" onchange="filtrarJugadores()" class="hidden">
-              <option value="">Todas las PCs</option>
-            </select>
-            <select id="jugFiltroTurno" onchange="filtrarJugadores()">
-              <option value="">Todos los turnos</option>
-              <option value="TM">TM (06-14)</option>
-              <option value="TT">TT (14-22)</option>
-              <option value="TN">TN (22-06)</option>
-            </select>
-            <select id="jugFiltroEstado" onchange="filtrarJugadores()">
-              <option value="">Todos los estados</option>
-              <option value="A CONTACTAR">A contactar</option>
-              <option value="EN CONTACTO">En contacto</option>
-              <option value="REVISADO">Revisado</option>
-              <option value="NO ESTA EN WSP">No está en WSP</option>
-              <option value="promo enviada">Promo enviada</option>
-            </select>
-            <select id="jugFiltroLealtadCsv" onchange="filtrarJugadores()">
-              <option value="">Lealtad CSV: todas</option>
-              <option value="0">Lealtad 0</option>
-              <option value="1">Lealtad 1</option>
-              <option value="2">Lealtad 2</option>
-              <option value="3">Lealtad 3</option>
-              <option value="4">Lealtad 4</option>
-            </select>
-          </div>
-          <div id="tablaJugadores"></div>
-        </div>
+        <div class="alert-box" style="padding:12px">⏳ Armando el CRM operativo…</div>
       </section>
 
       <section id="viewAuto" class="hidden">
@@ -4045,12 +3908,50 @@ async function nodoInitUpdater(){
     try{ if(localStorage.getItem("nodo_updater_min")==="1") nodoUpdaterMinimizar(true); }catch(_e){}
   }catch(_e){}
 }
+// Mantiene el updater arriba a la derecha SIN pisar la cabecera del chat: le resta el ancho de lo
+// que haya ocupando esa esquina (el panel de chat del Inicio o la barra del chat abierto).
+function _updaterReubicar(){
+  try{
+    const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
+    if(!box && !chip) return;
+    let right=12;
+    const candidatos=[document.getElementById("v15ChatCompactCard"), document.querySelector("#viewChat .chat-toolbar")];
+    candidatos.forEach(function(el){
+      if(!el) return;
+      const r=el.getBoundingClientRect();
+      if(r.width<=0 || r.height<=0) return;                    // oculto o minimizado → no estorba
+      if(r.top > 120) return;                                  // no está en la esquina de arriba
+      if(r.right < window.innerWidth - 120) return;            // no llega al borde derecho
+      right=Math.max(right, Math.round(window.innerWidth - r.left) + 12);
+    });
+    [box,chip].forEach(function(el){
+      if(!el) return;
+      el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=right+"px";
+    });
+  }catch(_e){}
+}
+window._updaterReubicar=_updaterReubicar;
+try{
+  addEventListener("resize", _updaterReubicar);
+  // El panel de chat cambia de ancho al minimizarse/restaurarse: lo seguimos en vez de adivinar.
+  if(window.ResizeObserver){
+    const _ro=new ResizeObserver(function(){ _updaterReubicar(); });
+    addEventListener("DOMContentLoaded", function(){
+      const c=document.getElementById("v15ChatCompactCard"); if(c) _ro.observe(c);
+      const t=document.querySelector("#viewChat .chat-toolbar"); if(t) _ro.observe(t);
+      _updaterReubicar();
+    });
+  }
+  setTimeout(_updaterReubicar, 1500);
+}catch(_e){}
+
 function nodoUpdaterMinimizar(min){
   try{
     const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
     if(box) box.style.display = min ? "none" : "flex";
     if(chip) chip.style.display = min ? "inline-flex" : "none";
     localStorage.setItem("nodo_updater_min", min ? "1" : "0");
+    _updaterReubicar();   // el plegado y el desplegado no miden lo mismo
   }catch(_e){}
 }
 async function nodoVolverVersionAnterior(){
@@ -12068,7 +11969,11 @@ if(window.ctrlElectron){
       USUARIO: s.usuario || s.USUARIO || "",
       USUARIO_JUGADOR: s.usuario || s.USUARIO || "",
       NOMBRE_COMPLETO: meta.titular || s.titular || s.nombre_completo || "",
-      TELEFONO: s.telefono || "",
+      // El portal V16 manda el teléfono DENTRO de p_metadata, no como columna: la columna llega
+      // vacía en todas las solicitudes del portal (verificado contra la base). Sin este fallback
+      // el panel perdía el teléfono de cada carga/retiro — y con él el cotejo del alta, la ficha
+      // del CRM y lo que se le manda a Nexo.
+      TELEFONO: s.telefono || meta.telefono || "",
       PC: s.pc_codigo || s.PC || "",
       MONTO_DECLARADO: Number(s.monto || s.MONTO || 0),
       MONTO_REAL: Number(s.monto || s.MONTO || 0),
@@ -12085,6 +11990,13 @@ if(window.ctrlElectron){
       SALDO_POST: meta.saldo_post ?? meta.saldoPost ?? null,
       HISTORIAL_ID: meta.historial_id || meta.historialId || null,
       MENSAJE_INICIAL: s.mensaje_inicial || "",
+      // Datos de la cuenta EXACTA a la que el cliente dice haber transferido. Ya venían en el
+      // metadata del portal y nadie los leía: sirven para cotejar el depósito contra el banco
+      // y para responder "¿a qué alias mandaste?" sin abrir la solicitud.
+      BILLETERA_ALIAS: meta.billetera_alias || "",
+      BILLETERA_CBU: meta.billetera_cbu || "",
+      BILLETERA_TITULAR: meta.billetera_titular || "",
+      NAVEGADOR: meta.navegador || "",      // dispositivo/navegador del cliente (soporte)
       metadata: s.metadata || {},
       METADATA: s.metadata || {}
     };
@@ -17537,16 +17449,10 @@ body.nodo-chat-open .chat-tb-min{display:none!important}
 /* El puente inyecta ADEMÁS su propio "← Bandeja / Esc" flotando en la cabecera de la conversación.
    Con el de la barra es un botón repetido; Esc sigue haciendo lo mismo. */
 .nodo-chat-back-hint{display:none!important}
-/* La barra del updater arranca arriba a la derecha — bien en el login, donde no hay nada.
-   Ya adentro de la app ahí vive la cabecera del panel de chat y le tapaba los botones.
-   Con la sesión abierta baja al ángulo inferior izquierdo, apoyada sobre el badge del piloto:
-   es la única esquina que no comparte con el chat ni con la barra de navegación. */
-body.app-lista #updaterBox,
-body.app-lista #updaterMiniChip{top:auto!important;right:auto!important;left:84px!important;bottom:46px!important}
-@media(max-width:900px){
-  body.app-lista #updaterBox,
-  body.app-lista #updaterMiniChip{left:12px!important;bottom:52px!important}
-}
+/* El updater se queda arriba a la derecha, donde estuvo siempre. Lo único que hace falta es que
+   no le pise los botones a la cabecera del chat: _updaterReubicar() lo corre hacia la izquierda
+   justo lo que mide el panel de chat, midiéndolo del DOM. Así sigue bien si el chat se minimiza,
+   si cambia de ancho o si se cambia de vista, sin números mágicos. */
 </style>
 
 <script id="nodoBasePilotoJs">
