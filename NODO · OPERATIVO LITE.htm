@@ -12458,12 +12458,18 @@ async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, 
   const op = (window.operador && (window.operador.usuario||window.operador.nombre)) || 'panel';
   const sid = Number(solicitudId);
   const formas = [
+    // Firma REAL (verificada contra Supabase y usada por el camino original del panel):
+    //   landing_retiro_registrar_parcial(p_id, p_monto_parcial, p_operador)
+    // Las A/B/C eran conjeturas y NINGUNA coincidía → el parcial se pagaba pero nunca se
+    // registraba el progreso. Va primera.
+    { k:'N', p:{ p_id:sid, p_monto_parcial:Number(montoPago)||0, p_operador:op } },
     { k:'A', p:{ p_solicitud_id:sid, p_monto_pagado:Number(pagadoAcum)||0, p_monto_restante:Number(restante)||0, p_monto_total:Number(montoTotal)||0, p_operador:op } },
     { k:'B', p:{ p_solicitud_id:sid, p_monto:Number(montoPago)||0, p_operador:op } },
     { k:'C', p:{ p_solicitud_id:sid, p_monto:Number(montoPago)||0 } }
   ];
+  // Solo respetamos la preferencia guardada si es la firma buena (una vieja apuntaría a una que no existe).
   const pref = localStorage.getItem('nodo_rpc_parcial_shape');
-  if(pref) formas.sort(function(a,b){ return a.k===pref?-1:(b.k===pref?1:0); });
+  if(pref === 'N') formas.sort(function(a,b){ return a.k==='N'?-1:(b.k==='N'?1:0); });
   for(const f of formas){
     try{
       const r = await window.panelAPI.rpc('landing_retiro_registrar_parcial', f.p);
@@ -12835,21 +12841,39 @@ window._rv2Finalizar = async function(){
       saldo_post: st.saldoPost, solicitud_id: st.id
     });
   }catch(_e){}
+  // Un parcial va a EN_PROCESO, NO a EN_REVISION: son bandejas distintas (EN_REVISION es "algo
+  // falló / revisar") y además el portal muestra "💸 Te estamos pagando por partes" SOLO con
+  // EN_PROCESO — con EN_REVISION el usuario veía "⏳ En verificación" y sin barra de progreso.
+  const _estadoFinal = completo ? 'PAGADA' : 'EN_PROCESO';
   try{
-    await window.actualizarSolicitudPortal(String(st.id), completo?'PAGADA':'EN_REVISION', {
+    await window.actualizarSolicitudPortal(String(st.id), _estadoFinal, {
       etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
       parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
+      // El panel lee el progreso de metadata.retiro_parcial (ver _retiroParcialInfo), NO de
+      // monto_pagado suelto. Sin esta clave el descuento no se veía en ningún lado aunque la
+      // plata YA estuviera pagada.
+      retiro_parcial: { pagado:pagadoAcum, total:montoTotal, restante:restante },
       operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
     });
   }catch(_e){}
-  // Progreso NATIVO del parcial en el portal (landing_retiro_registrar_parcial) — best-effort.
-  if(!completo){ try{ await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal); }catch(_e){} }
+  // Progreso NATIVO del parcial (landing_retiro_registrar_parcial). NO best-effort silencioso:
+  // las fichas YA salieron de la plataforma, así que si esto falla el operador tiene que enterarse.
+  if(!completo){
+    let _rp = null;
+    try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal); }
+    catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
+    if(!_rp || !_rp.ok){
+      try{ toast('⚠ Parcial PAGADO pero sin registrar el progreso · revisalo','red'); }catch(_e){}
+      try{ alert('⚠️ El retiro parcial SÍ se pagó ('+money(total)+'), pero NO se pudo registrar el progreso.\n\n'
+        + ((_rp&&_rp.detail)||'') + '\n\nEl usuario no va a ver el descuento hasta que se registre. Anotalo a mano.'); }catch(_e){}
+    }
+  }
   try{
     const msg = completo
       ? '✅ Completamos tu retiro. Te transferimos '+money(total)+'. ¡Listo!'
       : '💸 Te transferimos '+money(total)+' de tu retiro · restan '+money(restante)+'. El resto en cuanto se libere otra billetera.';
-    // La solicitud ya está en su estado final (PAGADA/EN_REVISION) → se lo pasamos explícito.
-    await notificarUsuarioEnChat(st.usuario, (st.obs?st.obs+'\n':'')+msg, st.id, completo?'PAGADA':'EN_REVISION');
+    // La solicitud ya está en su estado final (PAGADA/EN_PROCESO) → se lo pasamos explícito.
+    await notificarUsuarioEnChat(st.usuario, (st.obs?st.obs+'\n':'')+msg, st.id, _estadoFinal);
   }catch(_e){}
   // Canal EXTRA: push directo con título/cuerpo claros del parcial (no depende del chat_thread).
   try{ notificarRetiroParcialPush(st.usuario, total, pagadoAcum, montoTotal, completo); }catch(_e){}
