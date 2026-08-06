@@ -4606,6 +4606,94 @@ function _perfilCss(){
   document.head.appendChild(st);
 }
 window.cerrarPerfilJugador = function(){ const o=document.getElementById('perfilJugadorOverlay'); if(o) o.remove(); };
+
+// ── Ficha del usuario desde Supabase (RPC panel_usuario_ficha) ────────────────
+// Trae el teléfono VIGENTE (usuarios_portal_vinculos), los teléfonos ANTERIORES y las
+// validaciones/cambios (usuarios_portal_eventos), y avisa si alguno de sus teléfonos figura
+// HOY con OTRO usuario (antifraude: alguien intentando tomar una cuenta ajena).
+// Un usuario tiene UN teléfono vigente; los demás son historia, para verificar antes de validar.
+async function _pjCargarFicha(usuario){
+  const uLow = String(usuario||'').trim().toLowerCase();
+  const box = document.getElementById('pjFichaBox'); if(!box) return;
+  let d = null;
+  try{
+    const r = await supabaseClient.rpc('panel_usuario_ficha', { p_usuario: usuario, p_pc_codigos: null });
+    if(r && !r.error) d = (typeof r.data === 'string') ? JSON.parse(r.data) : r.data;
+  }catch(_e){}
+  // El perfil pudo cerrarse o cambiar de usuario mientras respondía.
+  const box2 = document.getElementById('pjFichaBox');
+  if(!box2 || window.__perfilJugadorAbierto !== uLow) return;
+  if(!d || d.ok !== true){
+    box2.innerHTML = '<h4>📱 Teléfonos y validaciones</h4>'
+      + '<div class="small" style="color:#8b949e">Sin datos. Si nunca corriste el SQL de <b>panel_usuario_ficha</b>, esta ficha queda vacía.</div>';
+    return;
+  }
+  const E = escapeHtml;
+  const v   = d.vinculo || null;
+  const evs = Array.isArray(d.eventos)  ? d.eventos  : [];
+  const als = Array.isArray(d.alertas)  ? d.alertas  : [];
+  const telActual = v && v.telefono_canon ? String(v.telefono_canon) : '';
+
+  // Teléfonos anteriores = los que aparecen en eventos y NO son el vigente.
+  const previos = [];
+  evs.forEach(function(e){
+    [e.telefono_anterior, e.telefono_nuevo].forEach(function(t){
+      const s = String(t||'').trim();
+      if(s && s !== telActual && previos.indexOf(s) === -1) previos.push(s);
+    });
+  });
+
+  let h = '<h4>📱 Teléfonos y validaciones</h4>';
+
+  // ⚠ Alerta antifraude primero: uno de sus teléfonos es HOY de otro usuario.
+  if(als.length){
+    h += '<div style="background:rgba(240,68,56,.10);border:1px solid rgba(240,68,56,.35);border-radius:9px;padding:8px 10px;margin-bottom:9px">'
+       + '<div style="font-size:12px;font-weight:900;color:#f04438">⚠️ Teléfono en uso por otro usuario</div>'
+       + als.map(function(a){
+           return '<div class="small" style="color:#fca5a5;margin-top:3px">'+E(String(a.telefono_canon||''))
+                + ' → <b>'+E(String(a.usuario||''))+'</b>'+(a.pc_codigo?' ('+E(String(a.pc_codigo))+')':'')+'</div>';
+         }).join('')
+       + '</div>';
+  }
+
+  h += telActual
+    ? '<div class="pj-field"><span class="k">Teléfono vigente</span><span class="v pj-mono">'+E(telActual)
+      + (v.pc_codigo?' <span style="color:#8b949e;font-size:10px">'+E(String(v.pc_codigo))+'</span>':'')+'</span></div>'
+    : '<div class="pj-field"><span class="k">Teléfono vigente</span><span class="v" style="color:#5a6474">sin vínculo</span></div>';
+
+  if(v && v.titular)        h += '<div class="pj-field"><span class="k">Titular</span><span class="v">'+E(String(v.titular))+'</span></div>';
+  if(v && v.estado_vinculo) h += '<div class="pj-field"><span class="k">Vínculo</span><span class="v" style="font-weight:700;color:'
+                               + (String(v.estado_vinculo).toUpperCase()==='VINCULADO'?'#22c55e':String(v.estado_vinculo).toUpperCase()==='BLOQUEADO'?'#ef4444':'#f5c518')
+                               + '">'+E(String(v.estado_vinculo))+'</span></div>';
+
+  if(previos.length){
+    h += '<div class="pj-day" style="margin:11px 0 5px">🕓 Teléfonos anteriores</div>'
+       + previos.map(function(t){
+           return '<div class="pj-field"><span class="k">Anterior</span><span class="v pj-mono" style="color:#8b949e">'+E(t)+'</span></div>';
+         }).join('');
+  }
+
+  if(evs.length){
+    h += '<div class="pj-day" style="margin:11px 0 5px">📋 Historial de validaciones</div>';
+    h += evs.slice(0,12).map(function(e){
+      const f = e.created_at ? new Date(e.created_at).toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
+      const detalle = [e.telefono_anterior, e.telefono_nuevo].filter(Boolean).join(' → ');
+      return '<div style="border-left:2px solid #30363d;padding:2px 0 2px 8px;margin-bottom:6px">'
+           + '<div style="font-size:11.5px;font-weight:800;color:#c9d1d9">'+E(String(e.evento||''))
+           +   '<span style="color:#8b949e;font-weight:600"> · '+E(f)+(e.operador?' · '+E(String(e.operador)):'')+'</span></div>'
+           + (detalle ? '<div class="small pj-mono" style="color:#8b949e">'+E(detalle)+'</div>' : '')
+           + (e.nota ? '<div class="small" style="color:#8b949e">'+E(String(e.nota))+'</div>' : '')
+           + '</div>';
+    }).join('');
+    if(evs.length > 12) h += '<div class="small" style="color:#5a6474">+'+(evs.length-12)+' evento/s más</div>';
+  } else {
+    h += '<div class="small" style="color:#5a6474;margin-top:8px">Sin validaciones registradas todavía.</div>';
+  }
+
+  box2.innerHTML = h;
+}
+window._pjCargarFicha = _pjCargarFicha;
+
 window.abrirPerfilJugador = function(usuario){
   const u = String(usuario||'').trim(); if(!u) return;
   _perfilCss();
@@ -4709,7 +4797,10 @@ window.abrirPerfilJugador = function(usuario){
     +     '<button class="mini-btn gray" onclick="cerrarPerfilJugador()" style="font-weight:800">✕</button>'
     +   '</div>'
     +   '<div class="pj-body">'
-    +     '<div class="pj-rail">'+railIdent+railInstr+railBonos+railResumen+'</div>'
+    +     '<div class="pj-rail">'+railIdent
+    +       '<div class="pj-card" id="pjFichaBox"><h4>📱 Teléfonos y validaciones</h4>'
+    +         '<div class="small" style="color:#8b949e">Cargando ficha…</div></div>'
+    +       railInstr+railBonos+railResumen+'</div>'
     +     '<div class="pj-main"><div class="pj-day" style="margin-top:0">🕐 Actividad · '+ops.length+' con detalle</div>'
     +       ((crm.totalOps||0)>ops.length?'<div class="small" style="color:#8b949e;margin:-2px 0 9px">ℹ️ El resumen cuenta '+crm.totalOps+' ops: incluye las importadas del agente (CSV), que llegan como totales SIN fila individual — acá se listan solo las '+ops.length+' operadas/registradas por el panel.</div>':'')
     +       tl+'</div>'
@@ -4721,6 +4812,7 @@ window.abrirPerfilJugador = function(usuario){
   ov.onclick = cerrarPerfilJugador;
   document.body.appendChild(ov);
   window.__perfilJugadorAbierto = uLow;
+  try{ _pjCargarFicha(u); }catch(_e){}   // teléfonos (actual + históricos), validaciones y alertas
   // Historial COMPLETO (día 1 → hoy): trae async TODAS las ops del usuario (más allá de las 200
   // globales) y re-renderiza el perfil si sigue abierto y en el mismo usuario. Sin loop: el loader
   // se cachea y en el re-render devuelve hayNuevas=false.
@@ -7767,6 +7859,7 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
       : await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono});
     let r=await _vinc(false);
     let d=(r&&r.data)||{};
+    let _notaEvento=null;   // se completa si hubo que reasignar el teléfono desde otro usuario
     if(r.error || !d.ok){
       // Caso MUY común: el teléfono ya figura vinculado a "otro" usuario, pero en realidad es la
       // MISMA persona con el nombre viejo/sucio de Whaticket (ej: "martincordoba(pr5)" con la oficina
@@ -7777,6 +7870,7 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
         if(!confirm("Ese teléfono ya figura vinculado a «"+otro+"».\n\n¿Es la MISMA persona (dato viejo o mal escrito) y querés reasignar el teléfono al usuario «"+usuario+"»?")) return;
         r=await _vinc(true); d=(r&&r.data)||{};
         if(r.error || !d.ok){ toast("No se pudo reasignar: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return; }
+        _notaEvento = 'Teléfono reasignado desde «'+otro+'»';
       } else {
         toast("No se pudo vincular: "+((r.error&&r.error.message)||d.mensaje||"error"),"red"); return;
       }
@@ -7785,6 +7879,15 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
     toast("✅ "+usuario+" vinculado. Avisándole por el chat con el botón para ingresar…","green");
     // Base local de jugadores: la vinculación nos da usuario+teléfono CONFIRMADOS (KYC-lite).
     try{ if(window.jugadorRegistrarDato) window.jugadorRegistrarDato(usuario, { telefono:telefono, verificado:true }); }catch(_e){}
+    // Historial del CRM: queda registrada la validación (quién, cuándo, con qué teléfono). Si el
+    // teléfono cambió, el anterior sigue visible en la ficha para poder verificar antes de validar.
+    try{
+      supabaseClient.rpc('panel_usuario_evento', {
+        p_pc_codigo: pcCod, p_usuario: usuario, p_evento: 'VALIDACION',
+        p_telefono_nuevo: telefono, p_nota: _notaEvento,
+        p_operador: (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || ''
+      });
+    }catch(_e){}
     // AGENDADO → Nexo: el alta ya queda en la base local; disparamos el sync para que Nexo reciba
     // la ficha (alias+teléfono) aunque el usuario todavía no haya cargado nunca.
     try{ if(window._nexoTrigger) window._nexoTrigger(); }catch(_e){}
