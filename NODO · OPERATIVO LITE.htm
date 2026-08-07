@@ -12444,7 +12444,9 @@ async function cargarSolicitudesPortal(silencioso=false){
     const reparto = []; let acum = 0;
     for(const b of conSaldo){
       if(acum >= objetivo - 0.5 || reparto.length >= maxBils) break;
-      let usar = _montoRedondo(Math.min(b.saldo, objetivo - acum));
+      // Sin redondear: el reparto tiene que sumar el objetivo EXACTO. Redondeando hacia abajo
+      // quedaba siempre un resto y el retiro salía parcial sin que nadie lo pidiera.
+      let usar = Math.min(b.saldo, objetivo - acum);
       if(usar <= 0) continue;
       reparto.push({ id:b.id, nombre:b.nombre, saldo:b.saldo, usar:usar, chunior:b.chunior });
       acum += usar;
@@ -12637,7 +12639,21 @@ function _rv2TotalSel(){
 // Al tildar se completa con el monto EXACTO que cubre esa billetera: min(saldo, lo que falta).
 // Antes pasaba por _montoRedondo, que redondea hacia ABAJO al múltiplo de 10k → tildabas para
 // pagar 25.000 y te ponía 20.000. El redondeo sirve para SUGERIR, no para el auto-relleno.
-window._rv2Toggle = function(bid){ const st=window._retiroV2; if(!st) return; bid=String(bid); st.sel[bid]=!st.sel[bid]; if(st.sel[bid] && !st.montos[bid]){ const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); const falta=Math.max(0, st.objetivo - _rv2TotalSel()); st.montos[bid]= Math.min(Number(b&&b.SALDO||0), falta); } _rv2Render(); };
+window._rv2Toggle = function(bid){ const st=window._retiroV2; if(!st) return; bid=String(bid); st.sel[bid]=!st.sel[bid]; if(st.sel[bid] && !st.montos[bid]){ const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); const falta=Math.max(0, st.objetivo - _rv2TotalSel()); st.montos[bid]= Math.min(Number(b&&b.SALDO||0), falta); } else if(!st.sel[bid]){ delete st.montos[bid]; } _rv2Render(); };
+// Agregar una billetera desde el DESPLEGABLE. Le pone lo que cubre: min(saldo, lo que falta).
+// Si el objetivo ya está cubierto entra en 0 (el operador reparte a mano) — así agregar una de
+// más no infla el total sin querer. Siempre recalcula: sacarla y volver a elegirla no arrastra
+// el monto viejo.
+window._rv2AgregarBil = function(bid){
+  const st = window._retiroV2; if(!st || !bid) return;
+  bid = String(bid);
+  const b = (billeteras||[]).find(function(x){ return String(x.ID_BILLETERA)===bid; });
+  if(!b) return;
+  const falta = Math.max(0, st.objetivo - _rv2TotalSel());
+  st.sel[bid] = true;
+  st.montos[bid] = falta > 0.5 ? Math.min(Number(b.SALDO||0), falta) : 0;
+  _rv2Render();
+};
 window._rv2SetMonto = function(bid, val){ const st=window._retiroV2; if(!st) return; st.montos[String(bid)] = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 window._rv2SetParcialOk = function(v){ if(window._retiroV2) window._retiroV2.parcialAceptado = !!v; };
 // Fija el retiro al SALDO REAL del usuario (declaró de más). Al mover el objetivo, `montoTotal`
@@ -12719,21 +12735,40 @@ function _rv2Render(){
   if(st.fase==='confirmar'){ _rv2RenderConfirmar(); return; }
   const bils = _rv2BilsUsables(st.objetivo);
   const _sug = _rv2BilsSugeridas(st.objetivo);   // solo marca visual, no filtra la lista
-  const filasBil = bils.map(function(b){
-    const bid=String(b.ID_BILLETERA); const on=!!st.sel[bid]; const monto=Number(st.montos[bid]||0);
-    const esSug = _sug.has(bid);
-    return '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:'+(on?'#12261a':'#12161d')+';border:1px solid '+(on?'rgba(34,197,94,.4)':'#262d3a')+';margin-top:4px">'
-      + '<input type="checkbox" '+(on?'checked':'')+' onchange="_rv2Toggle(\''+bid+'\')" style="width:16px;height:16px;cursor:pointer;flex-shrink:0">'
-      + '<div style="flex:1;min-width:0;line-height:1.15"><span style="font-weight:700;color:#e6edf3;font-size:13px">'+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
-      +   ' <span style="color:#8b949e;font-size:11px">· '+money(b.SALDO||0)+'</span>'
-      +   (esSug?' <span style="font-size:9.5px;font-weight:800;color:#f5c518;background:rgba(245,197,24,.12);border:1px solid rgba(245,197,24,.32);border-radius:999px;padding:1px 6px" title="El panel la recomienda para este monto">sugerida</span>':'')
-      +   '</div>'
-      // El monto se auto-completa al tildar con min(saldo, lo que falta). Se muestra como VALOR
-      // (sin caja de input) para que no parezca un campo obligatorio; igual se puede tocar y editar.
-      + '<input type="text" inputmode="numeric" value="'+(on?_rv2FmtMiles(monto):'')+'" '+(on?'':'disabled')+' oninput="_rv2InputMonto(this,\''+bid+'\')" placeholder="—" title="Se completa solo con lo que cubre esta billetera · tocá para cambiarlo" style="width:104px;text-align:right;background:transparent;border:none;border-bottom:1px dashed '+(on?'rgba(34,197,94,.45)':'transparent')+';border-radius:0;color:'+(on?'#22c55e':'#5a6474')+';padding:4px 4px;font-weight:800;font-size:14px;cursor:'+(on?'text':'default')+'">'
-      + (on?'<button type="button" onclick="_rv2Toggle(\''+bid+'\')" title="Sacar" style="background:transparent;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0">✕</button>':'<span style="width:14px;flex-shrink:0"></span>')
-      + '</div>';
-  }).join('');
+  // ── Selector de billeteras: DESPLEGABLE (como la operación manual) ──────────────────────────
+  // Antes era una lista de 10+ checkboxes que había que recorrer con la vista. Ahora se elige del
+  // desplegable (ordenado de MAYOR a MENOR saldo) y la billetera pasa abajo con su monto. Se
+  // pueden agregar varias: para un retiro grande se reparte, para un parcial se usa una sola.
+  const _elegidas = bils.filter(function(b){ return !!st.sel[String(b.ID_BILLETERA)]; });
+  const _libres   = bils.filter(function(b){ return  !st.sel[String(b.ID_BILLETERA)]; });
+  const _faltaAun = Math.max(0, st.objetivo - _rv2TotalSel());
+
+  const selectBil = '<select onchange="_rv2AgregarBil(this.value); this.selectedIndex=0;" '
+    + 'style="width:100%;height:40px;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;font-size:13px;font-weight:600;padding:0 10px;margin-top:5px;cursor:pointer">'
+    + '<option value="">'+(_libres.length ? '+ Elegí una billetera…' : '— no quedan billeteras —')+'</option>'
+    + _libres.map(function(b){
+        return '<option value="'+escapeHtml(String(b.ID_BILLETERA))+'">'
+          + escapeHtml(b.NOMBRE_VISIBLE||'—') + ' — ' + money(b.SALDO||0)
+          + (_sug.has(String(b.ID_BILLETERA)) ? '  ★ sugerida' : '')
+          + '</option>';
+      }).join('')
+    + '</select>';
+
+  const filasBil = selectBil + (_elegidas.length
+    ? _elegidas.map(function(b){
+        const bid=String(b.ID_BILLETERA); const monto=Number(st.montos[bid]||0);
+        return '<div style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:8px;background:#12261a;border:1px solid rgba(34,197,94,.4);margin-top:6px">'
+          + '<div style="flex:1;min-width:0;line-height:1.2"><span style="font-weight:700;color:#e6edf3;font-size:13px">'+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
+          +   '<div style="color:#8b949e;font-size:11px">saldo '+money(b.SALDO||0)+'</div></div>'
+          // El monto se completa solo con min(saldo, lo que falta); se puede tocar para cambiarlo.
+          + '<input type="text" inputmode="numeric" value="'+_rv2FmtMiles(monto)+'" oninput="_rv2InputMonto(this,\''+bid+'\')" title="Se completa solo con lo que cubre esta billetera · tocá para cambiarlo" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px dashed rgba(34,197,94,.45);border-radius:0;color:#22c55e;padding:4px;font-weight:800;font-size:15px">'
+          + '<button type="button" onclick="_rv2Toggle(\''+bid+'\')" title="Sacar" style="background:transparent;border:none;color:#f87171;cursor:pointer;font-size:15px;padding:0 2px;flex-shrink:0">✕</button>'
+          + '</div>';
+      }).join('')
+    : '<div class="small" style="color:#5a6474;margin-top:6px;text-align:center;padding:8px;border:1px dashed #262d3a;border-radius:8px">Todavía no elegiste con qué pagar</div>')
+    + (_elegidas.length && _faltaAun > 0.5
+        ? '<div class="small" style="color:#8b949e;margin-top:5px">Podés agregar otra billetera para cubrir los '+money(_faltaAun)+' que faltan.</div>'
+        : '');
   const cbuHtml = st.cbu ? ('<button type="button" onclick="portalCopiarCbu(this)" data-valor="'+escapeHtml(st.cbu)+'" title="Tocá para copiar" style="display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;text-align:left;cursor:pointer;background:#161b22;border:1px solid rgba(251,146,60,.45);border-radius:9px;padding:8px 11px;color:#e6edf3;margin-top:8px"><span style="min-width:0;flex:1"><span style="display:block;font-size:10px;font-weight:800;text-transform:uppercase;color:#8b949e">CBU / Alias destino · tocá para copiar</span><span style="display:block;font-family:ui-monospace,monospace;font-size:15px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+escapeHtml(st.cbu)+'</span></span><span class="pcopy-ico" style="font-size:15px">📋</span></button>') : '';
   el.innerHTML =
     '<div style="max-height:82vh;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:16px;box-shadow:0 18px 55px rgba(0,0,0,.55);padding:16px;color:#e6edf3">'
