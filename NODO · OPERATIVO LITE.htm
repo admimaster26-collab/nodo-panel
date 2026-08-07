@@ -12559,7 +12559,9 @@ window.abrirModalRetiroV2 = function(id, opts){
   let meta={}; try{ meta=(typeof s.METADATA==='object'?s.METADATA:JSON.parse(s.METADATA||'{}'))||{}; }catch(_e){}
   const declarado = Math.abs(Number(String(s.MONTO_REAL||s.MONTO_DECLARADO||0).toString().replace(/[^\d.-]/g,''))||0);
   const restante = (meta.monto_restante!=null) ? Number(meta.monto_restante) : declarado;
-  const objetivo = (window._montoRedondo?window._montoRedondo(restante>0?restante:declarado):(restante>0?restante:declarado));
+  // SIN redondear: el objetivo es la deuda real. _montoRedondo redondea hacia abajo (1.430.000 →
+  // 1.400.000), así que aplicado acá se "perdían" pesos del total. El redondeo es solo para SUGERIR.
+  const objetivo = (restante>0?restante:declarado);
   window._retiroV2 = {
     id:id, usuario:String(s.USUARIO||''), titular:String(s.TITULAR||s.NOMBRE_COMPLETO||''),
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
@@ -12632,7 +12634,10 @@ function _rv2TotalSel(){
 // Pre-relleno al tildar una billetera: SIEMPRE el RESTANTE que falta para llegar al objetivo,
 // nunca el saldo completo de la billetera. Antes `falta||saldo` caía al saldo completo cuando
 // `falta` daba 0 (JS trata 0 como falsy) → tildabas una billetera de más y te "pasabas" solo.
-window._rv2Toggle = function(bid){ const st=window._retiroV2; if(!st) return; bid=String(bid); st.sel[bid]=!st.sel[bid]; if(st.sel[bid] && !st.montos[bid]){ const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); const falta=Math.max(0, st.objetivo - _rv2TotalSel()); st.montos[bid]= window._montoRedondo?window._montoRedondo(Math.min(Number(b&&b.SALDO||0), falta)):Math.min(Number(b&&b.SALDO||0), falta); } _rv2Render(); };
+// Al tildar se completa con el monto EXACTO que cubre esa billetera: min(saldo, lo que falta).
+// Antes pasaba por _montoRedondo, que redondea hacia ABAJO al múltiplo de 10k → tildabas para
+// pagar 25.000 y te ponía 20.000. El redondeo sirve para SUGERIR, no para el auto-relleno.
+window._rv2Toggle = function(bid){ const st=window._retiroV2; if(!st) return; bid=String(bid); st.sel[bid]=!st.sel[bid]; if(st.sel[bid] && !st.montos[bid]){ const b=(billeteras||[]).find(function(x){return String(x.ID_BILLETERA)===bid;}); const falta=Math.max(0, st.objetivo - _rv2TotalSel()); st.montos[bid]= Math.min(Number(b&&b.SALDO||0), falta); } _rv2Render(); };
 window._rv2SetMonto = function(bid, val){ const st=window._retiroV2; if(!st) return; st.montos[String(bid)] = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 window._rv2SetParcialOk = function(v){ if(window._retiroV2) window._retiroV2.parcialAceptado = !!v; };
 // Fija el retiro al SALDO REAL del usuario (declaró de más). Al mover el objetivo, `montoTotal`
@@ -12751,8 +12756,20 @@ function _rv2Render(){
     +   '<div id="rv2SaldoReal" class="small" style="color:#8b949e;margin-top:2px">💰 leyendo saldo real…</div>'
     + '</div>'
     + cbuHtml
-    + '<div style="margin-top:12px"><label style="font-weight:800">MONTO REAL A RETIRAR</label>'
-    +   '<input id="rv2Objetivo" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.objetivo)+'" oninput="_rv2InputObjetivo(this)" style="width:100%;height:44px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px"></div>'
+    // En modo PARCIAL este campo es lo que FALTA pagar y va bloqueado. Editable, se prestaba a un
+    // error grave: el operador ponía acá "lo que pago ahora" (ej. 25.000 de un retiro de 50.000) y
+    // el cierre tomaba ese número como TOTAL del retiro → lo daba por PAGADO con la mitad. Lo que
+    // se paga ahora lo define la billetera, no este campo. En el retiro completo sigue editable,
+    // porque ahí sí sirve para corregir un monto mal declarado.
+    + (st.modoParcial
+        ? ('<div style="margin-top:12px"><label style="font-weight:800">FALTA PAGAR</label>'
+           + '<div style="width:100%;height:44px;background:#0d1117;border:1.5px solid #30363d;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px;display:flex;align-items:center;justify-content:space-between">'
+           +   '<span>'+_rv2FmtMiles(st.objetivo)+'</span>'
+           +   '<span class="small" style="color:#8b949e;font-weight:600">del total '+money(st._metaTotal!=null?st._metaTotal:st.declarado)+'</span>'
+           + '</div>'
+           + '<div class="small" style="color:#8b949e;margin-top:3px">Elegí abajo cuánto pagás ahora — el resto queda pendiente.</div></div>')
+        : ('<div style="margin-top:12px"><label style="font-weight:800">MONTO REAL A RETIRAR</label>'
+           + '<input id="rv2Objetivo" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.objetivo)+'" oninput="_rv2InputObjetivo(this)" style="width:100%;height:44px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px"></div>'))
     + '<div style="margin-top:12px;font-weight:800;color:#c9d1d9">¿Con qué billetera pagás? <span class="small" style="color:#8b949e;font-weight:400">(elegí la que quieras · <span style="color:#f5c518">sugerida</span> = la que recomienda el panel)</span></div>'
     + filasBil
     + '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
@@ -12902,7 +12919,10 @@ window._rv2Confirmar = async function(bid){
 window._rv2Finalizar = async function(){
   const st = window._retiroV2; if(!st) return;
   const total = st.totalPagar;
-  const montoTotal = (st._metaTotal!=null ? st._metaTotal : st.objetivo); // total real del retiro
+  // Total REAL del retiro (la deuda). En modo parcial NO puede salir del objetivo: ahí el objetivo
+  // es "lo que falta", y tomarlo como total cerraba el retiro con la mitad pagada.
+  const montoTotal = (st._metaTotal!=null ? st._metaTotal
+                      : (st.modoParcial ? (st.declarado||st.objetivo) : st.objetivo));
   const pagadoAcum = (st.yaPagado||0) + total;
   const restante = Math.max(0, montoTotal - pagadoAcum);
   const completo = restante <= 0.5;
