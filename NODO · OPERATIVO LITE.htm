@@ -12713,6 +12713,11 @@ function _rv2ActualizarTotal(){
   const ok = tot>0 && !paso;
   let html = 'Seleccionado: <b style="color:'+(ok?'#22c55e':'#f87171')+'">'+money(tot)+'</b> / '+money(st.objetivo)
     + (parcial?' · <span style="color:#f5c518">parcial</span>':(paso?' · <span style="color:#f87171">¡te pasaste!</span>':' ✓'));
+  // Aviso VISIBLE (no solo el confirm al aprobar): entraste por "Parcial" pero el monto cubre todo.
+  if(st.modoParcial && !parcial && !paso && tot > 0){
+    html += '<div style="margin-top:8px;padding:7px 9px;border-radius:8px;background:rgba(240,68,56,.10);border:1px solid rgba(240,68,56,.40);font-size:12px;font-weight:800;color:#f87171">'
+          + '⚠ Con este monto el retiro queda COMPLETO, no parcial — bajá el monto de la billetera si querías abonar solo una parte.</div>';
+  }
   // Retiro PARCIAL → tilde de aceptación (sin él, no deja aprobar). El tilde no pregunta "¿es
   // parcial?" (obvio, ya lo estás armando así) — confirma que quedan $X SIN pagar y la solicitud
   // sigue abierta para el resto (no se cierra como terminada).
@@ -12875,6 +12880,14 @@ window._rv2Aprobar = async function(){
     toast('Tildá "Confirmo retiro PARCIAL" para continuar (o completá el monto).','yellow');
     try{ const t=document.getElementById('rv2Total'); if(t){ t.style.outline='2px solid #f5c518'; setTimeout(function(){ t.style.outline=''; },1500); t.scrollIntoView({block:'center'}); } }catch(_e){}
     return;
+  }
+  // Freno inverso: entraste por "💸 Parcial" pero el monto cubre TODO. Pasa fácil, porque al elegir
+  // la billetera del desplegable se completa con min(saldo, lo que falta): si esa billetera alcanza,
+  // te llena la deuda entera. Si seguís, el retiro se cierra PAGADO y sale de la bandeja de parciales.
+  if(st.modoParcial && !esParcial){
+    if(!confirm('Con este monto el retiro queda COMPLETO, no parcial.\n\n'
+      + 'Pagás ' + money(total) + ' y la deuda es ' + money(st.objetivo) + '.\n\n'
+      + '¿Es correcto? Si querías abonar solo una parte, cancelá y bajá el monto de la billetera.')) return;
   }
   const confirmarCada = !!(document.getElementById('rv2ConfCada') && document.getElementById('rv2ConfCada').checked);
 
