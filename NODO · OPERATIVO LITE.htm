@@ -12581,15 +12581,16 @@ window.abrirModalRetiroV2 = function(id, opts){
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
     declarado:declarado, objetivo:objetivo, yaPagado:Number(meta.monto_pagado||0)||0,
     _metaTotal:(meta.monto_total!=null?Number(meta.monto_total):null), // total real de un parcial previo
+    // Total de la DEUDA, editable (si la solicitud entró con un monto mal cargado hay que poder
+    // corregirlo). "Falta pagar" = totalReal - yaPagado, y se recalcula al editarlo.
+    totalReal:(meta.monto_total!=null?Number(meta.monto_total):declarado),
     fase:'setup', saldoReal:null, sel:{}, montos:{}, hechas:{},
     // Modo parcial explícito: por el botón "Parcial" o porque ya hay un parcial en curso.
     modoParcial: !!((opts&&opts.modoParcial) || Number(meta.monto_pagado||0) > 0)
   };
-  // Pre-seleccionar el reparto sugerido (montos ya redondeados).
-  try{
-    const rep = recomendarRepartoRetiro(objetivo);
-    (rep.reparto||[]).forEach(function(x){ window._retiroV2.sel[String(x.id)]=true; window._retiroV2.montos[String(x.id)]=x.usar; });
-  }catch(_e){}
+  // SIN pre-selección: los montos arrancan en 0 y los pone el operador. Pre-seleccionar el reparto
+  // sugerido hacía que se pagara de más sin querer — un retiro de 1M salió por 821.778 porque el
+  // modal ya venía con una segunda billetera tildada en 321.778 que nadie eligió.
   _rv2Render();
   _rv2LeerSaldo();
 };
@@ -12661,10 +12662,11 @@ window._rv2AgregarBil = function(bid){
   bid = String(bid);
   const b = (billeteras||[]).find(function(x){ return String(x.ID_BILLETERA)===bid; });
   if(!b) return;
-  const falta = Math.max(0, st.objetivo - _rv2TotalSel());
   st.sel[bid] = true;
-  st.montos[bid] = falta > 0.5 ? Math.min(Number(b.SALDO||0), falta) : 0;
+  st.montos[bid] = 0;   // el monto lo pone el operador — auto-llenar hacía pagar de más sin querer
   _rv2Render();
+  // Foco en el campo de esa billetera para tipear el monto de una.
+  try{ setTimeout(function(){ const i=document.querySelector('[data-rv2monto="'+bid+'"]'); if(i){ i.focus(); i.select(); } }, 40); }catch(_e){}
 };
 window._rv2SetMonto = function(bid, val){ const st=window._retiroV2; if(!st) return; st.montos[String(bid)] = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 window._rv2SetParcialOk = function(v){ if(window._retiroV2) window._retiroV2.parcialAceptado = !!v; };
@@ -12713,9 +12715,27 @@ window._rv2AjustarASaldo = function(montoFijo){
 };
 window._rv2SetObjetivo = function(val){ const st=window._retiroV2; if(!st) return; st.objetivo = Math.abs(Number(String(val).replace(/[^\d.-]/g,''))||0); _rv2ActualizarTotal(); };
 // Formato de miles en vivo (5.000.000) para que no marean los ceros. Parsea solo dígitos.
-function _rv2FmtMiles(n){ n = Math.abs(Number(String(n).replace(/[^\d]/g,''))||0); return n ? n.toLocaleString('es-AR') : ''; }
+// OJO con los centavos: si llega un NÚMERO (538395.01) no se puede limpiar con replace(/[^\d]/),
+// porque se come el punto decimal y pega los centavos → 53.839.501. Los números se redondean;
+// el strip de no-dígitos es solo para lo que TIPEA el operador (donde el punto es de miles).
+function _rv2FmtMiles(n){
+  const v = (typeof n === 'number')
+    ? Math.abs(Math.round(n))
+    : Math.abs(Number(String(n).replace(/[^\d]/g,''))||0);
+  return v ? v.toLocaleString('es-AR') : '';
+}
 window._rv2InputObjetivo = function(el){ const st=window._retiroV2; if(!st) return; const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0); st.objetivo=raw; el.value=_rv2FmtMiles(raw); _rv2ActualizarTotal(); };
-window._rv2InputMonto = function(el, bid){ const st=window._retiroV2; if(!st) return; const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0); st.montos[String(bid)]=raw; el.value=_rv2FmtMiles(raw); _rv2ActualizarTotal(); };
+window._rv2InputMonto = function(el, bid){ const st=window._retiroV2; if(!st) return; const raw=Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0); st.montos[String(bid)]=raw; el.value=_rv2FmtMiles(String(raw)); _rv2ActualizarTotal(); };
+// Corregir el TOTAL de la deuda (solicitud cargada con monto equivocado). Al cambiarlo se
+// recalcula lo que falta = total − ya pagado. NO es "lo que pago ahora": eso va en la billetera.
+window._rv2InputTotal = function(el){
+  const st=window._retiroV2; if(!st) return;
+  const raw = Math.abs(Number(String(el.value).replace(/[^\d]/g,''))||0);
+  st.totalReal = raw;
+  st.objetivo  = Math.max(0, raw - (Number(st.yaPagado)||0));
+  el.value = _rv2FmtMiles(String(raw));
+  _rv2Render();
+};
 function _rv2ActualizarTotal(){
   const st=window._retiroV2; if(!st) return;
   const tot=_rv2TotalSel(); const el=document.getElementById('rv2Total');
@@ -12778,7 +12798,7 @@ function _rv2Render(){
           + '<div style="flex:1;min-width:0;line-height:1.2"><span style="font-weight:700;color:#e6edf3;font-size:13px">'+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
           +   '<div style="color:#8b949e;font-size:11px">saldo '+money(b.SALDO||0)+'</div></div>'
           // El monto se completa solo con min(saldo, lo que falta); se puede tocar para cambiarlo.
-          + '<input type="text" inputmode="numeric" value="'+_rv2FmtMiles(monto)+'" oninput="_rv2InputMonto(this,\''+bid+'\')" title="Se completa solo con lo que cubre esta billetera · tocá para cambiarlo" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px dashed rgba(34,197,94,.45);border-radius:0;color:#22c55e;padding:4px;font-weight:800;font-size:15px">'
+          + '<input type="text" inputmode="numeric" data-rv2monto="'+bid+'" value="'+_rv2FmtMiles(monto)+'" oninput="_rv2InputMonto(this,\''+bid+'\')" placeholder="0" title="Escribí cuánto pagás desde esta billetera" style="width:110px;text-align:right;background:transparent;border:none;border-bottom:1px dashed '+(monto>0?'rgba(34,197,94,.45)':'rgba(248,113,113,.55)')+';border-radius:0;color:'+(monto>0?'#22c55e':'#f87171')+';padding:4px;font-weight:800;font-size:15px">'
           + '<button type="button" onclick="_rv2Toggle(\''+bid+'\')" title="Sacar" style="background:transparent;border:none;color:#f87171;cursor:pointer;font-size:15px;padding:0 2px;flex-shrink:0">✕</button>'
           + '</div>';
       }).join('')
@@ -12814,12 +12834,16 @@ function _rv2Render(){
     // se paga ahora lo define la billetera, no este campo. En el retiro completo sigue editable,
     // porque ahí sí sirve para corregir un monto mal declarado.
     + (st.modoParcial
-        ? ('<div style="margin-top:12px"><label style="font-weight:800">FALTA PAGAR</label>'
-           + '<div style="width:100%;height:44px;background:#0d1117;border:1.5px solid #30363d;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px;display:flex;align-items:center;justify-content:space-between">'
-           +   '<span>'+_rv2FmtMiles(st.objetivo)+'</span>'
-           +   '<span class="small" style="color:#8b949e;font-weight:600">del total '+money(st._metaTotal!=null?st._metaTotal:st.declarado)+'</span>'
+        // El TOTAL de la deuda es editable (si la solicitud entró con un monto mal cargado hay que
+        // poder corregirlo). "Falta pagar" se deriva: total − ya pagado. Lo que se paga AHORA lo
+        // define la billetera, no este campo.
+        ? ('<div style="margin-top:12px"><label style="font-weight:800">TOTAL DEL RETIRO <span class="small" style="color:#8b949e;font-weight:600">(corregilo si vino mal)</span></label>'
+           + '<input id="rv2TotalReal" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.totalReal)+'" oninput="_rv2InputTotal(this)" style="width:100%;height:44px;background:#161b22;border:1.5px solid #30363d;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px">'
+           + '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:5px;font-size:12.5px">'
+           +   '<span style="color:#8b949e">Ya pagado <b style="color:#a78bfa">'+money(st.yaPagado||0)+'</b></span>'
+           +   '<span style="color:#8b949e">FALTA PAGAR <b style="color:#f5c518">'+money(st.objetivo)+'</b></span>'
            + '</div>'
-           + '<div class="small" style="color:#8b949e;margin-top:3px">Elegí abajo cuánto pagás ahora — el resto queda pendiente.</div></div>')
+           + '<div class="small" style="color:#8b949e;margin-top:3px">Elegí abajo con qué billetera pagás y escribí cuánto — el resto queda pendiente.</div></div>')
         : ('<div style="margin-top:12px"><label style="font-weight:800">MONTO REAL A RETIRAR</label>'
            + '<input id="rv2Objetivo" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.objetivo)+'" oninput="_rv2InputObjetivo(this)" style="width:100%;height:44px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px"></div>'))
     + '<div style="margin-top:12px;font-weight:800;color:#c9d1d9">¿Con qué billetera pagás? <span class="small" style="color:#8b949e;font-weight:400">(elegí la que quieras · <span style="color:#f5c518">sugerida</span> = la que recomienda el panel)</span></div>'
@@ -12981,8 +13005,11 @@ window._rv2Finalizar = async function(){
   const total = st.totalPagar;
   // Total REAL del retiro (la deuda). En modo parcial NO puede salir del objetivo: ahí el objetivo
   // es "lo que falta", y tomarlo como total cerraba el retiro con la mitad pagada.
-  const montoTotal = (st._metaTotal!=null ? st._metaTotal
-                      : (st.modoParcial ? (st.declarado||st.objetivo) : st.objetivo));
+  // En modo parcial manda st.totalReal (la deuda, editable arriba). El objetivo es "lo que falta",
+  // tomarlo como total cerraba el retiro con una parte pagada.
+  const montoTotal = st.modoParcial
+    ? (Number(st.totalReal) || st._metaTotal || st.declarado || st.objetivo)
+    : (st._metaTotal!=null ? st._metaTotal : st.objetivo);
   const pagadoAcum = (st.yaPagado||0) + total;
   const restante = Math.max(0, montoTotal - pagadoAcum);
   const completo = restante <= 0.5;
