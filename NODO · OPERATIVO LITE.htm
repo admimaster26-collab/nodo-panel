@@ -12549,7 +12549,10 @@ function _rv2Modal(){
 }
 window.cerrarRetiroV2 = function(){ const el=document.getElementById('retiroV2Modal'); if(el) el.style.display='none'; window._retiroV2=null; };
 
-window.abrirModalRetiroV2 = function(id){
+// opts.modoParcial: se abrió por el botón "💸 Parcial" → el operador YA declaró que va a pagar de
+// menos, así que no se le vuelve a pedir que tilde "Confirmo retiro PARCIAL". En el retiro completo
+// el tilde se mantiene, porque ahí sí es un freno útil (evita pagar de menos sin darse cuenta).
+window.abrirModalRetiroV2 = function(id, opts){
   const S = (window.V154P && Array.isArray(V154P.solicitudes)) ? V154P.solicitudes : [];
   const s = S.find(function(x){ return String(x.ID||x.SOLICITUD_ID||x.ID_SOLICITUD)===String(id); });
   if(!s){ toast('Solicitud no encontrada','red'); return; }
@@ -12562,7 +12565,9 @@ window.abrirModalRetiroV2 = function(id){
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
     declarado:declarado, objetivo:objetivo, yaPagado:Number(meta.monto_pagado||0)||0,
     _metaTotal:(meta.monto_total!=null?Number(meta.monto_total):null), // total real de un parcial previo
-    fase:'setup', saldoReal:null, sel:{}, montos:{}, hechas:{}
+    fase:'setup', saldoReal:null, sel:{}, montos:{}, hechas:{},
+    // Modo parcial explícito: por el botón "Parcial" o porque ya hay un parcial en curso.
+    modoParcial: !!((opts&&opts.modoParcial) || Number(meta.monto_pagado||0) > 0)
   };
   // Pre-seleccionar el reparto sugerido (montos ya redondeados).
   try{
@@ -12691,9 +12696,14 @@ function _rv2ActualizarTotal(){
   // parcial?" (obvio, ya lo estás armando así) — confirma que quedan $X SIN pagar y la solicitud
   // sigue abierta para el resto (no se cierra como terminada).
   if(parcial){
-    html += '<label style="display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(245,197,24,.25);font-size:12px;color:#f5c518;font-weight:700;cursor:pointer">'
-      + '<input type="checkbox" '+(st.parcialAceptado?'checked':'')+' onchange="_rv2SetParcialOk(this.checked)" style="width:16px;height:16px">'
-      + 'Sí, transfiero solo esto ahora — quedan '+money(st.objetivo-tot)+' PENDIENTES (la solicitud sigue abierta para pagarlos después)</label>';
+    html += st.modoParcial
+      // Modo parcial explícito: NO se pide tilde (ya se eligió pagar de a partes). Solo se informa
+      // cuánto queda pendiente, para que el operador lo vea antes de confirmar.
+      ? ('<div style="margin-top:8px;padding-top:8px;border-top:1px solid rgba(245,197,24,.25);font-size:12px;color:#f5c518;font-weight:700">'
+         + '💸 Quedan '+money(st.objetivo-tot)+' pendientes · la solicitud sigue abierta para pagarlos después</div>')
+      : ('<label style="display:flex;align-items:center;gap:8px;margin-top:8px;padding-top:8px;border-top:1px solid rgba(245,197,24,.25);font-size:12px;color:#f5c518;font-weight:700;cursor:pointer">'
+         + '<input type="checkbox" '+(st.parcialAceptado?'checked':'')+' onchange="_rv2SetParcialOk(this.checked)" style="width:16px;height:16px">'
+         + 'Sí, transfiero solo esto ahora — quedan '+money(st.objetivo-tot)+' PENDIENTES (la solicitud sigue abierta para pagarlos después)</label>');
   }
   el.innerHTML = html;
 }
@@ -12713,7 +12723,9 @@ function _rv2Render(){
       +   ' <span style="color:#8b949e;font-size:11px">· '+money(b.SALDO||0)+'</span>'
       +   (esSug?' <span style="font-size:9.5px;font-weight:800;color:#f5c518;background:rgba(245,197,24,.12);border:1px solid rgba(245,197,24,.32);border-radius:999px;padding:1px 6px" title="El panel la recomienda para este monto">sugerida</span>':'')
       +   '</div>'
-      + '<input type="text" inputmode="numeric" value="'+(on?_rv2FmtMiles(monto):'')+'" '+(on?'':'disabled')+' oninput="_rv2InputMonto(this,\''+bid+'\')" placeholder="—" style="width:104px;text-align:right;background:#0d1117;border:1px solid '+(on?'#30363d':'#20262f')+';color:#e6edf3;border-radius:6px;padding:4px 6px;font-weight:700;font-size:13px">'
+      // El monto se auto-completa al tildar con min(saldo, lo que falta). Se muestra como VALOR
+      // (sin caja de input) para que no parezca un campo obligatorio; igual se puede tocar y editar.
+      + '<input type="text" inputmode="numeric" value="'+(on?_rv2FmtMiles(monto):'')+'" '+(on?'':'disabled')+' oninput="_rv2InputMonto(this,\''+bid+'\')" placeholder="—" title="Se completa solo con lo que cubre esta billetera · tocá para cambiarlo" style="width:104px;text-align:right;background:transparent;border:none;border-bottom:1px dashed '+(on?'rgba(34,197,94,.45)':'transparent')+';border-radius:0;color:'+(on?'#22c55e':'#5a6474')+';padding:4px 4px;font-weight:800;font-size:14px;cursor:'+(on?'text':'default')+'">'
       + (on?'<button type="button" onclick="_rv2Toggle(\''+bid+'\')" title="Sacar" style="background:transparent;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0">✕</button>':'<span style="width:14px;flex-shrink:0"></span>')
       + '</div>';
   }).join('');
@@ -12746,7 +12758,7 @@ function _rv2Render(){
     + '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
     + '<div style="margin-top:10px"><label>💬 Mensaje al usuario <span class="small" style="color:#8b949e">(opcional · se le envía al pagar)</span></label>'
     +   '<textarea id="rv2Obs" rows="2" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;margin-top:3px" placeholder="Ej: te transferimos 400.000, el resto en cuanto se libere otra billetera"></textarea></div>'
-    + '<label style="display:flex;align-items:center;gap:7px;margin-top:8px;font-size:12px;color:#8b949e;cursor:pointer"><input type="checkbox" id="rv2ConfCada" style="width:15px;height:15px"> Ir transfiriendo billetera por billetera (tildá esto si vas a hacer las transferencias una por una, no todas de un saque)</label>'
+    + '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#6b7280;cursor:pointer" title="Te va confirmando billetera por billetera mientras hacés las transferencias, en vez de todas juntas al final"><input type="checkbox" id="rv2ConfCada" style="width:13px;height:13px"> Confirmar una por una</label>'
     + '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">'
     +   '<button class="mini-btn" style="background:transparent;border:1px solid #30363d;color:#c9d1d9" onclick="cerrarRetiroV2()">Cancelar</button>'
     +   '<button class="mini-btn" style="background:#ea580c;color:#fff;font-weight:800" onclick="_rv2Aprobar()">Aprobar y transferir</button>'
@@ -12806,7 +12818,8 @@ window._rv2Aprobar = async function(){
   // PARCIAL vs COMPLETO: si es parcial exige el TILDE "Confirmo retiro parcial" (sin popup).
   // El completo va directo (el botón Aprobar ya es la confirmación).
   const esParcial = total < st.objetivo - 0.5;
-  if(esParcial && !st.parcialAceptado){
+  // En modo parcial explícito no se pide confirmar que es parcial: ya se eligió ese camino.
+  if(esParcial && !st.parcialAceptado && !st.modoParcial){
     toast('Tildá "Confirmo retiro PARCIAL" para continuar (o completá el monto).','yellow');
     try{ const t=document.getElementById('rv2Total'); if(t){ t.style.outline='2px solid #f5c518'; setTimeout(function(){ t.style.outline=''; },1500); t.scrollIntoView({block:'center'}); } }catch(_e){}
     return;
@@ -12953,7 +12966,7 @@ window._rv2Finalizar = async function(){
     // Retiro parcial → usa el modal _rv2* portado (visual + "billetera por billetera" + ejecución
     // propia con PUSH). Queda SEPARADO del retiro común. El código de abajo queda como fallback
     // por si _rv2 no cargó.
-    if(window.abrirModalRetiroV2){ return window.abrirModalRetiroV2(id); }
+    if(window.abrirModalRetiroV2){ return window.abrirModalRetiroV2(id, {modoParcial:true}); }
     const s = (V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
     if(!s){ alert("No encuentro la solicitud."); return; }
     if(String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="RETIRO"){ alert("El pago parcial es solo para retiros."); return; }
