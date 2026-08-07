@@ -12597,16 +12597,28 @@ window._retiroMontoSugerido = function(declarado, saldo){
 };
 const _RV2_EXCL = /error|promo|referid/i;
 const _RV2_MIN_SALDO = 200000; // billeteras con menos de $200k no se usan para retiros
+// TODAS las billeteras operables, ordenadas por saldo. Solo se excluyen las que no son de pago
+// (error/promo/referidos). Antes se escondían las de saldo bajo y las que no "aportaban al total":
+// eso rompía el parcial, porque muchas veces se quiere pagar justo desde una chica. La elección
+// es del operador; el panel solo SUGIERE (ver _rv2BilsSugeridas).
 function _rv2BilsUsables(objetivo){
-  let bils = (billeteras||[]).filter(function(b){ return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')) && Number(b.SALDO||0) >= _RV2_MIN_SALDO; })
+  return (billeteras||[])
+    .filter(function(b){ return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')); })
     .sort(function(a,b){ return Number(b.SALDO||0)-Number(a.SALDO||0); });
+}
+// Las que el panel recomienda para cubrir el objetivo. NO filtra la lista: devuelve un Set de IDs
+// que el render marca con el chip "sugerida".
+function _rv2BilsSugeridas(objetivo){
+  let conSaldo = (billeteras||[]).filter(function(b){
+    return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')) && Number(b.SALDO||0) >= _RV2_MIN_SALDO;
+  }).sort(function(a,b){ return Number(b.SALDO||0)-Number(a.SALDO||0); });
   const obj = Math.abs(Number(objetivo)||0);
-  if(obj > 0 && bils.length > 4){
+  if(obj > 0 && conSaldo.length > 4){
     const umbral = obj * 0.05;
-    const relevantes = bils.filter(function(b){ return Number(b.SALDO||0) >= umbral; });
-    bils = relevantes.length >= 2 ? relevantes : bils.slice(0, 4);
+    const relevantes = conSaldo.filter(function(b){ return Number(b.SALDO||0) >= umbral; });
+    conSaldo = relevantes.length >= 2 ? relevantes : conSaldo.slice(0, 4);
   }
-  return bils;
+  return new Set(conSaldo.map(function(b){ return String(b.ID_BILLETERA); }));
 }
 function _rv2TotalSel(){
   const st = window._retiroV2; if(!st) return 0;
@@ -12691,12 +12703,16 @@ function _rv2Render(){
   const el = _rv2Modal();
   if(st.fase==='confirmar'){ _rv2RenderConfirmar(); return; }
   const bils = _rv2BilsUsables(st.objetivo);
+  const _sug = _rv2BilsSugeridas(st.objetivo);   // solo marca visual, no filtra la lista
   const filasBil = bils.map(function(b){
     const bid=String(b.ID_BILLETERA); const on=!!st.sel[bid]; const monto=Number(st.montos[bid]||0);
+    const esSug = _sug.has(bid);
     return '<div style="display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:8px;background:'+(on?'#12261a':'#12161d')+';border:1px solid '+(on?'rgba(34,197,94,.4)':'#262d3a')+';margin-top:4px">'
       + '<input type="checkbox" '+(on?'checked':'')+' onchange="_rv2Toggle(\''+bid+'\')" style="width:16px;height:16px;cursor:pointer;flex-shrink:0">'
       + '<div style="flex:1;min-width:0;line-height:1.15"><span style="font-weight:700;color:#e6edf3;font-size:13px">'+escapeHtml(b.NOMBRE_VISIBLE||'—')+'</span>'
-      +   ' <span style="color:#8b949e;font-size:11px">· '+money(b.SALDO||0)+'</span></div>'
+      +   ' <span style="color:#8b949e;font-size:11px">· '+money(b.SALDO||0)+'</span>'
+      +   (esSug?' <span style="font-size:9.5px;font-weight:800;color:#f5c518;background:rgba(245,197,24,.12);border:1px solid rgba(245,197,24,.32);border-radius:999px;padding:1px 6px" title="El panel la recomienda para este monto">sugerida</span>':'')
+      +   '</div>'
       + '<input type="text" inputmode="numeric" value="'+(on?_rv2FmtMiles(monto):'')+'" '+(on?'':'disabled')+' oninput="_rv2InputMonto(this,\''+bid+'\')" placeholder="—" style="width:104px;text-align:right;background:#0d1117;border:1px solid '+(on?'#30363d':'#20262f')+';color:#e6edf3;border-radius:6px;padding:4px 6px;font-weight:700;font-size:13px">'
       + (on?'<button type="button" onclick="_rv2Toggle(\''+bid+'\')" title="Sacar" style="background:transparent;border:none;color:#f87171;cursor:pointer;font-size:14px;padding:0 2px;flex-shrink:0">✕</button>':'<span style="width:14px;flex-shrink:0"></span>')
       + '</div>';
@@ -12725,9 +12741,8 @@ function _rv2Render(){
     + cbuHtml
     + '<div style="margin-top:12px"><label style="font-weight:800">MONTO REAL A RETIRAR</label>'
     +   '<input id="rv2Objetivo" type="text" inputmode="numeric" value="'+_rv2FmtMiles(st.objetivo)+'" oninput="_rv2InputObjetivo(this)" style="width:100%;height:44px;background:#161b22;border:1.5px solid #fb923c;color:#f0f6fc;border-radius:9px;font-weight:900;font-size:20px;padding:0 12px;margin-top:4px"></div>'
-    + '<div style="margin-top:12px;font-weight:800;color:#c9d1d9">Pagar con estas billeteras <span class="small" style="color:#8b949e;font-weight:400">(tildá, editá el monto o ✕)</span></div>'
+    + '<div style="margin-top:12px;font-weight:800;color:#c9d1d9">¿Con qué billetera pagás? <span class="small" style="color:#8b949e;font-weight:400">(elegí la que quieras · <span style="color:#f5c518">sugerida</span> = la que recomienda el panel)</span></div>'
     + filasBil
-    + (function(){ var tot=(billeteras||[]).filter(function(b){ return !_RV2_EXCL.test(String(b.NOMBRE_VISIBLE||'')) && Number(b.SALDO||0)>0; }).length; var oc=tot-bils.length; return oc>0?('<div class="small" style="color:#8b949e;margin-top:5px;text-align:center">+'+oc+' billetera(s) chica(s) ocultas (no aportan al total)</div>'):''; })()
     + '<div id="rv2Total" style="margin-top:10px;padding:8px 10px;background:#161b22;border-radius:9px;font-size:13px"></div>'
     + '<div style="margin-top:10px"><label>💬 Mensaje al usuario <span class="small" style="color:#8b949e">(opcional · se le envía al pagar)</span></label>'
     +   '<textarea id="rv2Obs" rows="2" style="width:100%;background:#161b22;border:1px solid #30363d;color:#e6edf3;border-radius:9px;margin-top:3px" placeholder="Ej: te transferimos 400.000, el resto en cuanto se libere otra billetera"></textarea></div>'
@@ -13075,7 +13090,10 @@ window._rv2Finalizar = async function(){
     try{
       fetch(window.PUSH_API_URL,{ method:"POST",
         headers:{"Content-Type":"application/json","x-push-secret":window.PUSH_SECRET||""},
-        body:JSON.stringify({usuario:usuario, title:title, body:body, url:"/", tag:"bet300-retiro-parcial"}) }).catch(function(){});
+        // tag COMPARTIDO con la notificación local del portal ("¡Retiro procesado!"): al usar el
+        // mismo tag el SO las colapsa en UNA sola en vez de mostrar dos avisos del mismo pago.
+        // Se mantienen los dos canales porque el push llega aunque el portal esté cerrado.
+        body:JSON.stringify({usuario:usuario, title:title, body:body, url:"/", tag:"bet300-retiro"}) }).catch(function(){});
     }catch(_e){}
   }
   // Exponer globalmente para que abrirAprobarSolicitud y otros flujos puedan marcar el estado final
