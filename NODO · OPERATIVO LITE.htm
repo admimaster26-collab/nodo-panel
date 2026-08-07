@@ -11419,7 +11419,19 @@ async function verificarSaldoRetiroOcioso(){
       // Retiro YA en curso / parcial en progreso → lo maneja el operador; NO re-escanear
       // (si no, mientras un parcial queda EN_PROCESO el scanner re-entraba al agente y lo trababa).
       if(/EN_PROCESO|EN_REVISION|PROCESANDO|TOMAD/.test(String(s.ESTADO||'').toUpperCase())) return false;
-      try{ const m=(typeof s.METADATA==='object'?s.METADATA:JSON.parse(s.METADATA||'{}'))||{}; if(m.retiro_parcial && Number(m.retiro_parcial.pagado||0)>0) return false; }catch(_e){}
+      // Con CUALQUIER pago parcial hecho, el retiro NO se auto-rechaza: la plata ya salió y el
+      // usuario está esperando el resto. Se miran TODAS las claves donde puede quedar el progreso
+      // (retiro_parcial / retiro_progreso / progreso / monto_pagado suelto): mirando solo una,
+      // un retiro con 250k ya pagados terminó AUTO_RECHAZADO.
+      try{
+        const m=(typeof s.METADATA==='object'?s.METADATA:JSON.parse(s.METADATA||'{}'))||{};
+        const _rp = m.retiro_parcial || m.retiro_progreso || m.progreso || {};
+        const _pag = Number(_rp.pagado!=null ? _rp.pagado
+                          : (_rp.acumulado!=null ? _rp.acumulado
+                          : (m.monto_pagado!=null ? m.monto_pagado
+                          : (m.pagado_parcial!=null ? m.pagado_parcial : 0)))) || 0;
+        if(_pag > 0) return false;
+      }catch(_e){}
       return true;
     });
     const objetivo = pend.find(function(s){
@@ -12988,21 +13000,14 @@ window._rv2Finalizar = async function(){
   // falló / revisar") y además el portal muestra "💸 Te estamos pagando por partes" SOLO con
   // EN_PROCESO — con EN_REVISION el usuario veía "⏳ En verificación" y sin barra de progreso.
   const _estadoFinal = completo ? 'PAGADA' : 'EN_PROCESO';
-  try{
-    await window.actualizarSolicitudPortal(String(st.id), _estadoFinal, {
-      etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
-      parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
-      // El panel lee el progreso de metadata.retiro_parcial (ver _retiroParcialInfo), NO de
-      // monto_pagado suelto. Sin esta clave el descuento no se veía en ningún lado aunque la
-      // plata YA estuviera pagada.
-      retiro_parcial: { pagado:pagadoAcum, total:montoTotal, restante:restante },
-      operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
-    });
-  }catch(_e){}
-  // Progreso NATIVO del parcial (landing_retiro_registrar_parcial). NO best-effort silencioso:
-  // las fichas YA salieron de la plataforma, así que si esto falla el operador tiene que enterarse.
+
+  // ORDEN IMPORTANTE: primero la RPC, después el estado.
+  // metadata.retiro_parcial la escribe SOLO landing_retiro_registrar_parcial, que ACUMULA sobre lo
+  // que ya haya. Cuando el panel también la escribía, el pago se contaba DOS veces (pagabas 250k de
+  // 500k y quedaba pagado=500k → la RPC lo daba por completo y cerraba el retiro con la mitad).
+  // El panel solo la escribe como respaldo si la RPC no pudo registrar.
+  let _rp = null;
   if(!completo){
-    let _rp = null;
     try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal); }
     catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
     if(!_rp || !_rp.ok){
@@ -13011,6 +13016,17 @@ window._rv2Finalizar = async function(){
         + ((_rp&&_rp.detail)||'') + '\n\nEl usuario no va a ver el descuento hasta que se registre. Anotalo a mano.'); }catch(_e){}
     }
   }
+  try{
+    const _extra = {
+      etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
+      parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
+      operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
+    };
+    // Respaldo SOLO si la RPC falló: si no, duplicaríamos el progreso.
+    if(!completo && (!_rp || !_rp.ok)) _extra.retiro_parcial = { pagado:pagadoAcum, total:montoTotal, restante:restante };
+    // Va DESPUÉS de la RPC a propósito: deja el estado correcto aunque la RPC lo haya marcado completo.
+    await window.actualizarSolicitudPortal(String(st.id), _estadoFinal, _extra);
+  }catch(_e){}
   try{
     const msg = completo
       ? '✅ Completamos tu retiro. Te transferimos '+money(total)+'. ¡Listo!'
