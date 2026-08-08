@@ -5091,15 +5091,26 @@ function _arbolResumenHtml(usuario){
 // Se usa para que la tarjeta y el modal muestren el RESTANTE (no el total original) a medida que se paga.
 window._retiroParcialInfo = function(s){
   const total = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
-  let pagado = 0;
+  let pagado = 0, pagadoAlt = 0;
   try{
     let m = (s&&(s.METADATA!==undefined?s.METADATA:s.metadata))||{};
     if(typeof m==='string'){ try{ m=JSON.parse(m); }catch(_e){ m={}; } }
     const rp = (m&&(m.retiro_parcial||m.retiro_progreso||m.progreso))||{};
     pagado = Math.abs(Number((rp.pagado!=null?rp.pagado:(rp.acumulado!=null?rp.acumulado:(m.pagado_parcial!=null?m.pagado_parcial:0))))||0);
+    // El progreso vive en DOS lugares: retiro_parcial (lo escribe la RPC) y monto_pagado suelto (lo
+    // escribe el panel). Si un pago quedó registrado en uno solo, los números no coinciden y el
+    // retiro se ve "a medio pagar" aunque esté saldado. Guardamos el otro para poder avisarlo.
+    pagadoAlt = Math.abs(Number(m.monto_pagado!=null ? m.monto_pagado : pagado)||0);
   }catch(_e){}
   if(total>0 && pagado>total) pagado=total;
-  return { total:total, pagado:pagado, restante:Math.max(0,total-pagado), hasProg:pagado>0.5 };
+  const _alt = (total>0 && pagadoAlt>total) ? total : pagadoAlt;
+  return {
+    total:total, pagado:pagado, restante:Math.max(0,total-pagado), hasProg:(pagado>0.5||_alt>0.5),
+    // Segunda fuente + si discrepan: NO se decide por una, se avisa al operador para que resuelva.
+    pagadoAlt:_alt,
+    discrepa: Math.abs(_alt - pagado) > 1,
+    saldadoPorAlguna: (total>0 && (pagado >= total-0.5 || _alt >= total-0.5))
+  };
 };
 // Un RETIRO con progreso PARCIAL (se pagó algo pero NO todo) sigue PENDIENTE hasta cobrar el total,
 // aunque la RPC lo haya marcado PAGADA/completo. Solo debe desaparecer si se retiró por COMPLETO
@@ -5127,7 +5138,8 @@ window.verRetirosParciales = function(){
     const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
     const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
     // Ya cobró todo pero la solicitud quedó abierta → se ofrece cerrarla, no pagar más.
-    const saldado = pp.restante <= 0.5;
+    // "saldadoPorAlguna": una de las dos fuentes del progreso dice que ya está pago.
+    const saldado = pp.restante <= 0.5 || pp.saldadoPorAlguna;
     const acento  = saldado ? '#22c55e' : '#7c3aed';
     return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid '+acento+';border-radius:10px;padding:10px 12px;margin-bottom:8px">'
       + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
@@ -5139,11 +5151,21 @@ window.verRetirosParciales = function(){
       + '</div>'
       + '<div style="height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin-top:8px">'
       +   '<div style="height:100%;width:'+pct+'%;background:'+(saldado?'#22c55e':'linear-gradient(90deg,#7c3aed,#a78bfa)')+'"></div></div>'
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">'
+      // Las dos fuentes del progreso no coinciden → no se decide por una: se muestran las dos y el
+      // operador elige (cobró todo → Cerrar · falta → Pagar más).
+      + (pp.discrepa
+          ? ('<div style="margin-top:8px;padding:6px 9px;border-radius:8px;background:rgba(245,197,24,.10);border:1px solid rgba(245,197,24,.35);font-size:11.5px;color:#fde68a">'
+             + '⚠ El progreso no coincide entre los dos registros: <b>'+money(pp.pagado)+'</b> vs <b>'+money(pp.pagadoAlt)+'</b>. '
+             + 'Fijate en el historial cuánto cobró y elegí.</div>')
+          : '')
+      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap">'
       +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
-      +   (saldado
-          ? '<button class="mini-btn" style="background:#12b76a;color:#fff;border:none;font-size:11px" title="Ya cobró el total: cerrar la solicitud" onclick="cerrarRetiroSaldado('+id+')">✔ Cerrar · ya cobró todo</button>'
-          : '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>')
+      +   '<span style="display:flex;gap:6px">'
+      // El "Cerrar" está SIEMPRE disponible: sin esa salida, un retiro con el progreso mal
+      // registrado quedaba trabado en la bandeja sin forma de sacarlo.
+      +     '<button class="mini-btn" style="background:'+(saldado?'#12b76a':'transparent')+';color:'+(saldado?'#fff':'#8b949e')+';border:'+(saldado?'none':'1px solid #30363d')+';font-size:11px" title="Marcar la solicitud como pagada (no mueve fichas ni plata)" onclick="cerrarRetiroSaldado('+id+')">✔ Cerrar'+(saldado?' · ya cobró todo':'')+'</button>'
+      +     (saldado ? '' : '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>')
+      +   '</span>'
       + '</div></div>';
   }).join('');
   const _sald = arr.filter(function(s){ const p=window._retiroParcialInfo?window._retiroParcialInfo(s):null; return p && p.restante<=0.5; }).length;
