@@ -5126,22 +5126,47 @@ window.verRetirosParciales = function(){
     const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
     const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
     const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
-    return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid #7c3aed;border-radius:10px;padding:10px 12px;margin-bottom:8px">'
+    // Ya cobró todo pero la solicitud quedó abierta → se ofrece cerrarla, no pagar más.
+    const saldado = pp.restante <= 0.5;
+    const acento  = saldado ? '#22c55e' : '#7c3aed';
+    return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid '+acento+';border-radius:10px;padding:10px 12px;margin-bottom:8px">'
       + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
       +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b>'
       +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + '</div>'
-      +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#a78bfa">falta '+money(pp.restante)+'</div>'
+      +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:'+acento+'">'
+      +       (saldado ? '✔ saldado' : 'falta '+money(pp.restante))+'</div>'
       +     '<div class="small" style="color:#8b949e">'+money(pp.pagado)+' de '+money(pp.total)+'</div></div>'
       + '</div>'
       + '<div style="height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin-top:8px">'
-      +   '<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#7c3aed,#a78bfa)"></div></div>'
+      +   '<div style="height:100%;width:'+pct+'%;background:'+(saldado?'#22c55e':'linear-gradient(90deg,#7c3aed,#a78bfa)')+'"></div></div>'
       + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px">'
       +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
-      +   '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" '
-      +     'onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>'
+      +   (saldado
+          ? '<button class="mini-btn" style="background:#12b76a;color:#fff;border:none;font-size:11px" title="Ya cobró el total: cerrar la solicitud" onclick="cerrarRetiroSaldado('+id+')">✔ Cerrar · ya cobró todo</button>'
+          : '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>')
       + '</div></div>';
   }).join('');
-  abrirModal('💸 Retiros pagándose por partes · '+arr.length, filas, null, '');
+  const _sald = arr.filter(function(s){ const p=window._retiroParcialInfo?window._retiroParcialInfo(s):null; return p && p.restante<=0.5; }).length;
+  abrirModal('💸 Retiros pagándose por partes · '+arr.length
+    + (_sald ? ' <span style="font-size:12px;color:#22c55e">('+_sald+' ya saldado'+(_sald>1?'s':'')+')</span>' : ''), filas, null, '');
+};
+// Cierra un retiro que YA cobró el total pero quedó abierto (típico: el último pago no llegó a
+// marcarlo PAGADA). No mueve fichas ni plata: solo pone la solicitud en su estado final.
+window.cerrarRetiroSaldado = async function(id){
+  const s = (window._parcialesEnProceso||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+  const pp = (s && window._retiroParcialInfo) ? window._retiroParcialInfo(s) : null;
+  if(!confirm('Cerrar el retiro #'+id+' como PAGADO.\n\n'
+    + (pp ? ('Ya cobró '+money(pp.pagado)+' de '+money(pp.total)+'.\n\n') : '')
+    + 'Esto NO transfiere ni retira nada: solo marca la solicitud como terminada.')) return;
+  try{
+    await window.actualizarSolicitudPortal(String(id), 'PAGADA', {
+      etapa:'RETIRO_CIERRE_MANUAL',
+      operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
+    });
+    try{ cerrarModal(); }catch(_e){}
+    toast('✔ Retiro #'+id+' cerrado','green');
+    try{ await cargarSolicitudesPortal(true); }catch(_e){}
+  }catch(e){ toast('No se pudo cerrar: '+(e.message||e),'red'); }
 };
 // Copiar CBU/alias al portapapeles (usado por el detalle del árbol).
 function portalCopiarCbu(btn){
@@ -12146,7 +12171,16 @@ if(window.ctrlElectron){
     const abiertas = all.filter(s => (!estadoCerrado(s.ESTADO) || (window._retiroParcialSigueAbierto && window._retiroParcialSigueAbierto(s))) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
     // Los retiros que se están pagando POR PARTES salen de la lista principal y se agrupan en su
     // propio botón: son trabajo en curso (a veces por días) y tapaban las solicitudes nuevas.
-    const _esParc = s => !!(window._retiroParcialSigueAbierto && window._retiroParcialSigueAbierto(s));
+    // Al botón 💸 van los retiros CON PROGRESO parcial, estén a medio pagar o ya saldados pero sin
+    // cerrar (esos últimos quedaban tapando la lista principal sin forma de sacarlos).
+    const _esParc = function(s){
+      try{
+        if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()!=='RETIRO') return false;
+        if(/RECHAZ|CANCEL/.test(String(s.ESTADO||'').toUpperCase())) return false;
+        const pp = window._retiroParcialInfo ? window._retiroParcialInfo(s) : null;
+        return !!(pp && pp.hasProg && pp.total>0);
+      }catch(_e){ return false; }
+    };
     const parciales  = abiertas.filter(_esParc);
     const pendientes = abiertas.filter(s => !_esParc(s));
     window._parcialesEnProceso = parciales;
@@ -12575,7 +12609,10 @@ window.abrirModalRetiroV2 = function(id, opts){
   const restante = (meta.monto_restante!=null) ? Number(meta.monto_restante) : declarado;
   // SIN redondear: el objetivo es la deuda real. _montoRedondo redondea hacia abajo (1.430.000 →
   // 1.400.000), así que aplicado acá se "perdían" pesos del total. El redondeo es solo para SUGERIR.
-  const objetivo = (restante>0?restante:declarado);
+  // OJO con el 0: si monto_restante existe y vale 0, el retiro está SALDADO. El `restante>0?:`
+  // lo tomaba como "sin dato" y volvía a mostrar la deuda entera → el retiro quedaba en proceso
+  // pidiendo de nuevo lo que ya se pagó.
+  const objetivo = (meta.monto_restante!=null) ? Math.max(0, Number(meta.monto_restante)||0) : declarado;
   window._retiroV2 = {
     id:id, usuario:String(s.USUARIO||''), titular:String(s.TITULAR||s.NOMBRE_COMPLETO||''),
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
@@ -13052,8 +13089,20 @@ window._rv2Finalizar = async function(){
     // Respaldo SOLO si la RPC falló: si no, duplicaríamos el progreso.
     if(!completo && (!_rp || !_rp.ok)) _extra.retiro_parcial = { pagado:pagadoAcum, total:montoTotal, restante:restante };
     // Va DESPUÉS de la RPC a propósito: deja el estado correcto aunque la RPC lo haya marcado completo.
-    await window.actualizarSolicitudPortal(String(st.id), _estadoFinal, _extra);
-  }catch(_e){}
+    const _ru = await window.actualizarSolicitudPortal(String(st.id), _estadoFinal, _extra);
+    // NO silencioso: si esto falla el retiro queda con el estado VIEJO. Un retiro ya saldado que
+    // no llega a marcarse PAGADA se queda "en proceso" para siempre y nadie se entera.
+    if(!_ru || _ru.error){
+      try{ toast('⚠ El retiro se pagó pero la solicitud quedó con el estado anterior','red'); }catch(_e){}
+      try{ alert('⚠️ Se pagó '+money(total)+', pero la solicitud NO pasó a '+_estadoFinal+'.\n\n'
+        + 'Va a seguir figurando con el estado viejo (por eso a veces un retiro ya saldado queda "en proceso").\n\n'
+        + 'Cerralo desde el botón 💸 Parciales cuando puedas.'); }catch(_e){}
+    }
+  }catch(e){
+    try{ toast('⚠ El retiro se pagó pero falló actualizar la solicitud · revisalo','red'); }catch(_e){}
+    try{ alert('⚠️ El retiro se pagó ('+money(total)+') pero falló actualizar la solicitud:\n\n'
+      + ((e&&e.message)||String(e)) + '\n\nQuedó con el estado anterior — revisalo en 💸 Parciales.'); }catch(_e){}
+  }
   try{
     const msg = completo
       ? '✅ Completamos tu retiro. Te transferimos '+money(total)+'. ¡Listo!'
