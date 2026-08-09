@@ -13007,8 +13007,11 @@ window._rv2Aprobar = async function(){
   // 2) Registrar las transferencias
   if(confirmarCada){ st.fase='confirmar'; _rv2RenderConfirmar(); return; } // fase de confirmar una x una
   // RÁPIDO (default): debita cada billetera + registra su retiro en Chunior, y finaliza.
+  st.chuMovs = st.chuMovs || [];
   for(const b of st.pagar){
-    if(b.chunior){ try{ await registrarRetiroEnChunior(b.chunior, b.monto, st.usuario); }catch(_e){} }
+    // Guardamos el N° de movimiento: sin él la fila del historial queda con "⚠ Falta Chunior"
+    // aunque el retiro SÍ se haya anotado. Antes el resultado se descartaba.
+    if(b.chunior){ try{ const _rc = await registrarRetiroEnChunior(b.chunior, b.monto, st.usuario); if(_rc && _rc.movimientoId) st.chuMovs.push(String(_rc.movimientoId)); }catch(_e){} }
     try{ await ajustarSaldoBilletera(b.id, -b.monto); }catch(_e){}
     st.hechas[b.id]=true;
     try{ _trazaPaso('Registrado '+b.nombre+' · '+money(b.monto),'ok'); }catch(_e){}
@@ -13049,7 +13052,10 @@ window._rv2Confirmar = async function(bid){
   if(!b || st.hechas[bid]===true || st.hechas[bid]==='procesando') return;
   st.hechas[bid]='procesando'; _rv2RenderConfirmar();
   try{
-    if(b.chunior){ try{ await registrarRetiroEnChunior(b.chunior, b.monto, st.usuario); }catch(_e){ console.warn('[rv2] chunior', _e); } }
+    // Igual que en el camino rápido: guardamos el N° de movimiento para que el historial no
+    // marque "⚠ Falta Chunior" en un retiro que sí quedó anotado.
+    st.chuMovs = st.chuMovs || [];
+    if(b.chunior){ try{ const _rc = await registrarRetiroEnChunior(b.chunior, b.monto, st.usuario); if(_rc && _rc.movimientoId) st.chuMovs.push(String(_rc.movimientoId)); }catch(_e){ console.warn('[rv2] chunior', _e); } }
     try{ await ajustarSaldoBilletera(b.id, -b.monto); }catch(_e){}
     st.hechas[bid]=true;
     try{ _trazaPaso('Transferido '+b.nombre+' · '+money(b.monto),'ok'); }catch(_e){}
@@ -13073,13 +13079,22 @@ window._rv2Finalizar = async function(){
   const restante = Math.max(0, montoTotal - pagadoAcum);
   const completo = restante <= 0.5;
   const listaBil = st.pagar.map(function(b){ return b.nombre+' '+money(b.monto); }).join(' + ');
+  // N° de movimiento de Chunior: el historial marca "⚠ Falta Chunior" cuando esta columna está
+  // vacía. Se anotaba bien pero el número se descartaba. Con varias billeteras va el primero y
+  // los demás quedan en las notas (la columna guarda uno solo).
+  const _chuMovs = (st.chuMovs||[]).filter(Boolean);
+  const _notaChu = _chuMovs.length>1 ? (' · Chunior: '+_chuMovs.join(' + ')) : '';
   try{
     await registrarEnHistorial({
       usuario:st.usuario, tipo:'RETIRO', monto:total,
       billetera_id: st.pagar[0]?st.pagar[0].id:null, billetera_nombre: listaBil,
       origen:'LANDING', estado:'OK',
-      notas:'Retiro'+(completo?'':' PARCIAL')+' · pagado '+money(total)+' desde: '+listaBil+(completo?'':(' · restan '+money(restante)))+(st.obs?(' · Obs: '+st.obs):''),
-      saldo_post: st.saldoPost, solicitud_id: st.id
+      notas:'Retiro'+(completo?'':' PARCIAL')+' · pagado '+money(total)+' desde: '+listaBil+(completo?'':(' · restan '+money(restante)))+(st.obs?(' · Obs: '+st.obs):'')+_notaChu,
+      // saldo_pre: las fichas que tenía ANTES de retirar (st.saldoReal, leído al abrir el modal).
+      // Sin esto la columna "Saldo pre" del historial salía vacía en todos los parciales.
+      saldo_pre: (st.saldoReal!=null ? st.saldoReal : null),
+      saldo_post: st.saldoPost, solicitud_id: st.id,
+      chunior_movimiento_id: _chuMovs[0] || null
     });
   }catch(_e){}
   // Un parcial va a EN_PROCESO, NO a EN_REVISION: son bandejas distintas (EN_REVISION es "algo
@@ -13093,7 +13108,12 @@ window._rv2Finalizar = async function(){
   // 500k y quedaba pagado=500k → la RPC lo daba por completo y cerraba el retiro con la mitad).
   // El panel solo la escribe como respaldo si la RPC no pudo registrar.
   let _rp = null;
-  if(!completo){
+  // También hay que registrar el pago que CIERRA el retiro. Con `if(!completo)` el último pago no
+  // se anotaba: retiro_parcial se quedaba en el valor anterior (350.000 de 450.000) mientras
+  // monto_pagado sí llegaba a 450.000 → los dos registros discrepaban y los 100.000 finales
+  // figuraban como no pagos aunque estuvieran abonados.
+  const _hayProgreso = (Number(st.yaPagado)||0) > 0;
+  if(!completo || _hayProgreso){
     try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal); }
     catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
     if(!_rp || !_rp.ok){
@@ -13109,7 +13129,7 @@ window._rv2Finalizar = async function(){
       operador:(window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'
     };
     // Respaldo SOLO si la RPC falló: si no, duplicaríamos el progreso.
-    if(!completo && (!_rp || !_rp.ok)) _extra.retiro_parcial = { pagado:pagadoAcum, total:montoTotal, restante:restante };
+    if((!completo || _hayProgreso) && (!_rp || !_rp.ok)) _extra.retiro_parcial = { pagado:pagadoAcum, total:montoTotal, restante:restante };
     // Va DESPUÉS de la RPC a propósito: deja el estado correcto aunque la RPC lo haya marcado completo.
     const _ru = await window.actualizarSolicitudPortal(String(st.id), _estadoFinal, _extra);
     // NO silencioso: si esto falla el retiro queda con el estado VIEJO. Un retiro ya saldado que
