@@ -12184,6 +12184,111 @@ if(window.ctrlElectron){
     };
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // ALERTAS DE RETIRO · SOLO INFORMAN, NO BLOQUEAN
+  // Dos datos que el operador no tenía forma de ver al aprobar un retiro:
+  //   1. BONO SIN LIBERAR — el usuario cobró bono de primer ingreso hace poco. El bono
+  //      no es retirable hasta jugarlo 2x, pero para la plataforma son fichas comunes.
+  //      Clave: en el 67% de los casos el retiro lo paga OTRO turno, que no sabe del bono.
+  //   2. CBU REPETIDO — ese CBU ya lo usaron otras cuentas (multicuenta). El CBU es el
+  //      único dato que no se puede falsear: la plata tiene que caer en una cuenta real.
+  // NINGUNA deshabilita botones ni corta el flujo. El operador ve el aviso y decide.
+  // Fuente: RPC panel_retiro_alertas — una sola llamada para toda la lista pendiente.
+  // ══════════════════════════════════════════════════════════════════════════
+  window._retiroAlertas   = window._retiroAlertas || {};   // { [solicitudId]: fila }
+  window._retiroAlertasAt = window._retiroAlertasAt || 0;
+  const _ALERTA_BONO_HS   = 7*24;  // el aviso de bono vive 7 días; después es ruido
+  const _ALERTA_CBU_ROJO  = 3;     // 2 cuentas suele ser familia; 3 ya no
+
+  async function cargarAlertasRetiro(force){
+    try{
+      if(typeof supabaseClient === 'undefined' || !supabaseClient) return;
+      if(!force && (Date.now() - window._retiroAlertasAt) < 60*1000) return;
+      const ids = ((window.V154P && window.V154P.solicitudes) || [])
+        .filter(function(s){
+          if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase() !== 'RETIRO') return false;
+          if(typeof estadoCerrado === 'function' && estadoCerrado(s.ESTADO)) return false;
+          return true;
+        })
+        .map(function(s){ return Number(s.ID || s.SOLICITUD_ID || 0); })
+        .filter(function(n){ return n > 0; })
+        .slice(0, 60);
+      window._retiroAlertasAt = Date.now();
+      if(!ids.length){ window._retiroAlertas = {}; return; }
+      const { data, error } = await supabaseClient.rpc('panel_retiro_alertas', {
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo: (typeof pcOperativa !== 'undefined' ? pcOperativa : '') || window.pcOperativa || '',
+        p_solicitud_ids: ids
+      });
+      if(error){ console.warn('[alertas retiro]', error.message || error); return; }
+      const m = {};
+      (data||[]).forEach(function(r){ m[String(r.solicitud_id)] = r; });
+      window._retiroAlertas = m;
+      try{ renderSolicitudesPortalEnInicio(); }catch(_e){}
+    }catch(e){ console.warn('[alertas retiro]', e); }
+  }
+  window.cargarAlertasRetiro = cargarAlertasRetiro;
+
+  // HTML de las alertas de UNA solicitud. Devuelve '' si no hay nada que avisar.
+  // opts.monto     → monto de este retiro, para calcular cuánto se lleva de más
+  // opts.expandido → versión detallada (modal) en vez de la compacta (tarjeta)
+  window._alertaRetiroHtml = function(solicitudId, opts){
+    try{
+      const a = (window._retiroAlertas||{})[String(solicitudId)];
+      if(!a) return '';
+      opts = opts || {};
+      const exp = !!opts.expandido;
+      const chips = [];
+
+      // ── 1 · Bono sin liberar ──────────────────────────────────────────
+      const bono = Number(a.bono_monto||0);
+      const hs   = Number(a.bono_horas||0);
+      if(bono > 0 && hs <= _ALERTA_BONO_HS){
+        const cargado  = Number(a.cargado_real||0);
+        const retirado = Number(a.retirado_previo||0);
+        const pedido   = Math.abs(Number(opts.monto||0));
+        const deMas    = (retirado + pedido) - cargado;
+        const cuando   = hs < 24 ? (hs.toFixed(1)+' h') : (Math.round(hs/24)+' d');
+        let txt = '🎁 <b>BONO SIN LIBERAR</b> · '+esc(money(bono))+' hace '+cuando;
+        if(exp){
+          txt += '<div style="margin-top:4px;font-weight:600">Cargó '+esc(money(cargado))
+               + ' · ya retiró '+esc(money(retirado))
+               + (pedido ? (' · pide '+esc(money(pedido))) : '')
+               + (deMas > 0 ? ('<br><b style="color:#fbbf24">Con este retiro se lleva '+esc(money(deMas))+' por encima de lo que cargó</b>') : '')
+               + '<br><span style="opacity:.8">El bono debe jugarse 2× antes de retirarse — verificá antes de aprobar.</span></div>';
+        } else if(deMas > 0){
+          txt += ' · se lleva <b>'+esc(money(deMas))+'</b> de más';
+        }
+        chips.push({ txt: txt, color: '#fbbf24', bg: 'rgba(251,191,36,.12)', bd: 'rgba(251,191,36,.4)' });
+      }
+
+      // ── 2 · CBU repetido ──────────────────────────────────────────────
+      const cuentas = Number(a.cbu_cuentas||0);
+      if(cuentas >= 2){
+        const rojo  = cuentas >= _ALERTA_CBU_ROJO;
+        const otras = cuentas - 1;
+        let txt = '🔗 <b>CBU COMPARTIDO</b> · '+otras+' cuenta'+(otras===1?'':'s')+' más cobra'+(otras===1?'':'n')+' a este CBU';
+        if(a.cbu_titular) txt += ' · <b>'+esc(String(a.cbu_titular))+'</b>';
+        if(exp){
+          txt += '<div style="margin-top:4px;font-weight:600;word-break:break-all">'+esc(String(a.cbu_usuarios||''))+'</div>'
+               + '<div style="margin-top:3px;opacity:.8;font-weight:600">CBU '+esc(String(a.cbu||''))+'</div>'
+               + (rojo ? '<div style="margin-top:3px;opacity:.8;font-weight:600">3 o más cuentas al mismo CBU no se explica por familia.</div>'
+                       : '<div style="margin-top:3px;opacity:.8;font-weight:600">2 cuentas puede ser familia o pareja — revisá antes de decidir.</div>');
+        }
+        chips.push(rojo
+          ? { txt: txt, color: '#fca5a5', bg: 'rgba(239,68,68,.14)', bd: 'rgba(239,68,68,.45)' }
+          : { txt: txt, color: '#fde68a', bg: 'rgba(234,179,8,.10)', bd: 'rgba(234,179,8,.35)' });
+      }
+
+      if(!chips.length) return '';
+      const est = exp ? 'display:block;margin:6px 0;padding:9px 11px;font-size:12px'
+                      : 'display:block;margin-top:3px;padding:5px 8px;font-size:11px';
+      return chips.map(function(c){
+        return '<span style="'+est+';border-radius:9px;background:'+c.bg+';border:1px solid '+c.bd+';color:'+c.color+';font-weight:800;line-height:1.4">'+c.txt+'</span>';
+      }).join('');
+    }catch(_e){ return ''; }
+  };
+
   function renderSolicitudesPortalEnInicio(){
     const box = document.getElementById("tablaSolicitudesInicio");
     if(!box) return;
@@ -12249,6 +12354,10 @@ if(window.ctrlElectron){
         const _montoCell = (_esRetiroS && _pp.hasProg)
           ? `${money(_pp.restante)}<div style="font-size:10px;font-weight:800;margin-top:2px;color:#a78bfa">parcial · pagado ${money(_pp.pagado)} de ${money(_pp.total)}</div>`
           : money(s.MONTO_REAL || s.MONTO_DECLARADO || 0);
+        // Avisos de bono sin liberar / CBU compartido. Informativos: no tocan los botones.
+        const _alertaHtml = (_esRetiroS && window._alertaRetiroHtml)
+          ? window._alertaRetiroHtml(id, { monto: (_pp.hasProg ? _pp.restante : Number(s.MONTO_REAL || s.MONTO_DECLARADO || 0)) })
+          : "";
         return `<div class="v154p-card">
           <div>
             <div class="v154p-main">${esc(s.USUARIO || "-")}</div>
@@ -12265,6 +12374,7 @@ if(window.ctrlElectron){
             <button class="v154p-btn" onclick="v154pDetalleSolicitud(${id})">Ver</button>
             <button class="v154p-btn red" onclick="v154pRechazarSolicitud(${id})">Rechazar</button>
           </div>
+          ${_alertaHtml ? `<div style="grid-column:1/-1">${_alertaHtml}</div>` : ""}
         </div>`;
       }).join("");
     }
@@ -12403,6 +12513,9 @@ async function cargarSolicitudesPortal(silencioso=false){
       // Actualizamos stats generales, pero la caja de inicio queda en manos del render portal.
       try{ if(typeof renderInicio === "function") renderInicio(); }catch(e){}
       renderSolicitudesPortalEnInicio();
+      // Alertas de retiro (bono sin liberar / CBU compartido): async y cacheadas 60 s.
+      // Cuando llegan, vuelven a pintar la lista solas.
+      try{ cargarAlertasRetiro(); }catch(_e){}
       renderSolicitudesPortalCompleto();
       try{ if(typeof verificarSolicitudes === "function") verificarSolicitudes(silencioso); }catch(e){}
 
@@ -12881,6 +12994,9 @@ function _rv2Render(){
         +   '<div style="font-size:13px;color:#e6edf3;margin-top:3px">Ya le transferiste <b style="color:#22c55e">'+money(st.yaPagado)+'</b>'+(st._metaTotal!=null?(' de '+money(st._metaTotal)):'')+' · el monto de abajo es lo que <b>FALTA</b>, no el total original</div>'
         + '</div>'
       : '')
+    // Avisos de bono sin liberar / CBU compartido, arriba de todo y antes de la plata.
+    // SOLO INFORMAN: no deshabilitan nada, la decisión sigue siendo del operador.
+    + ((window._alertaRetiroHtml ? window._alertaRetiroHtml(st.id, {monto: st.objetivo, expandido:true}) : '') || '')
     + '<div style="border-radius:11px;padding:11px;text-align:center;border:1px solid rgba(251,146,60,.35);background:rgba(251,146,60,.06)">'
     +   '<div style="font-size:11px;font-weight:800;text-transform:uppercase;color:#8b949e">Transferir a</div>'
     +   '<div style="font-size:22px;font-weight:900;color:#f0f6fc">'+escapeHtml(st.titular||st.usuario)+'</div>'
@@ -13359,6 +13475,7 @@ window._rv2Finalizar = async function(){
           <div id="portalJobRef" style="display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;color:#cbd5e1"></div>
           <div id="portalJobVinculo" style="margin-top:8px;padding-top:8px;border-top:1px solid #243049;font-size:13px"></div>
           <div id="portalJobPromo" style="margin-top:8px"></div>
+          <div id="portalJobAlertas" style="margin-top:6px"></div>
         </div>
 
         <!-- Acción del operador -->
@@ -13416,11 +13533,28 @@ window._rv2Finalizar = async function(){
       box.style.display = 'none';
       inp.style.borderColor = '#22c55e';
     }
+    // Vista previa del bono con el tope ya aplicado: el operador ve el monto REAL que
+    // se va a acreditar antes de aprobar, no solo el porcentaje.
+    try{
+      const pel = document.getElementById('portalJobPromo');
+      const pv  = document.getElementById('portalJobBonoPreview');
+      if(pel && pv){
+        const pct  = Number(pel.dataset.bonoPct||0);
+        const tope = Number(pel.dataset.bonoMax||0);
+        if(pct > 0 && actual > 0){
+          const bruto = Math.round(actual * pct / 100);
+          const real  = tope > 0 ? Math.min(bruto, tope) : bruto;
+          pv.innerHTML = real < bruto
+            ? 'Se acreditan <b style="color:#fbbf24">'+esc(money(real))+'</b> (el '+pct+'% daba '+esc(money(bruto))+' — <b>tope aplicado</b>)'
+            : 'Se acreditan <b style="color:#22c55e">'+esc(money(real))+'</b>';
+        } else pv.textContent = '';
+      }
+    }catch(_e){}
   };
   async function portalRenderPromo(usuario){
     const el = document.getElementById('portalJobPromo');
     if(!el) return;
-    el.innerHTML=''; el.dataset.bonoPct='0'; el.dataset.promoBilleteraId=''; el.dataset.promoBilleteraNombre='';
+    el.innerHTML=''; el.dataset.bonoPct='0'; el.dataset.bonoMax='0'; el.dataset.promoBilleteraId=''; el.dataset.promoBilleteraNombre='';
     const u = String(usuario||'').trim();
     if(!u) return;
     try{
@@ -13428,17 +13562,26 @@ window._rv2Finalizar = async function(){
       const d = (r && r.data) || {};
       if(!d.primer_ingreso || !d.promo_activa || !(Number(d.bono_pct)>0)) return; // no aplica
       el.dataset.bonoPct=String(d.bono_pct);
+      // TOPE del bono (lo fija la RPC, hoy $50.000). Sin esto una carga de $520.000
+      // regalaba $260.000: el bono se calculaba como % puro, sin techo.
+      el.dataset.bonoMax=String(Number(d.bono_max)||0);
       el.dataset.promoBilleteraId=String(d.promo_billetera_id||'');
       el.dataset.promoBilleteraNombre=String(d.promo_billetera_nombre||'');
       const reqs = '🔔 Push '+(d.push?'✅':'❌')+' &nbsp;·&nbsp; 📱 App '+(d.app?'✅':'❌');
+      const _bmax = Number(d.bono_max)||0;
+      const _topeTxt = _bmax ? ` <span style="color:#fbbf24">· tope ${esc(money(_bmax))}</span>` : '';
       el.innerHTML = `<div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:9px 11px">
-        <div style="font-weight:900;color:#22c55e">🎁 PRIMER INGRESO — bono ${d.bono_pct}%</div>
+        <div style="font-weight:900;color:#22c55e">🎁 PRIMER INGRESO — bono ${d.bono_pct}%${_topeTxt}</div>
         <div style="font-size:12px;color:#cbd5e1;margin-top:3px">${reqs}</div>
         <label style="display:flex;align-items:center;gap:7px;margin-top:7px;font-size:13px;font-weight:700;cursor:pointer">
           <input type="checkbox" id="portalJobBonoChk" checked> Cargar con bono (+${d.bono_pct}% en billetera ${esc(d.promo_billetera_nombre||'PROMO')})
         </label>
+        <div id="portalJobBonoPreview" style="font-size:11px;color:#94a3b8;margin-top:4px"></div>
         ${(!d.promo_billetera_id)?'<div style="font-size:11px;color:#fca5a5;margin-top:4px">⚠ No encontré la billetera PROMO de esta oficina (revisá que exista una con \"PROMO\" en el nombre).</div>':''}
       </div>`;
+      // La tarjeta llega async (después de que el modal ya pintó el monto) → recalcular
+      // la vista previa del bono ahora que ya sabemos el % y el tope.
+      try{ portalCheckDiscrepancia(); }catch(_e){}
     }catch(e){ console.warn('[promo]',e); }
   }
   async function portalRenderVinculo(usuario){
@@ -13514,6 +13657,13 @@ window._rv2Finalizar = async function(){
         + ((_destino&&_destino!=='—') ? '<div style="grid-column:1/-1;margin-top:3px"><span style="color:#64748b">Destino declarado:</span> <b style="color:#e6edf3">'+esc(_destino)+'</b></div>' : '');
     }
     document.getElementById('portalJobRef').innerHTML = _refHtml;
+    // Avisos de bono sin liberar / CBU compartido (solo en RETIRO). Informan, no bloquean.
+    try{
+      const _alEl = document.getElementById('portalJobAlertas');
+      if(_alEl) _alEl.innerHTML = (_esRetiroJob && window._alertaRetiroHtml)
+        ? (window._alertaRetiroHtml(id, {monto: Math.abs(monto||0), expandido:true}) || '')
+        : '';
+    }catch(_e){}
     el.dataset.montoDeclarado = String(Math.abs(monto || 0));
     document.getElementById('portalJobMontoAprobado').value = String(Math.abs(monto || 0));
     document.getElementById('portalJobObs').value = '';
@@ -13556,6 +13706,7 @@ window._rv2Finalizar = async function(){
     const _promoEl = document.getElementById('portalJobPromo');
     const _bonoChk = document.getElementById('portalJobBonoChk');
     const _bonoPct = Number((_promoEl && _promoEl.dataset.bonoPct) || 0);
+    const _bonoMax = Number((_promoEl && _promoEl.dataset.bonoMax) || 0);
     const bonoAplicar = !!(_bonoChk && _bonoChk.checked && _bonoPct>0 && tipo==='CARGA');
     const promoBilleteraId = (_promoEl && _promoEl.dataset.promoBilleteraId) || '';
     if(!usuario) return toast('Falta usuario', 'red');
@@ -13566,7 +13717,7 @@ window._rv2Finalizar = async function(){
     toast('Portal: operación enviada. Podés seguir usando el panel.', 'blue');
     // No dejamos el modal bloqueando la pantalla: el flujo continúa en segundo plano
     // y al terminar actualiza Solicitudes/Historial como LANDING.
-    ejecutarSolicitudPortalSimple({id, solicitud:s, usuario, tipo, montoAprobado, bilId, titular, destino, cbu, obs, bonoAplicar, bonoPct:_bonoPct, promoBilleteraId})
+    ejecutarSolicitudPortalSimple({id, solicitud:s, usuario, tipo, montoAprobado, bilId, titular, destino, cbu, obs, bonoAplicar, bonoPct:_bonoPct, bonoMax:_bonoMax, promoBilleteraId})
       .catch(function(e){ console.error('portal job error:', e); toast('Portal con error: '+(e.message||''), 'red'); });
   };
 
@@ -13846,11 +13997,20 @@ async function ejecutarSolicitudPortalSimple(ctx){
         // ── Bono de primer ingreso: 2da carga en la billetera PROMO (Chunior la audita aparte) ──
         if(tipo === 'CARGA' && ctx.bonoAplicar && Number(ctx.bonoPct)>0){
           try{
-            const bonoMonto = Math.round(montoAbs * Number(ctx.bonoPct) / 100);
+            // TOPE del bono: el % se lo gana el usuario (push/app), pero el MONTO tiene techo.
+            // Sin esto una carga de $520.000 al 50% regalaba $260.000 — el % se aplicaba puro.
+            // El tope lo manda la RPC (bono_max); si no viene, se respeta el comportamiento viejo.
+            const _bonoSinTope  = Math.round(montoAbs * Number(ctx.bonoPct) / 100);
+            const _bonoTope     = Number(ctx.bonoMax) || 0;
+            const bonoMonto     = (_bonoTope > 0) ? Math.min(_bonoSinTope, _bonoTope) : _bonoSinTope;
+            const _topeAplicado = bonoMonto < _bonoSinTope;
+            const _notaBono     = 'Bono primer ingreso '+ctx.bonoPct+'% sobre '+money(montoAbs)
+                                + (_topeAplicado ? (' · TOPE '+money(_bonoTope)+' (sin tope hubiera sido '+money(_bonoSinTope)+')') : '')
+                                + ' · solicitud #'+id;
             const bilPromo = (billeteras||[]).find(b => String(b.ID_BILLETERA) === String(ctx.promoBilleteraId))
                            || (billeteras||[]).find(b => /promo/i.test(String(b.NOMBRE_VISIBLE||'')));
             if(bonoMonto>0 && bilPromo){
-              toast('🎁 Cargando bono '+ctx.bonoPct+'% ('+money(bonoMonto)+') en '+(bilPromo.NOMBRE_VISIBLE||'PROMO')+'...', 'blue');
+              toast('🎁 Cargando bono '+ctx.bonoPct+'% ('+money(bonoMonto)+')'+(_topeAplicado?' — TOPE aplicado':'')+' en '+(bilPromo.NOMBRE_VISIBLE||'PROMO')+'...', 'blue');
               _wdLock();
               let rb;
               try{
@@ -13867,7 +14027,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
                 usuario, tipo:'CARGA', monto:bonoMonto,
                 billetera_id: bilPromo.ID_BILLETERA, billetera_nombre: bilPromo.NOMBRE_VISIBLE||'PROMO',
                 origen:'PROMO_BONO', estado: okBono?'OK':'ERROR',
-                notas:'Bono primer ingreso '+ctx.bonoPct+'% sobre '+money(montoAbs)+' · solicitud #'+id,
+                notas:_notaBono,
                 solicitud_id:id, saldo_pre:_bonoPre, saldo_post:_bonoPost
               });
               if(okBono){
@@ -13882,7 +14042,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
                     } else if(rChu && rChu.ok && !rChu.movimientoId && filaBono && filaBono.id){
                       // Chunior aceptó el bono pero no pudimos leer el N° → marcar [CHUNIOR_OK_SIN_N] para que el
                       // historial NO lo muestre como "no registrado" (mismo criterio que la carga del jugador).
-                      try{ await supabaseClient.from('historial_ops').update({notas:'Bono primer ingreso '+ctx.bonoPct+'% sobre '+money(montoAbs)+' · solicitud #'+id+' [CHUNIOR_OK_SIN_N]'}).eq('id', filaBono.id); }catch(_e){}
+                      try{ await supabaseClient.from('historial_ops').update({notas:_notaBono+' [CHUNIOR_OK_SIN_N]'}).eq('id', filaBono.id); }catch(_e){}
                     }
                   }).catch(function(){});
                 }
