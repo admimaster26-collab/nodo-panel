@@ -9244,8 +9244,13 @@ async function ejecutarAutoCarga(id){
         toast(`📋 Movimiento Chunior N° ${rChu.movimientoId}`, 'blue');
       } else if(rChu.error){
         toast('⚠️ Carga OK en casino pero falló en Chunior: '+rChu.error, 'red');
+        // Las fichas ya salieron: la anotación queda pendiente y se reintenta sola.
+        try{ window.chuniorPendienteAdd({ tipo:'CARGA', uid:bilL.CHUNIOR_UID, monto:monto, usuario:usuario, motivo:rChu.error }); }catch(_e){}
       }
-    } catch(e){ toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red'); }
+    } catch(e){
+      toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red');
+      try{ window.chuniorPendienteAdd({ tipo:'CARGA', uid:bilL.CHUNIOR_UID, monto:monto, usuario:usuario, motivo:e.message||'excepción' }); }catch(_e){}
+    }
   }
 
   // Saldo PRE leído del casino o busqueda. POST siempre calculado.
@@ -10804,6 +10809,69 @@ async function verificarMovimientoEnChunior(usuario, monto, tCargaMs, ventanaMs,
 // monto: positivo (acreditación al jugador)
 // usuario: nombre del usuario para escribir en notas
 // Retorna: { ok:boolean, movimientoId:string|null, error:string|null }
+// ══════════════════════════════════════════════════════════════════════════════
+// ANOTACIONES DE CHUNIOR PENDIENTES (portado de NexoBetaChan · rama unificacion)
+// Caso real: la carga se hace en Agentes y, al ir a anotarla en Chunior, la sesión
+// está caída. Las fichas SALIERON pero en Chunior no quedó nada, y nadie se acuerda
+// de terminar el trabajo — el operador se entera al cotejar, horas después.
+// Ahora lo que no se pudo anotar queda guardado con todo lo necesario y se reintenta
+// solo cuando Chunior vuelve. Sobrevive a que se cierre el panel (localStorage).
+// ══════════════════════════════════════════════════════════════════════════════
+const _CHU_PEND_KEY = 'nodo_chunior_pendientes';
+function _chuPendAll(){ try{ return JSON.parse(localStorage.getItem(_CHU_PEND_KEY)||'[]')||[]; }catch(_e){ return []; } }
+function _chuPendSave(a){ try{ localStorage.setItem(_CHU_PEND_KEY, JSON.stringify((a||[]).slice(-40))); }catch(_e){} }
+window.chuniorPendientes = _chuPendAll;
+window.chuniorPendienteAdd = function(item){
+  if(!item || !item.uid || !item.monto) return;
+  const a = _chuPendAll();
+  a.push(Object.assign({ id:'cp'+Date.now()+Math.random().toString(36).slice(2,6), ts:Date.now(), intentos:0 }, item));
+  _chuPendSave(a);
+  try{ toast('📌 Anotación de Chunior pendiente: '+(item.tipo||'MOV')+' '+item.usuario+' · '+money(item.monto)+' — se reintenta sola','yellow'); }catch(_e){}
+  console.warn('[chunior-pend] guardado para reintentar:', item);
+};
+window.chuniorPendienteQuitar = function(id){ _chuPendSave(_chuPendAll().filter(function(x){ return x.id!==id; })); };
+let _chuPendCorriendo = false;
+window.chuniorPendientesReintentar = async function(manual){
+  if(_chuPendCorriendo) return;
+  const lista = _chuPendAll();
+  if(!lista.length){ if(manual) toast('No hay anotaciones de Chunior pendientes','blue'); return; }
+  if(!window.chunior){ if(manual) toast('Ventana de Chunior no disponible','red'); return; }
+  // Esto es de fondo: no pisa una operación en curso, puede esperar al próximo intento.
+  if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0) return;
+  if(window._drexGlobalBusy) return;
+  if(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes>0)) return;
+  _chuPendCorriendo = true;
+  try{
+    for(const p of lista.slice()){
+      if(p.intentos >= 8) continue;                      // no insistir para siempre en silencio
+      let r = null;
+      try{
+        r = (String(p.tipo).toUpperCase()==='RETIRO')
+          ? await registrarRetiroEnChunior(p.uid, p.monto, p.usuario)
+          : await registrarCargaEnChunior(p.uid, p.monto, p.usuario);
+      }catch(e){ r = { ok:false, error:e.message||String(e) }; }
+      if(r && r.ok){
+        window.chuniorPendienteQuitar(p.id);
+        // Completar la fila del historial que había quedado sin número de Chunior.
+        try{
+          if(p.histId && typeof supabaseClient!=='undefined' && r.movimientoId){
+            await supabaseClient.from('historial_ops').update({ chunior_movimiento_id:String(r.movimientoId) }).eq('id', p.histId);
+          }
+        }catch(_e){}
+        try{ toast('✅ Anotado en Chunior: '+(p.tipo||'MOV')+' '+p.usuario+' · '+money(p.monto)+(r.movimientoId?(' · N° '+r.movimientoId):''),'green'); }catch(_e){}
+        try{ if(typeof cargarHistorial==='function') cargarHistorial(); }catch(_e){}
+      } else {
+        p.intentos = (p.intentos||0)+1;
+        const a = _chuPendAll(); const it = a.find(function(x){ return x.id===p.id; });
+        if(it){ it.intentos = p.intentos; it.ultimoError = (r&&r.error)||'sin detalle'; _chuPendSave(a); }
+        if(manual) toast('No se pudo anotar todavía: '+((r&&r.error)||''),'yellow');
+        break;   // si falló uno, Chunior no está listo — no quemamos el resto
+      }
+    }
+  } finally { _chuPendCorriendo = false; }
+};
+try{ setInterval(function(){ window.chuniorPendientesReintentar(false); }, 45000); }catch(_e){}
+
 async function registrarCargaEnChunior(chunior_uid, monto, usuario){
   // Bloqueo del cotejo: mientras hay una DECLARACIÓN abierta no se anota (snapshot consistente).
   // Espera hasta 90s a que el operador confirme/cierre — la anotación NO se pierde, queda esperando.
@@ -14140,8 +14208,14 @@ async function ejecutarSolicitudPortalSimple(ctx){
               _watchdogTrigger(1500);
             }else if(rChu && rChu.error){
               toast('⚠️ '+tipo+' OK en Agentes pero falló Chunior: '+rChu.error, 'red');
+              // La plata ya se movió: la anotación queda pendiente y se reintenta sola cuando
+              // Chunior vuelva. Antes se perdía y el operador se enteraba recién al cotejar.
+              try{ window.chuniorPendienteAdd({ tipo:tipo, uid:bil.CHUNIOR_UID, monto:montoAbs, usuario:usuario, histId:filaHist?.id||null, motivo:rChu.error }); }catch(_e){}
             }
-          }).catch(function(e){ toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red'); });
+          }).catch(function(e){
+            toast('⚠️ Error registrando en Chunior: '+(e.message||''), 'red');
+            try{ window.chuniorPendienteAdd({ tipo:tipo, uid:bil.CHUNIOR_UID, monto:montoAbs, usuario:usuario, histId:filaHist?.id||null, motivo:e.message||'excepción' }); }catch(_e){}
+          });
         }
         // ── Bono de primer ingreso: 2da carga en la billetera PROMO (Chunior la audita aparte) ──
         if(tipo === 'CARGA' && ctx.bonoAplicar && Number(ctx.bonoPct)>0){
