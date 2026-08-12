@@ -30,11 +30,27 @@ function now() {
   return Date.now();
 }
 
+// ¿La ventana tiene layout calculado? La de Agentes se crea con show:false y Chromium puede
+// saltear el layout mientras no se ve: ahí getBoundingClientRect() devuelve TODO en cero.
+// backgroundThrottling:false mantiene el JS corriendo, pero no fuerza el layout.
+function hayLayout() {
+  try {
+    const r = document.body ? document.body.getBoundingClientRect() : null;
+    return !!(r && r.width > 0 && r.height > 0);
+  } catch (_) { return true; }   // ante la duda, asumimos que sí (comportamiento de siempre)
+}
+
 function isVisible(el) {
   if (!el) return false;
   const style = window.getComputedStyle(el);
+  if (style.visibility === 'hidden' || style.display === 'none') return false;
+  // Sin layout, un rect en cero NO significa "está oculto": significa que nadie lo midió.
+  // Medirlo igual hacía que las búsquedas no encontraran nada con la ventana en segundo plano
+  // (mismo bug que se detectó en BET300: "no encuentra al usuario", que desaparecía al dejar
+  // la ventana de Agentes abierta).
+  if (!hayLayout()) return true;
   const rect = el.getBoundingClientRect();
-  return style.visibility !== 'hidden' && style.display !== 'none' && rect.width > 0 && rect.height > 0;
+  return rect.width > 0 && rect.height > 0;
 }
 
 function visibleElements(selector, root = document) {
