@@ -437,6 +437,28 @@ async function _asegurarTextoBusqueda(alias, tries = 3) {
 
 // Ejecuta la búsqueda: escribe alias (verificado) → Enter → lupa/"Todos los jugadores" → espera refresco.
 // Devuelve { refresco, textoOk } — `refresco` es la ÚNICA prueba de que el resultado en pantalla es real.
+// Espera a que la lista DEJE DE MOVERSE antes de dar por buena una búsqueda.
+// Vue vacía la tabla ANTES de pintar los resultados, así que la firma cambia enseguida y la
+// lista queda vacía un rato. Quien mirara ahí concluía "no hay resultados" con los datos
+// todavía en camino — de ahí los "no encuentra al usuario" que al reintentar funcionaban.
+// Devuelve true cuando la respuesta ya se puede leer con confianza:
+//   · apareció la fila buscada (definitivo), o
+//   · hay filas y la lista quedó quieta, o
+//   · se agotó la ventana con la lista quieta y vacía (no-hay-resultados real).
+async function esperarListaEstable(wanted, tope) {
+  const t0 = now();
+  let ult = null, iguales = 0;
+  while (now() - t0 < tope) {
+    _chequearFreno('esperando la lista');
+    if (buscarFilaPorAlias(wanted)) return true;
+    const f = firmaFilas();
+    if (f === ult) iguales++; else { iguales = 0; ult = f; }
+    if (iguales >= 3 && filasJugador().length > 0) return true;
+    await delay(180);
+  }
+  return (filasJugador().length === 0 && iguales >= 3);
+}
+
 async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
   const wanted = String(alias).trim();
   await waitFor(findSearchInput, timeout, 120, 'input-busqueda');
@@ -471,7 +493,14 @@ async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
   while (now() - inicio < 12000) {
     _chequearFreno('buscando');
     // Refresco = la lista cambió O ya corresponde a lo buscado (vacía / todas matchean).
-    if (firmaFilas() !== firmaAntes || _listaCorrespondeA(wanted)) { await delay(250); return { refresco: true, textoOk: true }; }
+    if (firmaFilas() !== firmaAntes || _listaCorrespondeA(wanted)) {
+      // Ojo: acá la firma pudo cambiar solo porque Vue VACIÓ la lista. Antes devolvíamos ya, y
+      // el llamador leía una tabla vacía y concluía "el usuario no existe". Ahora se espera a
+      // que la lista se asiente y se informa si se pudo o no leer con confianza.
+      const estable = await esperarListaEstable(wanted, 8000);
+      await delay(150);
+      return { refresco: true, textoOk: true, estable: estable };
+    }
     if (!reintentado && now() - inicio > 5000) {
       reintentado = true;
       input = (await _asegurarTextoBusqueda(wanted, 2)) || input;
@@ -485,9 +514,12 @@ async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
   await delay(250);
   // Último chequeo antes de rendirnos: puede que la lista ya corresponda a lo buscado aunque la
   // firma nunca haya cambiado (lista vacía, o el mismo usuario que ya estaba en pantalla).
-  if (_listaCorrespondeA(wanted)) return { refresco: true, textoOk: true };
+  if (_listaCorrespondeA(wanted)) {
+    const estable = await esperarListaEstable(wanted, 4000);
+    return { refresco: true, textoOk: true, estable: estable };
+  }
   console.warn('[buscar] sin refresco tras 12s · filas en pantalla: ' + filasJugador().length + ' · input="' + ((findSearchInput() || {}).value || '') + '"');
-  return { refresco: false, textoOk: true }; // no hubo refresco → NO se puede concluir nada
+  return { refresco: false, textoOk: true, estable: false }; // no hubo refresco → NO se puede concluir nada
 }
 
 // ⛔ Núcleo estable: busca y (opcional) lee saldo. Deja _currentUser para las operaciones.
@@ -527,8 +559,11 @@ async function buscarUsuario(usuario, options = {}) {
       return { ok: true, exists: true, user: _currentUser, balance: saldoDeFila(fila), intentos: intento };
     }
 
-    // Lista refrescada + texto verificado y NO está el alias → NO existe (conclusión válida).
-    if (r && r.refresco && r.textoOk) {
+    // Lista refrescada, ASENTADA y texto verificado, y aun así no está el alias → NO existe.
+    // El "estable" es lo que faltaba: sin él alcanzaba con que Vue vaciara la tabla para dar por
+    // buena la conclusión, y un backend lento se leía como "el usuario no existe". Ese era el
+    // origen de los ERROR_OPERATIVO que al reintentar cargaban normal.
+    if (r && r.refresco && r.textoOk && r.estable) {
       return { ok: true, exists: false, user: wanted, message: 'No apareció el usuario buscado en BET300.', intentos: intento };
     }
 
