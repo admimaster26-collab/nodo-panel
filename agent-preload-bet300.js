@@ -102,6 +102,20 @@ async function setFieldAndVerify(input, value, tries = 4) {
   }
   return false;
 }
+// Igual que setFieldAndVerify pero para campos de PLATA. Vuetify los reformatea apenas se
+// escriben (50000 → "50.000"), así que comparar texto contra texto fallaba SIEMPRE con montos
+// de 4 cifras o más. Acá se comparan los valores NUMÉRICOS.
+// Esto rompía dos cosas: el bono nunca se daba por escrito (y se caía al camino de dos cargas),
+// y la verificación previa al envío abortaba cargas que en realidad estaban perfectas.
+async function setMontoYVerificar(input, valor, tries = 4) {
+  const objetivo = Math.round(Number(valor) || 0);
+  for (let i = 0; i < tries; i++) {
+    setFieldValue(input, String(objetivo));
+    await delay(120);
+    if (Math.round(parseMoney(input.value)) === objetivo) return true;
+  }
+  return false;
+}
 function clickElement(el) {
   if (!el) throw new Error('No se encontró el elemento clickeable.');
   el.scrollIntoView({ block: 'center', inline: 'center' });
@@ -615,14 +629,14 @@ async function aplicarMonto(tipo, amount, options = {}) {
   // devuelve bonoAplicado:0 → el panel hace la segunda carga como siempre. Nunca se manda un
   // bono "a ciegas": preferimos el camino viejo antes que un monto sin confirmar.
   if (!m.cantidadInput) throw new Error('No se encontró el campo "Cantidad".');
-  await setFieldAndVerify(m.cantidadInput, String(Math.round(monto)), 4);
+  await setMontoYVerificar(m.cantidadInput, monto, 4);
   let bonoAplicado = 0;
   if (tipo === 'carga' && m.bonoInput) {
     const bonoPedido = Math.max(0, Math.round(Number(options.bono) || 0));
-    if (bonoPedido > 0 && await setFieldAndVerify(m.bonoInput, String(bonoPedido), 4)) {
+    if (bonoPedido > 0 && await setMontoYVerificar(m.bonoInput, bonoPedido, 4)) {
       bonoAplicado = bonoPedido;
-    } else if (String(m.bonoInput.value || '').trim() !== '0') {
-      await setFieldAndVerify(m.bonoInput, '0', 3);   // "Bono" es obligatorio: nunca dejarlo sucio
+    } else if (parseMoney(m.bonoInput.value) !== 0) {
+      await setMontoYVerificar(m.bonoInput, 0, 3);   // "Bono" es obligatorio: nunca dejarlo sucio
     }
   }
   await delay(250);
@@ -631,13 +645,14 @@ async function aplicarMonto(tipo, amount, options = {}) {
   // tienen exactamente lo que pusimos. Vue puede revertir un input (re-render, validación) y
   // si eso pasa preferimos abortar sin enviar antes que cargar un monto equivocado.
   {
+    // Comparación NUMÉRICA, no de texto: el campo muestra "50.000" para 50000.
     const chk = leerModalMontos();
-    const espCant = String(Math.round(monto));
-    if (chk.cantidadInput && String(chk.cantidadInput.value || '') !== espCant) {
+    const espCant = Math.round(monto);
+    if (chk.cantidadInput && Math.round(parseMoney(chk.cantidadInput.value)) !== espCant) {
       await cerrarModalActual();
       throw new Error('"Cantidad" no quedó en ' + espCant + ' (quedó "' + (chk.cantidadInput.value || '') + '"). NO se envió nada.');
     }
-    if (bonoAplicado > 0 && chk.bonoInput && String(chk.bonoInput.value || '') !== String(bonoAplicado)) {
+    if (bonoAplicado > 0 && chk.bonoInput && Math.round(parseMoney(chk.bonoInput.value)) !== bonoAplicado) {
       await cerrarModalActual();
       throw new Error('"Bono" no quedó en ' + bonoAplicado + ' (quedó "' + (chk.bonoInput.value || '') + '"). NO se envió nada.');
     }
