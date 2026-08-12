@@ -25,11 +25,27 @@ function _chequearFreno(donde) {
 }
 
 // ── Utilidades DOM ───────────────────────────────────────────────────────────
+// ¿La ventana tiene layout calculado? La de Agentes se crea con show:false y Chromium puede
+// saltear el layout mientras no se ve: ahí getBoundingClientRect() devuelve TODO en cero.
+// backgroundThrottling:false mantiene el JS corriendo, pero no fuerza el layout.
+function hayLayout() {
+  try {
+    const r = document.body ? document.body.getBoundingClientRect() : null;
+    return !!(r && r.width > 0 && r.height > 0);
+  } catch (_) { return true; }   // ante la duda, asumimos que sí (comportamiento de siempre)
+}
+
 function isVisible(el) {
   if (!el) return false;
   const s = window.getComputedStyle(el);
+  if (s.visibility === 'hidden' || s.display === 'none') return false;
+  // Sin layout, un rect en cero NO significa "está oculto": significa que nadie lo midió.
+  // Medirlo igual hacía que filasJugador() devolviera vacío con la ventana en segundo plano,
+  // y de ahí salía el "no encuentra al usuario" que desaparecía al dejar la ventana abierta:
+  // la lista quedaba "vacía y quieta" y buscarUsuario concluía que el usuario no existe.
+  if (!hayLayout()) return true;
   const r = el.getBoundingClientRect();
-  return s.visibility !== 'hidden' && s.display !== 'none' && r.width > 0 && r.height > 0;
+  return r.width > 0 && r.height > 0;
 }
 function visibleElements(sel, root = document) {
   return Array.from(root.querySelectorAll(sel)).filter(isVisible);
