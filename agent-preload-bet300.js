@@ -587,11 +587,22 @@ async function aplicarMonto(tipo, amount, options = {}) {
     };
   }
 
-  // Cargar el monto en "Cantidad" y, en carga, Bono = 0.
+  // Cargar el monto en "Cantidad" y, en carga, el bono en "Bono".
+  // BET300 registra el bono como "Bono jugador", distinto de "Deposito de un jugador" → queda
+  // diferenciado en las operaciones del agente sin necesidad de una segunda carga.
+  // Si no viene options.bono, o no se puede escribir Y VERIFICAR, el campo se fuerza a 0 y se
+  // devuelve bonoAplicado:0 → el panel hace la segunda carga como siempre. Nunca se manda un
+  // bono "a ciegas": preferimos el camino viejo antes que un monto sin confirmar.
   if (!m.cantidadInput) throw new Error('No se encontró el campo "Cantidad".');
   await setFieldAndVerify(m.cantidadInput, String(Math.round(monto)), 4);
-  if (tipo === 'carga' && m.bonoInput && String(m.bonoInput.value || '').trim() !== '0') {
-    setFieldValue(m.bonoInput, '0');
+  let bonoAplicado = 0;
+  if (tipo === 'carga' && m.bonoInput) {
+    const bonoPedido = Math.max(0, Math.round(Number(options.bono) || 0));
+    if (bonoPedido > 0 && await setFieldAndVerify(m.bonoInput, String(bonoPedido), 4)) {
+      bonoAplicado = bonoPedido;
+    } else if (String(m.bonoInput.value || '').trim() !== '0') {
+      await setFieldAndVerify(m.bonoInput, '0', 3);   // "Bono" es obligatorio: nunca dejarlo sucio
+    }
   }
   await delay(250);
 
@@ -599,6 +610,22 @@ async function aplicarMonto(tipo, amount, options = {}) {
   const enviar = findByText(/^enviar$/i, 'button, .v-btn', m.modal);
   if (!enviar) throw new Error('No se encontró el botón "Enviar".');
   if (enviar.disabled) throw new Error('El botón "Enviar" está deshabilitado (¿monto inválido?).');
+
+  // Última verificación ANTES de mover plata: releer los campos del modal y confirmar que
+  // tienen exactamente lo que pusimos. Vue puede revertir un input (re-render, validación) y
+  // si eso pasa preferimos abortar sin enviar antes que cargar un monto equivocado.
+  {
+    const chk = leerModalMontos();
+    const espCant = String(Math.round(monto));
+    if (chk.cantidadInput && String(chk.cantidadInput.value || '') !== espCant) {
+      await cerrarModalActual();
+      throw new Error('"Cantidad" no quedó en ' + espCant + ' (quedó "' + (chk.cantidadInput.value || '') + '"). NO se envió nada.');
+    }
+    if (bonoAplicado > 0 && chk.bonoInput && String(chk.bonoInput.value || '') !== String(bonoAplicado)) {
+      await cerrarModalActual();
+      throw new Error('"Bono" no quedó en ' + bonoAplicado + ' (quedó "' + (chk.bonoInput.value || '') + '"). NO se envió nada.');
+    }
+  }
 
   // Observer ANTES del click: solo cuenta el snackbar que aparezca DESPUÉS de enviar.
   // (Si leyéramos el snackbar visible, podríamos agarrar el de la operación anterior
@@ -614,7 +641,8 @@ async function aplicarMonto(tipo, amount, options = {}) {
   // Saldo POST: BET300 no lo da en un modal → estimar pre ± monto.
   let newBalance = null;
   if (preJugador && !preJugador.unchanged) {
-    const post = tipo === 'carga' ? preJugador.value + monto : preJugador.value - monto;
+    // En carga con bono nativo entran monto + bono en la MISMA operación.
+    const post = tipo === 'carga' ? preJugador.value + monto + bonoAplicado : preJugador.value - monto;
     newBalance = { raw: String(post), value: post, estimated: true };
   } else {
     newBalance = { raw: preJugador.raw, value: preJugador.value, unchanged: true };
@@ -627,6 +655,7 @@ async function aplicarMonto(tipo, amount, options = {}) {
     ok: true,
     action: tipo,
     amount: monto,
+    bonoAplicado,                            // >0 = el bono viajó en ESTA operación (no hace falta 2ª carga)
     previousBalance: preJugador,
     newBalance,
     exito,                                   // true=ok / false=fallo / null=no se vio toast

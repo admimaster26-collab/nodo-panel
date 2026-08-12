@@ -13870,13 +13870,31 @@ async function ejecutarSolicitudPortalSimple(ctx){
         }
       }
 
+      // BONO: se calcula ANTES de la carga para poder mandarlo en la MISMA operación.
+      // BET300 tiene un campo "Bono" propio y lo registra como "Bono jugador" (distinto de
+      // "Deposito de un jugador"). Casinodrex no lo tiene → ahí el preload ignora la opción,
+      // devuelve bonoAplicado:0 y se sigue haciendo la segunda carga de siempre.
+      const _bonoCalc = (function(){
+        if(tipo !== 'CARGA' || !ctx.bonoAplicar || !(Number(ctx.bonoPct) > 0)) return { monto:0 };
+        // Sin billetera PROMO no podríamos anotar el bono en Chunior ni en historial_ops. Si
+        // igual lo mandáramos en el campo Bono, entraría plata sin registrar → mejor no mandarlo
+        // y que el bloque de abajo avise, que es el comportamiento que ya existía.
+        const _hayPromo = (billeteras||[]).some(b => String(b.ID_BILLETERA) === String(ctx.promoBilleteraId))
+                       || (billeteras||[]).some(b => /promo/i.test(String(b.NOMBRE_VISIBLE||'')));
+        if(!_hayPromo) return { monto:0 };
+        const sinTope = Math.round(montoAbs * Number(ctx.bonoPct) / 100);
+        const tope    = Number(ctx.bonoMax) || 0;
+        const monto   = (tope > 0) ? Math.min(sinTope, tope) : sinTope;
+        return { monto, sinTope, tope, topeAplicado: monto < sinTope };
+      })();
+
       toast(tipo === 'CARGA' ? 'Portal: cargando '+money(montoAbs)+'...' : 'Portal: retirando '+money(montoAbs)+'...', 'blue');
       _trazaPaso((tipo==='CARGA'?'Cargando ':'Retirando ')+money(montoAbs)+' en Agentes...');
       _wdLock();
       let resultado;
       try{
         resultado = tipo === 'CARGA'
-          ? await callDrex('cargarSaldo', montoAbs)
+          ? await callDrex('cargarSaldo', montoAbs, { bono: _bonoCalc.monto })
           : await callDrex('retirarSaldo', montoAbs);
       }catch(e){
         resultado = {ok:false, message:e.message || 'Error en Agentes'};
@@ -14000,29 +14018,47 @@ async function ejecutarSolicitudPortalSimple(ctx){
             // TOPE del bono: el % se lo gana el usuario (push/app), pero el MONTO tiene techo.
             // Sin esto una carga de $520.000 al 50% regalaba $260.000 — el % se aplicaba puro.
             // El tope lo manda la RPC (bono_max); si no viene, se respeta el comportamiento viejo.
-            const _bonoSinTope  = Math.round(montoAbs * Number(ctx.bonoPct) / 100);
-            const _bonoTope     = Number(ctx.bonoMax) || 0;
-            const bonoMonto     = (_bonoTope > 0) ? Math.min(_bonoSinTope, _bonoTope) : _bonoSinTope;
-            const _topeAplicado = bonoMonto < _bonoSinTope;
+            // El cálculo ya se hizo ANTES de la carga (_bonoCalc) para poder mandarlo en la misma
+            // operación; acá solo se reusa para no calcularlo dos veces y que no puedan divergir.
+            const bonoMonto     = _bonoCalc.monto;
+            const _topeAplicado = !!_bonoCalc.topeAplicado;
+            // ¿El bono ya viajó en la carga principal (campo "Bono" de BET300)? Entonces NO hay
+            // que hacer la segunda carga en Agentes — pero sí se sigue anotando por separado en
+            // Chunior y en historial_ops, que es como se lleva la contabilidad.
+            const _bonoNativo   = Number(resultado && resultado.bonoAplicado) || 0;
             const _notaBono     = 'Bono primer ingreso '+ctx.bonoPct+'% sobre '+money(montoAbs)
-                                + (_topeAplicado ? (' · TOPE '+money(_bonoTope)+' (sin tope hubiera sido '+money(_bonoSinTope)+')') : '')
+                                + (_topeAplicado ? (' · TOPE '+money(_bonoCalc.tope)+' (sin tope hubiera sido '+money(_bonoCalc.sinTope)+')') : '')
+                                + (_bonoNativo > 0 ? ' · campo Bono' : '')
                                 + ' · solicitud #'+id;
             const bilPromo = (billeteras||[]).find(b => String(b.ID_BILLETERA) === String(ctx.promoBilleteraId))
                            || (billeteras||[]).find(b => /promo/i.test(String(b.NOMBRE_VISIBLE||'')));
             if(bonoMonto>0 && bilPromo){
-              toast('🎁 Cargando bono '+ctx.bonoPct+'% ('+money(bonoMonto)+')'+(_topeAplicado?' — TOPE aplicado':'')+' en '+(bilPromo.NOMBRE_VISIBLE||'PROMO')+'...', 'blue');
-              _wdLock();
-              let rb;
-              try{
-                await callDrex('buscarUsuario', usuario, { skipBalance: true });   // re-seleccionar al jugador
-                rb = await callDrex('cargarSaldo', bonoMonto);
-              }catch(eb){ rb = {ok:false, message:eb.message}; }
-              finally{ _wdUnlock(); }
+              let rb, _bonoPre = null, _bonoPost = null;
+              if(_bonoNativo > 0){
+                // Ya entró junto con la carga: nada que pedirle al agente.
+                toast('🎁 Bono '+ctx.bonoPct+'% ('+money(bonoMonto)+')'+(_topeAplicado?' — TOPE aplicado':'')+' incluido en la carga', 'green');
+                _trazaPaso('Bono '+money(bonoMonto)+' incluido en la misma operación (campo Bono)');
+                rb = { ok:true, incluido:true };
+                // El saldo post de la operación ya trae monto + bono; el "pre" del bono es ese
+                // total menos el bono. Si no hay lectura confiable, quedan en null (no inventamos).
+                if(typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged){
+                  _bonoPost = resultado.newBalance.value;
+                  _bonoPre  = _bonoPost - bonoMonto;
+                }
+              } else {
+                toast('🎁 Cargando bono '+ctx.bonoPct+'% ('+money(bonoMonto)+')'+(_topeAplicado?' — TOPE aplicado':'')+' en '+(bilPromo.NOMBRE_VISIBLE||'PROMO')+'...', 'blue');
+                _wdLock();
+                try{
+                  await callDrex('buscarUsuario', usuario, { skipBalance: true });   // re-seleccionar al jugador
+                  rb = await callDrex('cargarSaldo', bonoMonto);
+                }catch(eb){ rb = {ok:false, message:eb.message}; }
+                finally{ _wdUnlock(); }
+                _bonoPre = (typeof rb?.previousBalance?.value === 'number') ? rb.previousBalance.value : null;
+                _bonoPost = (typeof rb?.newBalance?.value === 'number' && !rb?.newBalance?.unchanged)
+                  ? rb.newBalance.value
+                  : ((rb && rb.ok !== false) && _bonoPre!==null ? _bonoPre + bonoMonto : null);
+              }
               const okBono = rb && rb.ok !== false;
-              const _bonoPre = (typeof rb?.previousBalance?.value === 'number') ? rb.previousBalance.value : null;
-              const _bonoPost = (typeof rb?.newBalance?.value === 'number' && !rb?.newBalance?.unchanged)
-                ? rb.newBalance.value
-                : (okBono && _bonoPre!==null ? _bonoPre + bonoMonto : null);
               const filaBono = await registrarEnHistorial({
                 usuario, tipo:'CARGA', monto:bonoMonto,
                 billetera_id: bilPromo.ID_BILLETERA, billetera_nombre: bilPromo.NOMBRE_VISIBLE||'PROMO',
