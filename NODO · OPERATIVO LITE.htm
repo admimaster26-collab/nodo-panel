@@ -4418,6 +4418,117 @@ function _jugStoreSave(map){
 }
 // Normaliza un CBU/CVU/alias para comparar (case/espacios/puntos no cambian el destino).
 function _jugNormCbu(v){ return String(v||'').toLowerCase().replace(/[\s.\-]/g,'').trim(); }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TITULARES BLOQUEADOS (portado de NexoBetaChan · rama unificacion)
+// Sale de la auditoría de multicuenta: encontramos 52 redes de titulares que
+// cobran a varias cuentas, pero no había forma de ACTUAR sobre ellas. Esto es
+// esa acción: marcar un titular para que la próxima solicitud quede señalada.
+//
+// DIFERENCIA con la versión del colega: la de ellos bloquea por par
+// usuario+titular. Para nuestro caso no alcanza — "rodrigo ismael flores" opera
+// con 7 usuarios distintos, así que habría que bloquearlo 7 veces y bastaría
+// una cuenta nueva para esquivarlo. Se agrega el bloqueo GLOBAL (clave "*"),
+// que es el que sirve contra las redes.
+//
+// Es LOCAL (localStorage) igual que la base de jugadores: no se comparte entre
+// PCs. Bloquear en P2 no bloquea en P4.
+// ══════════════════════════════════════════════════════════════════════════════
+const _RECH_KEY = 'nodo_titulares_rechazados';
+function _rechStore(){ try{ return JSON.parse(localStorage.getItem(_RECH_KEY)||'{}')||{}; }catch(_e){ return {}; } }
+function _rechSave(m){ try{ localStorage.setItem(_RECH_KEY, JSON.stringify(m)); }catch(_e){} }
+function _normNombre(v){
+  return String(v||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^a-z0-9]+/g,' ').trim();
+}
+window._normNombre = _normNombre;
+function _rechClave(usuario, titular){ return String(usuario||'').toLowerCase().trim()+'|'+_normNombre(titular); }
+function _rechClaveGlobal(titular){ return '*|'+_normNombre(titular); }
+
+// Devuelve null, {global:false} o {global:true} — el llamador decide cómo mostrarlo.
+window.titularBloqueado = function(usuario, titular){
+  if(!titular) return null;
+  const m = _rechStore();
+  const g = m[_rechClaveGlobal(titular)];
+  if(g) return { global:true,  motivo:g.motivo||'', fecha:g.fecha||'' };
+  const u = m[_rechClave(usuario, titular)];
+  if(u) return { global:false, motivo:u.motivo||'', fecha:u.fecha||'' };
+  return null;
+};
+window.titularYaRechazado = function(usuario, titular){ return !!window.titularBloqueado(usuario, titular); };
+
+// usuario === '*' → bloqueo global (para TODAS las cuentas).
+window.marcarTitularRechazado = function(usuario, titular, motivo){
+  if(!titular) return;
+  const m = _rechStore();
+  const k = (usuario === '*') ? _rechClaveGlobal(titular) : _rechClave(usuario, titular);
+  m[k] = { motivo:motivo||'', fecha:new Date().toISOString(), titular:String(titular||''), usuario:String(usuario||'') };
+  const ks = Object.keys(m); if(ks.length > 500) delete m[ks[0]];   // tope: no crece para siempre
+  _rechSave(m);
+};
+window.desmarcarTitularRechazado = function(usuario, titular){
+  const m = _rechStore();
+  delete m[_rechClave(usuario, titular)];
+  delete m[_rechClaveGlobal(titular)];        // desbloquear siempre limpia los dos
+  _rechSave(m);
+};
+window.titularesBloqueadosTodos = function(){
+  const m = _rechStore();
+  return Object.keys(m).map(function(k){
+    return { clave:k, global:k.indexOf('*|')===0, titular:m[k].titular||'', usuario:m[k].usuario||'',
+             motivo:m[k].motivo||'', fecha:m[k].fecha||'' };
+  }).sort(function(a,b){ return String(b.fecha).localeCompare(String(a.fecha)); });
+};
+
+// ¿El "titular" que declaró es en realidad un dato NUESTRO? El portal le muestra al cliente el
+// titular/alias de la billetera para que transfiera, y copiarlo y pegarlo ahí es gratis: quedaba
+// guardado en su ficha como si fuera un titular real. No va nada hardcodeado — sale de las
+// billeteras vivas, así que si mañana cambia una, esto se entera solo.
+window.esDatoPropioBilletera = function(valor){
+  const v = _normNombre(valor);
+  const vCbu = _jugNormCbu(valor);
+  if(v.length < 4 && vCbu.length < 6) return null;    // muy corto para afirmar nada
+  let hit = null;
+  try{
+    (window.billeteras||[]).forEach(function(b){
+      if(hit) return;
+      [['titular', b.TITULAR],
+       ['nombre',  b.NOMBRE_VISIBLE || b.NOMBRE_CHUNIOR || b.BILLETERA_NOMBRE],
+       ['alias',   b.CBU_ALIAS || b.CBU_CVU]].forEach(function(par){
+        if(hit || !par[1]) return;
+        const pN = _normNombre(par[1]), pC = _jugNormCbu(par[1]);
+        if((pN.length>=4 && pN===v) || (pC.length>=6 && pC===vCbu)){
+          hit = { billetera:String(b.NOMBRE_VISIBLE||b.NOMBRE_CHUNIOR||'—'), campo:par[0], valor:String(par[1]) };
+        }
+      });
+    });
+  }catch(_e){}
+  return hit;
+};
+
+window.pjBloquearTitular = function(usuario, titular){
+  if(!usuario || !titular) return;
+  const glob = confirm('Bloquear el titular:\n\n  "'+titular+'"\n\n'
+    + 'Aceptar  → bloquearlo para TODAS las cuentas (sirve contra redes de multicuenta)\n'
+    + 'Cancelar → elegir solo para «'+usuario+'»');
+  if(!glob){
+    if(!confirm('Bloquear "'+titular+'" solo para el usuario «'+usuario+'»?')) return;
+  }
+  try{
+    window.marcarTitularRechazado(glob ? '*' : usuario, titular, glob ? 'BLOQUEADO_GLOBAL_FICHA' : 'BLOQUEADO_DESDE_FICHA');
+    toast('🚫 "'+titular+'" bloqueado'+(glob?' para TODAS las cuentas':' para '+usuario), 'yellow');
+    if(typeof abrirPerfilJugador==='function') abrirPerfilJugador(usuario);   // repintar sin cerrar
+  }catch(e){ toast('No se pudo bloquear: '+(e.message||''), 'red'); }
+};
+window.pjDesbloquearTitular = function(usuario, titular){
+  if(!usuario || !titular) return;
+  if(!confirm('Desbloquear el titular "'+titular+'"?')) return;
+  try{
+    window.desmarcarTitularRechazado(usuario, titular);
+    toast('✅ "'+titular+'" desbloqueado', 'green');
+    if(typeof abrirPerfilJugador==='function') abrirPerfilJugador(usuario);
+  }catch(e){ toast('No se pudo desbloquear: '+(e.message||''), 'red'); }
+};
 window.jugadorRegistrarDato = function(usuario, dato){
   const u = String(usuario||'').toLowerCase().trim();
   if(!u || !dato) return;
@@ -4728,7 +4839,19 @@ window.abrirPerfilJugador = function(usuario){
   const railIdent =
       '<div class="pj-card"><h4>👤 Identidad</h4>'
     + (tits.length
-        ? tits.map(function(t){ return '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(t.raw)+' <span style="color:#8b949e;font-weight:600">×'+t.veces+'</span></span></div>'; }).join('')
+        ? tits.map(function(t){
+            // Bloqueo de titular: la acción que le faltaba a la auditoría de multicuenta.
+            const _bl = window.titularBloqueado ? window.titularBloqueado(u, t.raw) : null;
+            const _tEsc = String(t.raw).replace(/'/g,"\\'");
+            const _btn = _bl
+              ? '<button type="button" onclick="pjDesbloquearTitular(\''+esc(uEsc)+'\',\''+esc(_tEsc)+'\')" title="Desbloquear" style="margin-left:6px;border:0;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:800;background:#14532d;color:#86efac;cursor:pointer">desbloquear</button>'
+              : '<button type="button" onclick="pjBloquearTitular(\''+esc(uEsc)+'\',\''+esc(_tEsc)+'\')" title="Bloquear este titular" style="margin-left:6px;border:0;border-radius:6px;padding:1px 6px;font-size:10px;font-weight:800;background:#3f1d1d;color:#fca5a5;cursor:pointer">🚫</button>';
+            const _badge = _bl
+              ? ' <span title="'+esc(_bl.motivo||'')+(_bl.fecha?(' · '+esc(String(_bl.fecha).slice(0,10))):'')+'" style="background:#7f1d1d;color:#fecaca;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:900">'+(_bl.global?'BLOQUEADO · TODAS':'BLOQUEADO')+'</span>'
+              : '';
+            return '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(t.raw)
+                 + ' <span style="color:#8b949e;font-weight:600">×'+t.veces+'</span>'+_badge+_btn+'</span></div>';
+          }).join('')
         : (crmTit
             ? '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(crmTit)+' <span title="Del registro/whaticket" style="color:#8b949e;font-weight:600;font-size:10px">·reg</span></span></div>'
             : '<div class="pj-field"><span class="k">Titular</span><span class="v" style="color:#5a6474">sin datos</span></div>'))
@@ -12362,7 +12485,15 @@ if(window.ctrlElectron){
           <div>
             <div class="v154p-main">${esc(s.USUARIO || "-")}</div>
             <div class="v154p-small">#${id} · ${fecha(s.FECHA_CREACION)} · ${esc(s.ORIGEN || "PORTAL")}</div>
-            ${s.TITULAR ? `<div class="v154p-small" style="color:#fde68a">Titular: ${esc(s.TITULAR)}</div>` : ""}
+            ${s.TITULAR ? `<div class="v154p-small" style="color:#fde68a">Titular: ${esc(s.TITULAR)}${(function(){
+              // Si ese titular está bloqueado (ficha del jugador), que se vea ACÁ, que es donde
+              // el operador decide. Informa: no deshabilita ni rechaza nada por su cuenta.
+              try{
+                const b = window.titularBloqueado ? window.titularBloqueado(s.USUARIO||'', s.TITULAR) : null;
+                if(!b) return '';
+                return ' <span title="'+esc(b.motivo||'')+'" style="background:#7f1d1d;color:#fecaca;border-radius:999px;padding:1px 7px;font-size:9px;font-weight:900">🚫 '+(b.global?'BLOQUEADO · TODAS':'BLOQUEADO')+'</span>';
+              }catch(_e){ return ''; }
+            })()}</div>` : ""}
           </div>
           <div><span class="v154p-badge"${_accS?` style="background:${_accS}22;color:${_accS};border:1px solid ${_accS}66"`:``}>${esc(s.TIPO || "-")}</span></div>
           <div class="v154p-main"${_accS?` style="color:${_accS}"`:``}>${_montoCell}${_saldoBadge}</div>
