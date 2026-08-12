@@ -123,6 +123,17 @@ function findByText(re, selector = 'button, .v-btn, [role="button"], .v-list-ite
   return visibleElements(selector, root).find(el => re.test(normalizeText(el.textContent)));
 }
 
+// ¿El botón está deshabilitado? Vuetify NO siempre usa la propiedad .disabled: muchas veces lo
+// marca solo con la clase v-btn--disabled o aria-disabled. Mirando solo .disabled, un botón muerto
+// pasaba por bueno, el click no hacía nada y la operación quedaba armada sin confirmar.
+function botonDeshabilitado(btn) {
+  if (!btn) return true;
+  if (btn.disabled === true) return true;
+  if (btn.getAttribute && btn.getAttribute('aria-disabled') === 'true') return true;
+  if (btn.classList && (btn.classList.contains('v-btn--disabled') || btn.classList.contains('disabled'))) return true;
+  return false;
+}
+
 // Diálogo (modal) Vuetify activo. OJO: el snackbar TAMBIÉN es .v-overlay --> filtramos por .v-dialog.
 function findActiveModal() {
   return firstVisible('.v-overlay--active.v-dialog');
@@ -572,7 +583,17 @@ async function aplicarMonto(tipo, amount, options = {}) {
   clickElement(btn);
 
   // Esperar el modal (con su input de Cantidad).
-  await waitFor(() => { const m = leerModalMontos(); return m.modal && m.cantidadInput; }, options.timeout || DEFAULT_TIMEOUT);
+  // Esperar el modal. Si esta carga lleva bono, esperar TAMBIÉN el campo Bono: Vuetify puede
+  // pintar los inputs de a uno y leer el modal antes de tiempo dejaba bonoInput en null → el
+  // bono se caía al camino viejo (dos cargas) sin motivo real.
+  const _quiereBono = (tipo === 'carga' && Math.round(Number(options.bono) || 0) > 0);
+  await waitFor(() => {
+    const mm = leerModalMontos();
+    return mm.modal && mm.cantidadInput && (!_quiereBono || mm.bonoInput);
+  }, options.timeout || DEFAULT_TIMEOUT).catch(async () => {
+    // Si el campo Bono nunca apareció, seguimos igual: se carga sin bono y el panel hace la 2ª carga.
+    await waitFor(() => { const mm = leerModalMontos(); return mm.modal && mm.cantidadInput; }, 3000);
+  });
   await delay(300);
 
   let m = leerModalMontos();
@@ -606,11 +627,6 @@ async function aplicarMonto(tipo, amount, options = {}) {
   }
   await delay(250);
 
-  // Botón "Enviar" del modal.
-  const enviar = findByText(/^enviar$/i, 'button, .v-btn', m.modal);
-  if (!enviar) throw new Error('No se encontró el botón "Enviar".');
-  if (enviar.disabled) throw new Error('El botón "Enviar" está deshabilitado (¿monto inválido?).');
-
   // Última verificación ANTES de mover plata: releer los campos del modal y confirmar que
   // tienen exactamente lo que pusimos. Vue puede revertir un input (re-render, validación) y
   // si eso pasa preferimos abortar sin enviar antes que cargar un monto equivocado.
@@ -625,6 +641,25 @@ async function aplicarMonto(tipo, amount, options = {}) {
       await cerrarModalActual();
       throw new Error('"Bono" no quedó en ' + bonoAplicado + ' (quedó "' + (chk.bonoInput.value || '') + '"). NO se envió nada.');
     }
+  }
+
+  // Botón "Enviar": ESPERAR a que quede realmente habilitado en vez de chequear una sola vez.
+  // Vuetify revalida el formulario después de escribir (sobre todo tras el blur del último
+  // campo) y por unos ms deja el botón deshabilitado. Con el chequeo instantáneo pasaban dos
+  // cosas: o salíamos por error "monto inválido", o —peor— el botón estaba deshabilitado por
+  // CLASE (sin .disabled), el click no hacía nada y la carga quedaba escrita pero sin confirmar.
+  // Se re-busca en el modal ACTIVO en cada vuelta porque Vue puede re-renderizar el nodo.
+  let enviar = null;
+  const _tEnviar = now() + 6000;
+  while (now() < _tEnviar) {
+    enviar = findByText(/^enviar$/i, 'button, .v-btn', findActiveModal() || m.modal);
+    if (enviar && !botonDeshabilitado(enviar)) break;
+    await delay(150);
+  }
+  if (!enviar) throw new Error('No se encontró el botón "Enviar".');
+  if (botonDeshabilitado(enviar)) {
+    await cerrarModalActual();
+    throw new Error('El botón "Enviar" siguió deshabilitado tras 6s (¿monto inválido o campo obligatorio vacío?). NO se envió nada.');
   }
 
   // Observer ANTES del click: solo cuenta el snackbar que aparezca DESPUÉS de enviar.
