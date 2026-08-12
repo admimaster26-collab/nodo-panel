@@ -10872,7 +10872,28 @@ window.chuniorPendientesReintentar = async function(manual){
 };
 try{ setInterval(function(){ window.chuniorPendientesReintentar(false); }, 45000); }catch(_e){}
 
+// ══════════════════════════════════════════════════════════════════════════════
+// CANDADO DE CHUNIOR — las anotaciones van DE A UNA.
+// Chunior es UNA sola ventana y anotar hace navigate() sobre ella. Dos anotaciones
+// a la vez se pisan el formulario: la segunda navega mientras la primera está
+// llenando, y queda registrada UNA sola.
+// Caso real que lo destapó: al meter el bono en la misma carga (1.1.54) se fue la
+// pausa que había entre las dos anotaciones (antes el bono hacía una operación
+// entera en Agentes en el medio). Las dos salían casi juntas y Chunior terminaba
+// con SOLO el bono anotado y la carga real no → descuadre contra el casino.
+// Esto serializa TODAS las anotaciones, no solo las del bono.
+// ══════════════════════════════════════════════════════════════════════════════
+let _chuCola = Promise.resolve();
+function _chuSerializar(fn){
+  const corrida = _chuCola.then(fn, fn);          // sigue la fila aunque la anterior falle
+  _chuCola = corrida.then(function(){}, function(){});
+  return corrida;
+}
+
 async function registrarCargaEnChunior(chunior_uid, monto, usuario){
+  return _chuSerializar(function(){ return _registrarCargaEnChuniorImpl(chunior_uid, monto, usuario); });
+}
+async function _registrarCargaEnChuniorImpl(chunior_uid, monto, usuario){
   // Bloqueo del cotejo: mientras hay una DECLARACIÓN abierta no se anota (snapshot consistente).
   // Espera hasta 90s a que el operador confirme/cierre — la anotación NO se pierde, queda esperando.
   for(let _w=0; window._cotejoDeclarando && _w<90; _w++){ await new Promise(function(r){setTimeout(r,1000);}); }
