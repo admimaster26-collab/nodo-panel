@@ -723,18 +723,41 @@ async function aplicarMonto(tipo, amount, options = {}) {
   const snack = await esperarSnackbarCapturado(capt, 9000);
   const exito = snack ? (snack.tipo === 'ok') : null;
 
-  // Saldo POST: BET300 no lo da en un modal → estimar pre ± monto.
-  let newBalance = null;
-  if (preJugador && !preJugador.unchanged) {
-    // En carga con bono nativo entran monto + bono en la MISMA operación.
-    const post = tipo === 'carga' ? preJugador.value + monto + bonoAplicado : preJugador.value - monto;
-    newBalance = { raw: String(post), value: post, estimated: true };
-  } else {
-    newBalance = { raw: preJugador.raw, value: preJugador.value, unchanged: true };
-  }
-
-  // Cerrar el modal si quedó abierto (en éxito suele cerrarse solo).
+  // Cerrar el modal PRIMERO: el saldo nuevo se lee de la fila de la lista, que está atrás.
   if (findActiveModal()) { await cerrarModalActual(); }
+
+  // Saldo POST: BET300 no lo muestra en el modal, pero SÍ en la fila (misma columna que el pre).
+  // Antes se ESTIMABA como pre ± monto. Esa cuenta solo es correcta si no pasó nada más en el
+  // medio — y es justamente la LÍNEA DE BASE de la detección de bono no jugado: una base
+  // calculada le mete su error al Δ, y el error puede liberar un bono que no se jugó.
+  // También ensuciaba el cotejo, porque TODO el historial de BET300 quedaba con saldos inventados.
+  // Ahora se relee la fila y se espera a que el saldo cambie respecto del pre. Si no se logra
+  // leer, se cae a la estimación de siempre marcada estimated:true — nunca se pierde el dato,
+  // pero queda claro cuál es lectura y cuál es cuenta.
+  const _postEstimado = (preJugador && !preJugador.unchanged)
+    ? (tipo === 'carga' ? preJugador.value + monto + bonoAplicado : preJugador.value - monto)
+    : null;
+  let newBalance = null;
+  if (exito !== false && _currentUser) {
+    const _t0 = now();
+    while (now() - _t0 < 3000) {
+      const f = buscarFilaPorAlias(_currentUser);
+      const s = f ? saldoDeFila(f) : null;
+      if (s && /\d/.test(String(s.raw || ''))) {
+        // Solo lo damos por bueno cuando YA refleja la operación (cambió respecto del pre).
+        // Si no, es la fila vieja todavía sin refrescar.
+        const refleja = !preJugador || preJugador.unchanged
+          || Math.round(s.value) !== Math.round(preJugador.value);
+        if (refleja) { newBalance = { raw: s.raw, value: s.value, leido: true }; break; }
+      }
+      await delay(200);
+    }
+  }
+  if (!newBalance) {
+    newBalance = (_postEstimado !== null)
+      ? { raw: String(_postEstimado), value: _postEstimado, estimated: true }
+      : { raw: preJugador.raw, value: preJugador.value, unchanged: true };
+  }
 
   return {
     ok: true,

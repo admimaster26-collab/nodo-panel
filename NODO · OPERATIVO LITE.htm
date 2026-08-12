@@ -14285,11 +14285,20 @@ async function ejecutarSolicitudPortalSimple(ctx){
                   : ((rb && rb.ok !== false) && _bonoPre!==null ? _bonoPre + bonoMonto : null);
               }
               const okBono = rb && rb.ok !== false;
+              // El saldo_post de ESTA fila es la línea de base para detectar el bono no jugado
+              // (Δ entre este saldo y el que haya al pedir el retiro). Dejamos anotado si salió
+              // de una LECTURA real o de una cuenta: una base estimada arrastra su error al Δ,
+              // y ese error puede liberar un bono que nunca se jugó. Sin esta marca, después no
+              // hay forma de saber de qué filas fiarse.
+              const _fuenteSaldo = (_bonoNativo > 0) ? (resultado && resultado.newBalance) : (rb && rb.newBalance);
+              const _marcaBase = (_bonoPost == null) ? ' [BASE_SIN_DATO]'
+                               : (_fuenteSaldo && _fuenteSaldo.leido) ? ' [BASE_LEIDA]'
+                               : (_fuenteSaldo && _fuenteSaldo.estimated) ? ' [BASE_ESTIMADA]' : '';
               const filaBono = await registrarEnHistorial({
                 usuario, tipo:'CARGA', monto:bonoMonto,
                 billetera_id: bilPromo.ID_BILLETERA, billetera_nombre: bilPromo.NOMBRE_VISIBLE||'PROMO',
                 origen:'PROMO_BONO', estado: okBono?'OK':'ERROR',
-                notas:_notaBono,
+                notas:_notaBono+_marcaBase,
                 solicitud_id:id, saldo_pre:_bonoPre, saldo_post:_bonoPost
               });
               if(okBono){
