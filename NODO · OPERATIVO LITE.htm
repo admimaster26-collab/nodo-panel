@@ -12415,7 +12415,12 @@ if(window.ctrlElectron){
   async function cargarAlertasRetiro(force){
     try{
       if(typeof supabaseClient === 'undefined' || !supabaseClient) return;
-      if(!force && (Date.now() - window._retiroAlertasAt) < 60*1000) return;
+      // Cada 5 min, no cada minuto. Con varias PCs por oficina el minuto daba ~30
+      // consultas/minuto sobre landing_solicitudes (97k filas + lateral join) y la RPC
+      // empezó a dar statement timeout. Un retiro pendiente no cambia de estado en 60 s,
+      // así que refrescar tan seguido no aportaba nada. Al abrir el modal se pide con
+      // force:true, que es el momento donde el dato tiene que estar fresco de verdad.
+      if(!force && (Date.now() - window._retiroAlertasAt) < 5*60*1000) return;
       const ids = ((window.V154P && window.V154P.solicitudes) || [])
         .filter(function(s){
           if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase() !== 'RETIRO') return false;
@@ -13883,6 +13888,16 @@ window._rv2Finalizar = async function(){
       if(_alEl) _alEl.innerHTML = (_esRetiroJob && window._alertaRetiroHtml)
         ? (window._alertaRetiroHtml(id, {monto: Math.abs(monto||0), expandido:true}) || '')
         : '';
+      // Acá es donde el dato importa: pedimos una lectura fresca y repintamos cuando llega.
+      // En la lista el refresco es cada 5 min; en el modal, al abrirlo.
+      if(_esRetiroJob && window.cargarAlertasRetiro){
+        window.cargarAlertasRetiro(true).then(function(){
+          try{
+            const el2 = document.getElementById('portalJobAlertas');
+            if(el2) el2.innerHTML = window._alertaRetiroHtml(id, {monto: Math.abs(monto||0), expandido:true}) || '';
+          }catch(_e){}
+        }).catch(function(){});
+      }
     }catch(_e){}
     el.dataset.montoDeclarado = String(Math.abs(monto || 0));
     document.getElementById('portalJobMontoAprobado').value = String(Math.abs(monto || 0));
