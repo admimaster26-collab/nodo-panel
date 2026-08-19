@@ -18126,7 +18126,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       },400);
     }
   };
-  function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=`<div class="alert-box">No hay jugadores para esos filtros.</div>`;return}let html=`<div class="crm-table-wrap"><table><thead><tr><th>Jugador</th><th>Segmento</th><th>Score</th><th>Cargas</th><th>Retiros</th><th>Neto</th><th>Última</th><th>Turno</th><th>Billetera</th><th>Acción</th><th>Acciones</th></tr></thead><tbody>`;arr.forEach(j=>{const uEsc=String(j.usuario).replace(/'/g,"\\'");html+=`<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador('${uEsc}')" title="Abrir perfil completo del jugador"><td><b>${j.usuario}</b> <span title="Push: ${j.push?'sí':'no'}" style="opacity:${j.push?1:.28}">🔔</span><span title="App instalada: ${j.app?'sí':'no'}" style="opacity:${j.app?1:.28}">📱</span><div class="small">${j.totalOps} ops · ${j.origenHabitual}${j.telefono?' · 📱 '+j.telefono:''}${j.titular?' · 👤 '+j.titular:''}${j._wtkOnly?' <span style="color:#7dd3fc;font-weight:900">· WTK'+(j.pcCodigo?' '+j.pcCodigo:'')+'</span>':''}</div></td><td><span class="crm-seg ${clsSeg(j.segmento)}">${j.segmento}</span></td><td><span class="crm-score">${j.score}</span></td><td>${j.cargas}<div class="small">${fmtMoney(j.montoCargas)}</div></td><td>${j.retiros}<div class="small">${fmtMoney(j.montoRetiros)}</div></td><td><b style="color:${j.neto>=0?"#12b76a":"#f04438"}">${fmtMoney(j.neto)}</b></td><td>${j.diasUltCarga>=9999?"—":j.diasUltCarga+" días"}<div class="small">${j.ultimaCarga?new Date(j.ultimaCarga).toLocaleDateString("es-AR"):"sin carga"}</div></td><td>${j.turnoFrecuente}</td><td>${j.billeteraHabitual}</td><td>${j.accion}</td><td onclick="event.stopPropagation()"><div class="crm-actions"><button class="mini-btn blue" onclick="crmCopiarPromo('${uEsc}')">📋 Promo</button><button class="mini-btn green" id="pushBtn_${j.usuario}" onclick="crmPushIndividual('${uEsc}')">📲 Push</button><button class="mini-btn gray" title="Perfil completo (CBUs, titulares, timeline)" onclick="abrirPerfilJugador('${uEsc}')">🌳</button></div></td></tr>`});html+=`</tbody></table></div>`;box.innerHTML=html;const total=document.getElementById("crmTotalVisible");if(total)total.textContent=String(arr.length)}
+  function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=`<div class="alert-box">No hay jugadores para esos filtros.</div>`;return}let html=`<div class="crm-table-wrap"><table><thead><tr><th>Jugador</th><th>Segmento</th><th>Score</th><th>Cargas</th><th>Retiros</th><th>Neto</th><th>Última</th><th>Turno</th><th>Billetera</th><th>Acción</th><th>Acciones</th></tr></thead><tbody>`;arr.forEach(j=>{const uEsc=String(j.usuario).replace(/'/g,"\\'");html+=`<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador('${uEsc}')" title="Abrir perfil completo del jugador"><td><b>${j.usuario}</b> <span title="Push: ${j.push?'sí':'no'}" style="opacity:${j.push?1:.28}">🔔</span><span title="App instalada: ${j.app?'sí':'no'}" style="opacity:${j.app?1:.28}">📱</span><div class="small">${j.totalOps} ops · ${j.origenHabitual}${j.telefono?' · 📱 '+j.telefono:''}${j.titular?' · 👤 '+j.titular:''}${j._wtkOnly?' <span style="color:#7dd3fc;font-weight:900">· WTK'+(j.pcCodigo?' '+j.pcCodigo:'')+'</span>':''}</div></td><td><span class="crm-seg ${clsSeg(j.segmento)}">${j.segmento}</span></td><td><span class="crm-score">${j.score}</span></td><td>${j.cargas}<div class="small">${fmtMoney(j.montoCargas)}</div></td><td>${j.retiros}<div class="small">${fmtMoney(j.montoRetiros)}</div></td><td><b style="color:${j.neto>=0?"#12b76a":"#f04438"}">${fmtMoney(j.neto)}</b></td><td>${j.diasUltCarga>=9999?"—":j.diasUltCarga+" días"}<div class="small">${j.ultimaCarga?new Date(j.ultimaCarga).toLocaleDateString("es-AR"):"sin carga"}</div></td><td>${j.turnoFrecuente}</td><td>${j.billeteraHabitual}</td><td>${j.accion}</td><td onclick="event.stopPropagation()"><div class="crm-actions"><button class="mini-btn blue" onclick="crmCopiarPromo('${uEsc}')">📋 Promo</button><button class="mini-btn green" id="pushBtn_${j.usuario}" onclick="crmPushIndividual('${uEsc}')">📲 Push</button><button class="mini-btn blue" title="Escribirle por WhatsApp con el mensaje de recuperación" onclick="crmContactar('${uEsc}')">💬</button><button class="mini-btn yellow" title="Prevalidar: ver si ya tiene otra cuenta, si cobró el bono o si su CBU se repite" onclick="crmPrevalidarRapido('${uEsc}')">✅</button><button class="mini-btn gray" title="Perfil completo (CBUs, titulares, timeline)" onclick="abrirPerfilJugador('${uEsc}')">🌳</button></div></td></tr>`});html+=`</tbody></table></div>`;box.innerHTML=html;const total=document.getElementById("crmTotalVisible");if(total)total.textContent=String(arr.length)}
   // ══════════════════════════════════════════════════════════════════════════
   // CRM · RECONEXIÓN Y PREVALIDACIÓN
   //
@@ -18634,6 +18634,70 @@ async function ejecutarSolicitudPortalSimple(ctx){
     _rxPintarFrios();
   }
   window.crmRxDorm = function(est){ _rxCargarDormidos(est); };
+
+  // ── Acciones sueltas, para usar desde cualquier fila del CRM ─────────────
+  // Resuelve el teléfono: primero el que ya tenga la fila, si no lo pide a la base
+  // (el CRM en memoria casi nunca lo trae).
+  async function _rxTelefonoDe(usuario){
+    const u=String(usuario||'').toLowerCase();
+    try{
+      const j=(window._crmJugadoresData||[]).find(x=>String(x.usuario).toLowerCase()===u);
+      if(j && j.telefono) return String(j.telefono);
+    }catch(_e){}
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_usuarios_contacto',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_usuarios:[u] });
+      if(error || !data || data.ok===false) return '';
+      const x=(data.usuarios||[])[0];
+      return (x && x.telefono) ? String(x.telefono) : '';
+    }catch(_e){ return ''; }
+  }
+
+  window.crmContactar = async function(usuario){
+    const tel = await _rxTelefonoDe(usuario);
+    if(!tel){ toast(usuario+' no tiene teléfono cargado','orange'); return; }
+    crmRxWhatsapp(usuario, tel);          // usa el mensaje rotativo y suma al contador
+  };
+
+  // Prevalidar sin salir del CRM: mismo chequeo del botón grande, en un modal chico.
+  window.crmPrevalidarRapido = async function(usuario){
+    abrirModal('✅ Prevalidar · '+usuario,
+      '<div class="load" style="padding:14px;color:#8b949e">Consultando…</div>', null, 'Cerrar');
+    const pinta = h => { const b=document.getElementById('modalBody'); if(b) b.innerHTML=h; };
+    try{
+      const tel = await _rxTelefonoDe(usuario);
+      const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_telefono: tel||null, p_usuario: usuario });
+      if(error) throw new Error(error.message||'');
+      if(data && data.ok===false) throw new Error(data.error||'sin datos');
+      const v=String(data.veredicto||'').toUpperCase();
+      const col = v==='LIBRE'?'#12b76a':(v==='YA_EXISTE'?'#f5c518':'#f04438');
+      pinta(
+        `<div style="border:1px solid ${col}55;background:${col}14;border-radius:8px;padding:11px 13px;margin-bottom:10px">
+           <b style="color:${col};font-size:15px">${escapeHtml(v||'—')}</b>
+           ${tel?'<div class="small" style="color:#8b949e;margin-top:3px">Teléfono '+escapeHtml(tel)+'</div>':''}
+         </div>`
+      + ((data.motivos||[]).length
+          ? (data.motivos||[]).map(m=>{
+              const n=String(m.nivel||m.gravedad||'').toUpperCase();
+              const c=n==='ALTO'?'#f04438':(n==='MEDIO'?'#f5c518':'#8b949e');
+              return `<div style="border-left:3px solid ${c};padding:2px 0 2px 10px;margin-bottom:6px">
+                        <b style="color:${c};font-size:11px">${escapeHtml(n||'INFO')}</b>
+                        <div class="small" style="color:#c9d1d9">${escapeHtml(m.detalle||m.texto||m.motivo||'')}</div>
+                      </div>`; }).join('')
+          : '<div class="small" style="color:#5a6474">Sin observaciones.</div>')
+      + ((data.cuentas||[]).length
+          ? '<div class="small" style="color:#8b949e;margin-top:8px">Otras cuentas con ese teléfono: '
+            + (data.cuentas||[]).map(x=>'<b style="color:#e6edf3">'+escapeHtml(x.usuario||x)+'</b>').join(' · ')+'</div>'
+          : ''));
+    }catch(e){
+      pinta('<div class="err-box" style="padding:10px">No se pudo consultar: '+escapeHtml(e.message||'')+'</div>');
+    }
+  };
 
   function _rxPintarFrios(){
     const b=_rxDestino(); if(!b) return;
