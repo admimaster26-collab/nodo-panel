@@ -18221,6 +18221,22 @@ async function ejecutarSolicitudPortalSimple(ctx){
     // no contactar.
     const soloDup = (_RX.tab==='dup');
     const cola=(d.cola||[]).filter(c => soloDup ? c.duplicado_de : true);
+    // Barra de limpieza en lote: sólo en Duplicados, y sólo si hay algo seguro que limpiar.
+    const barraLimpieza = (soloDup && Number(r.seguros)>0)
+      ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;
+                     background:rgba(18,183,106,.09);border:1px solid rgba(18,183,106,.3);
+                     border-radius:8px;padding:10px 12px">
+           <div style="flex:1;min-width:260px">
+             <b style="color:#12b76a">${r.seguros} son la misma persona</b>
+             <div class="small" style="color:#8b949e">Nombre mal tipeado o escrito a medias, con el
+               mismo teléfono que una cuenta que ya opera. Se pueden unificar todos juntos.</div>
+             ${Number(r.a_revisar)>0?`<div class="small" style="color:#5a6474;margin-top:3px">
+               Los otros ${r.a_revisar} quedan acá para que los mires: pueden ser dos personas
+               que comparten el teléfono.</div>`:''}
+           </div>
+           <button class="mini-btn green" onclick="crmRxLimpiar()">🔗 Unificar los ${r.seguros}</button>
+         </div>`
+      : '';
     const porT={}; (d.por_turno||[]).forEach(x=>porT[x.turno]=x.en_cola);
     const hechos=(d.trabajado_hoy||[]).reduce((s,x)=>s+Number(x.n||0),0);
     const tab=(k,lbl)=>`<button class="mini-btn ${_RX.turno===k?'green':'gray'}"
@@ -18253,6 +18269,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
          no lo lea como spam. Dentro de cada línea, <b>{rojo|azul|verde}</b> sortea una de esas
          palabras y <b>{usuario}</b> pone el nombre. Con el 👁 ves cómo salen de verdad.
          Se guarda en esta PC.</div>`
+    + barraLimpieza
     + (!cola.length
        ? '<div class="alert-box" style="padding:14px">Sin pendientes en este turno. 👌</div>'
        : `<div style="max-height:56vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -18267,11 +18284,17 @@ async function ejecutarSolicitudPortalSimple(ctx){
             return `<tr style="border-top:1px solid #21283a">
              <td style="padding:6px 7px"><b>${escapeHtml(c.usuario)}</b>
                <div class="small" style="color:#5a6474">${escapeHtml(c.tipo||'')}${c.atendio?' · '+escapeHtml(c.atendio):''}</div>
-               ${c.duplicado_de?`<div class="small" style="color:${Number(c.distancia)<=2?'#f5c518':'#8b949e'};margin-top:2px">
-                  ${Number(c.distancia)<=2?'✏ mal tipeado':'⚠ mismo teléfono'} · ya opera como
-                  <b style="color:#e6edf3">${escapeHtml(c.duplicado_de)}</b>
-                  ${Number(c.distancia)<=2?'<span style="color:#5a6474"> ('+c.distancia+(Number(c.distancia)===1?' letra':' letras')+' de diferencia)</span>':''}
-               </div>`:''}</td>
+               ${c.duplicado_de?(function(){
+                  const cl=String(c.clase||'');
+                  const et={TIPEO:['✏ mal tipeado','#f5c518'],
+                            INCOMPLETO:['✂ nombre incompleto','#f5c518'],
+                            PARECIDO:['≈ se parece','#8b949e'],
+                            DISTINTO:['⚠ mismo teléfono','#8b949e']}[cl]||['⚠ mismo teléfono','#8b949e'];
+                  return `<div class="small" style="color:${et[1]};margin-top:2px">
+                    ${et[0]} · ya opera como <b style="color:#e6edf3">${escapeHtml(c.duplicado_de)}</b>
+                    ${cl==='TIPEO'?'<span style="color:#5a6474"> ('+c.distancia+(Number(c.distancia)===1?' letra':' letras')+' de diferencia)</span>':''}
+                    ${cl==='DISTINTO'?'<span style="color:#5a6474"> — puede ser otra persona</span>':''}
+                  </div>`; })():''}</td>
              <td style="padding:6px 7px;font-family:ui-monospace,monospace">${escapeHtml(c.telefono||'—')}</td>
              <td style="padding:6px 7px;text-align:center">${c.push
                 ? '<span style="background:rgba(111,143,208,.18);color:#8fa9e0;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">PUSH</span>'
@@ -18635,6 +18658,37 @@ async function ejecutarSolicitudPortalSimple(ctx){
             cuidá la línea igual que en Reconectar.</div>`);
   }
   window.crmRxSeg = function(s){ _RX.segFiltro=s; _rxPintarFrios(); };
+
+  // Limpieza en lote. Primero simula y muestra qué va a hacer: son muchos de una,
+  // y conviene que el operador vea la lista antes de aceptar.
+  window.crmRxLimpiar = async function(){
+    const pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
+    const quien=(typeof operador!=='undefined' && operador)?(operador.usuario||operador.nombre||''):'';
+    try{
+      const sim = await supabaseClient.rpc('panel_reconexion_limpiar_seguros',{
+        p_secret: window.PANEL_DATA_SECRET, p_pc_codigo: pc,
+        p_operador: quien||null, p_simular: true });
+      if(sim.error) throw new Error(sim.error.message||'');
+      const d = sim.data||{};
+      const n = Number(d.cantidad||0);
+      if(!n){ toast('No hay nada seguro para unificar','yellow'); return; }
+      const pares=(d.pares||[]).slice(0,12)
+        .map(p=>'  · '+p.de+'  →  '+p.a+'   ('+(p.clase==='TIPEO'?'mal tipeado':'nombre incompleto')+')')
+        .join('\n');
+      if(!confirm('Se van a unificar '+n+' usuarios con la cuenta que ya opera.\n\n'+pares
+        +(n>12?('\n  … y '+(n-12)+' más'):'')
+        +'\n\nCada uno sale de la lista y su vínculo queda marcado como duplicado.\n'
+        +'Los que pueden ser otra persona con el mismo teléfono NO se tocan.\n\n¿Confirmás?')) return;
+
+      const res = await supabaseClient.rpc('panel_reconexion_limpiar_seguros',{
+        p_secret: window.PANEL_DATA_SECRET, p_pc_codigo: pc,
+        p_operador: quien||null, p_simular: false });
+      if(res.error) throw new Error(res.error.message||'');
+      if(res.data && res.data.ok===false) throw new Error(res.data.error||'');
+      toast('✓ '+Number(res.data.cantidad||0)+' usuarios unificados','green');
+      _rxCargar();
+    }catch(e){ toast('No se pudo limpiar: '+(e.message||''),'red'); }
+  };
 
   // ── Prevalidar antes de crear ─────────────────────────────────────────────
   window.crmAbrirPrevalidar = function(){
