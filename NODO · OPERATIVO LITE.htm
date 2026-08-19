@@ -18617,18 +18617,29 @@ async function ejecutarSolicitudPortalSimple(ctx){
   // carga entera). Lo pedimos para los que se están viendo y lo guardamos acá.
   _RX.contactos = _RX.contactos || {};
   async function _rxEnriquecer(usuarios){
-    const faltan = usuarios.filter(u => _RX.contactos[u] === undefined).slice(0,500);
+    const faltan = usuarios.filter(u => _RX.contactos[u] === undefined);
     if(!faltan.length) return false;
     faltan.forEach(u => { _RX.contactos[u] = null; });   // marca "pedido", evita repetir
-    try{
-      const { data, error } = await supabaseClient.rpc('panel_usuarios_contacto',{
-        p_secret: window.PANEL_DATA_SECRET,
-        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
-        p_usuarios: faltan });
-      if(error || !data || data.ok===false) return false;
-      (data.usuarios||[]).forEach(x => { _RX.contactos[String(x.usuario).toLowerCase()] = x; });
-      return true;
-    }catch(_e){ return false; }
+    const pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
+    let hubo=false;
+    // De a 200: la RPC corta en 400 y de a muchos se comía el timeout de 3 s.
+    for(let i=0;i<faltan.length;i+=200){
+      const lote = faltan.slice(i, i+200);
+      try{
+        const { data, error } = await supabaseClient.rpc('panel_usuarios_contacto',{
+          p_secret: window.PANEL_DATA_SECRET, p_pc_codigo: pc, p_usuarios: lote });
+        if(error) throw new Error(error.message||'');
+        if(!data || data.ok===false) throw new Error((data&&data.error)||'sin datos');
+        (data.usuarios||[]).forEach(x => { _RX.contactos[String(x.usuario).toLowerCase()] = x; });
+        hubo = true;
+      }catch(e){
+        // Que se note: sin esto la columna queda vacía y parece que no hay teléfonos.
+        lote.forEach(u => { delete _RX.contactos[u]; });   // permite reintentar
+        toast('No se pudieron traer los teléfonos: '+(e.message||''),'red');
+        break;
+      }
+    }
+    return hubo;
   }
 
   function _rxPintarFrios(){
@@ -18636,20 +18647,31 @@ async function ejecutarSolicitudPortalSimple(ctx){
     let base=[];
     try{ base = window._crmJugadoresData || (typeof buildCRM==='function'? buildCRM():[]); }catch(_e){ base=[]; }
     const seg=_RX.segFiltro||'FRIO';
-    const arr=base.filter(j=>String(j.segmento).toUpperCase()===seg)
-                  .sort((a,b2)=>(b2.montoCargas||0)-(a.montoCargas||0)).slice(0,300);
-    // Completamos con lo que ya vino de la base; lo que falte se pide y se repinta.
-    arr.forEach(j=>{
+    const crudo=base.filter(j=>String(j.segmento).toUpperCase()===seg)
+                    .sort((a,b2)=>(b2.montoCargas||0)-(a.montoCargas||0)).slice(0,300);
+    // El CRM segmenta con las 200 operaciones que tiene en memoria, así que a alguien
+    // que cargó ayer pero quedó fuera de esa ventana lo da por frío. Pisamos con lo
+    // que dice la base.
+    crudo.forEach(j=>{
       const c=_RX.contactos[String(j.usuario).toLowerCase()];
-      if(c){ if(!j.telefono && c.telefono) j.telefono=c.telefono;
-             if(c.push) j.push=true;
-             if(!j.titular && c.titular) j.titular=c.titular; }
+      if(!c) return;
+      if(!j.telefono && c.telefono) j.telefono=c.telefono;
+      if(c.push) j.push=true;
+      if(!j.titular && c.titular) j.titular=c.titular;
+      if(c.dias!=null){ j.diasUltCarga=c.dias; j._real=true; }
+      if(c.ops>(j.totalOps||0)) j.totalOps=c.ops;
+      if(c.monto_cargas>(j.montoCargas||0)) j.montoCargas=c.monto_cargas;
     });
-    const pedir = arr.map(j=>String(j.usuario).toLowerCase())
-                     .filter(u=>_RX.contactos[u]===undefined);
+    const pedir = crudo.map(j=>String(j.usuario).toLowerCase())
+                       .filter(u=>_RX.contactos[u]===undefined);
     if(pedir.length){
       _rxEnriquecer(pedir).then(hubo=>{ if(hubo && _RX.tab==='frios') _rxPintarFrios(); });
     }
+    // Si operó hace poco no hay nada que recuperar: fuera de la lista.
+    const RECIENTE=15;
+    const activos=crudo.filter(j=>j._real && j.diasUltCarga<=RECIENTE).length;
+    const arr=crudo.filter(j=>!(j._real && j.diasUltCarga<=RECIENTE))
+                   .sort((a,b2)=>(b2.montoCargas||0)-(a.montoCargas||0));
     const sinTel = arr.filter(j=>!j.telefono).length;
     const nF=base.filter(j=>String(j.segmento).toUpperCase()==='FRIO').length;
     const nT=base.filter(j=>String(j.segmento).toUpperCase()==='TIBIO').length;
@@ -18659,8 +18681,9 @@ async function ejecutarSolicitudPortalSimple(ctx){
          <button class="mini-btn ${seg==='TIBIO'?'green':'gray'}" onclick="crmRxSeg('TIBIO')">🌡 Tibios <b>${nT}</b></button>
          <span style="flex:1"></span>
          <span class="small" style="color:#5a6474">Ordenados por lo que cargaron: primero los que más valen.${
-           pedir.length?' · <span style="color:#8b949e">buscando teléfonos…</span>'
-           :(sinTel?' · <b style="color:#8b949e">'+sinTel+' sin teléfono</b>':'')}</span>
+           pedir.length?' · <span style="color:#8b949e">verificando contra la base…</span>'
+           :((activos?' · <b style="color:#12b76a">'+activos+' salieron: ya están operando</b>':'')
+             +(sinTel?' · <b style="color:#8b949e">'+sinTel+' sin teléfono</b>':''))}</span>
        </div>`
     + (!arr.length
        ? '<div class="alert-box" style="padding:14px">No hay jugadores en este segmento. Probá 🔄 Recalcular en el CRM.</div>'
