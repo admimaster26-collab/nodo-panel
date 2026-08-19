@@ -8488,35 +8488,35 @@ async function callDrex(method, ...args){
 //      avisar al operador con un toast informativo (cross-oficina detectado).
 //   3) Si NO existe en ninguna → crear en la pc actual con origen 'AUTO_CARGA'.
 // Corre en SEGUNDO PLANO: nunca usar await desde el flujo de carga.
+// ══════════════════════════════════════════════════════════════════════════════
+// AUTO-REGISTRO — DESACTIVADO (2026-08-15). No borrar sin leer esto.
+//
+// Escribía directo en la tabla `usuarios` con supabaseClient.from().insert(), y eso
+// va contra el modelo de seguridad del portal: el anon NO escribe directo, las
+// escrituras van por RPC. Verificado en la base: `usuarios` tiene RLS activo y CERO
+// políticas, así que para el panel está todo denegado — el INSERT y también el SELECT.
+//
+// Consecuencia: la función no hacía NINGUNA de sus dos cosas.
+//   · El alta nunca insertó: 0 filas con origen='AUTO_CARGA' en toda la base.
+//   · El aviso "está registrado en oficina P3" nunca se mostró, porque el SELECT
+//     vuelve vacío (RLS no da error al leer, solo devuelve nada) y el código
+//     concluía "no existe en ninguna oficina".
+// Y el error se tragaba en silencio: solo logueaba si NO había error.
+//
+// El costo era real: ~5.400 errores 42501 por día en Postgres, cada uno escrito al
+// log. Con la base en una instancia chica, eso consume E/S que hace falta para operar.
+//
+// Se deja como no-op en vez de borrar las 5 llamadas: no cambia nada en los puntos
+// que la invocan y queda un solo lugar donde revivirla.
+//
+// PARA REACTIVARLA hace falta una RPC SECURITY DEFINER con el guard de siempre
+// (_panel_data_auth(p_secret)), igual que el resto de las escrituras del panel.
+// Antes de escribirla conviene preguntarse si sirve: `usuarios` tiene 149 filas en
+// total y la base real de jugadores es usuarios_portal_vinculos (172.000). Todo lo
+// que el panel lee de `usuarios` también viene vacío por lo mismo.
+// ══════════════════════════════════════════════════════════════════════════════
 async function _autoregistrarUsuarioSiFalta(aliasCasino){
-  if(!aliasCasino) return;
-  try {
-    const { data, error } = await supabaseClient
-      .from('usuarios')
-      .select('id, pc_codigo, usuario')
-      .eq('usuario', aliasCasino)
-      .limit(5);
-    if(error) return;
-    if(data && data.length){
-      // Ya existe en alguna oficina. Si es DISTINTA a la actual, avisar.
-      const pcsExistentes = [...new Set(data.map(x => x.pc_codigo).filter(Boolean))];
-      const esDeOtraOficina = pcsExistentes.length > 0 && !pcsExistentes.includes(pcOperativa);
-      if(esDeOtraOficina){
-        const pcs = pcsExistentes.join(', ');
-        console.log('[auto-registro] "'+aliasCasino+'" pertenece a otra oficina: '+pcs);
-        toast('ℹ️ "'+aliasCasino+'" está registrado en oficina: '+pcs, 'yellow');
-      }
-      return;
-    }
-    // No existe en ninguna oficina → crear en la actual
-    const ins = await supabaseClient.from('usuarios').insert({
-      usuario:   aliasCasino,
-      nombre:    aliasCasino,
-      pc_codigo: pcOperativa,
-      origen:    'AUTO_CARGA'
-    });
-    if(!ins.error) console.log('[auto-registro] usuario "'+aliasCasino+'" agregado a la base ('+pcOperativa+')');
-  } catch(_){}
+  return;   // ver el bloque de arriba
 }
 
 // ── Login modal de Casinodrex ─────────────────────────────────────────────────
@@ -18127,7 +18127,191 @@ async function ejecutarSolicitudPortalSimple(ctx){
     }
   };
   function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=`<div class="alert-box">No hay jugadores para esos filtros.</div>`;return}let html=`<div class="crm-table-wrap"><table><thead><tr><th>Jugador</th><th>Segmento</th><th>Score</th><th>Cargas</th><th>Retiros</th><th>Neto</th><th>Última</th><th>Turno</th><th>Billetera</th><th>Acción</th><th>Acciones</th></tr></thead><tbody>`;arr.forEach(j=>{const uEsc=String(j.usuario).replace(/'/g,"\\'");html+=`<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador('${uEsc}')" title="Abrir perfil completo del jugador"><td><b>${j.usuario}</b> <span title="Push: ${j.push?'sí':'no'}" style="opacity:${j.push?1:.28}">🔔</span><span title="App instalada: ${j.app?'sí':'no'}" style="opacity:${j.app?1:.28}">📱</span><div class="small">${j.totalOps} ops · ${j.origenHabitual}${j.telefono?' · 📱 '+j.telefono:''}${j.titular?' · 👤 '+j.titular:''}${j._wtkOnly?' <span style="color:#7dd3fc;font-weight:900">· WTK'+(j.pcCodigo?' '+j.pcCodigo:'')+'</span>':''}</div></td><td><span class="crm-seg ${clsSeg(j.segmento)}">${j.segmento}</span></td><td><span class="crm-score">${j.score}</span></td><td>${j.cargas}<div class="small">${fmtMoney(j.montoCargas)}</div></td><td>${j.retiros}<div class="small">${fmtMoney(j.montoRetiros)}</div></td><td><b style="color:${j.neto>=0?"#12b76a":"#f04438"}">${fmtMoney(j.neto)}</b></td><td>${j.diasUltCarga>=9999?"—":j.diasUltCarga+" días"}<div class="small">${j.ultimaCarga?new Date(j.ultimaCarga).toLocaleDateString("es-AR"):"sin carga"}</div></td><td>${j.turnoFrecuente}</td><td>${j.billeteraHabitual}</td><td>${j.accion}</td><td onclick="event.stopPropagation()"><div class="crm-actions"><button class="mini-btn blue" onclick="crmCopiarPromo('${uEsc}')">📋 Promo</button><button class="mini-btn green" id="pushBtn_${j.usuario}" onclick="crmPushIndividual('${uEsc}')">📲 Push</button><button class="mini-btn gray" title="Perfil completo (CBUs, titulares, timeline)" onclick="abrirPerfilJugador('${uEsc}')">🌳</button></div></td></tr>`});html+=`</tbody></table></div>`;box.innerHTML=html;const total=document.getElementById("crmTotalVisible");if(total)total.textContent=String(arr.length)}
-  function renderCRM(){installCss();const view=document.getElementById("viewJugadores");if(!view)return;const data=buildCRM();const stats={total:data.length,vip:data.filter(j=>j.segmento==="VIP").length,activos:data.filter(j=>j.segmento==="ACTIVO").length,tibios:data.filter(j=>j.segmento==="TIBIO").length,frios:data.filter(j=>j.segmento==="FRIO").length,nuevos:data.filter(j=>j.segmento==="NUEVO").length};view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn gray" onclick="mostrarBaseLocalJugadores()" title="Base local: teléfonos, CBUs/alias y titulares por jugador">📇 Base local</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="crm-stat-grid"><div class="crm-stat"><div class="k">Total</div><div class="v">${stats.total}</div></div><div class="crm-stat" title="Total de usuarios registrados en la base de Whaticket. Usá el buscador para encontrar cualquiera (no se cargan todos)."><div class="k">Registrados (WTK)</div><div class="v" style="color:#7dd3fc" id="crmWtkTotal">${(window._crmWtkTotal!=null?Number(window._crmWtkTotal).toLocaleString("es-AR"):"…")}</div></div><div class="crm-stat"><div class="k">VIP</div><div class="v" style="color:#fdb022">${stats.vip}</div></div><div class="crm-stat"><div class="k">Activos</div><div class="v" style="color:#12b76a">${stats.activos}</div></div><div class="crm-stat"><div class="k">Tibios</div><div class="v" style="color:#fde68a">${stats.tibios}</div></div><div class="crm-stat"><div class="k">Fríos</div><div class="v" style="color:#f04438">${stats.frios}</div></div><div class="crm-stat"><div class="k">Nuevos</div><div class="v">${stats.nuevos}</div></div></div><div class="card"><h2 class="card-title">🔎 Filtros CRM</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Usuario, billetera, operador..." oninput="crmFiltrar()"><select id="crmSeg" onchange="crmFiltrar()"><option value="">Todos los segmentos</option><option value="VIP">VIP</option><option value="ACTIVO">Activo</option><option value="TIBIO">Tibio</option><option value="FRIO">Frío</option><option value="NUEVO">Nuevo</option></select><select id="crmTurno" onchange="crmFiltrar()"><option value="">Todos los turnos</option><option value="TM">TM 06-14</option><option value="TT">TT 14-22</option><option value="TN">TN 22-06</option></select><select id="crmOrigen" onchange="crmFiltrar()"><option value="">Todos los orígenes</option><option value="AGENTE">Agente (CSV)</option><option value="PORTAL">Portal</option><option value="PANEL">Panel</option><option value="MANUAL">Manual</option><option value="WHATICKET">Whaticket / registro</option></select><select id="crmOrden" onchange="crmFiltrar()"><option value="score">Orden: score</option><option value="ultima">Orden: última operación</option><option value="cargas">Orden: cargas $</option><option value="neto">Orden: neto</option></select><div class="small" style="display:flex;align-items:center">Mostrando: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div>
+  // ══════════════════════════════════════════════════════════════════════════
+  // CRM · RECONEXIÓN Y PREVALIDACIÓN
+  //
+  // RECONECTAR — cola de los que entraron al portal y nunca completaron una operación.
+  // El turno sale de la HORA DEL ÚLTIMO INTENTO del usuario, no de cuándo se trabaja: el que
+  // escribió de madrugada está disponible de madrugada, así que lo toma TN. La cola SE TOMA
+  // (no se asigna): el que marca uno lo saca de la pila del resto, así no se superponen.
+  // Un "no contesta" vuelve a los 3 días para un segundo intento; al segundo, se cierra.
+  // "Recuperado" no se marca a mano: se detecta solo cuando al usuario le aparece una
+  // operación posterior al contacto.
+  //
+  // PREVALIDAR — antes de crear un usuario nuevo. Contesta si ese teléfono ya tiene cuenta acá,
+  // si el alias existe, si ya cobró el bono de primer ingreso y si su CBU aparece en otras
+  // cuentas. Nace del caso de P2: la misma persona pidiendo usuario nuevo para volver a cobrar
+  // el bono — se detectaron 7 cuentas con un mismo CBU, las 7 con bono.
+  // ══════════════════════════════════════════════════════════════════════════
+  const _RX = { turno:'', datos:null, cargando:false };
+
+  function _rxTurnoActual(){
+    const h = new Date().getHours();
+    return (h>=6&&h<14) ? 'TM' : (h>=14&&h<22) ? 'TT' : 'TN';
+  }
+  window.crmAbrirReconexion = async function(turno){
+    _RX.turno = (turno!==undefined) ? turno : _rxTurnoActual();
+    abrirModal('🔁 Reconectar · usuarios que quedaron en el camino',
+      '<div class="load" style="padding:16px;color:#8b949e">Buscando…</div>', null, 'Cerrar');
+    await _rxCargar();
+  };
+  async function _rxCargar(){
+    if(_RX.cargando) return; _RX.cargando = true;
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_reconexion_cola',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo: (typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_turno: _RX.turno || null, p_limit: 300 });
+      if(error) throw new Error(error.message||'no se pudo consultar');
+      if(data && data.ok===false) throw new Error(data.error||'sin datos');
+      _RX.datos = data; _rxPintar();
+    }catch(e){
+      const b=document.getElementById('modalBody');
+      if(b) b.innerHTML='<div class="err-box" style="padding:10px">No se pudo cargar: '+escapeHtml(e.message||'')+'</div>';
+    }finally{ _RX.cargando = false; }
+  }
+  function _rxPintar(){
+    const b=document.getElementById('modalBody'); if(!b||!_RX.datos) return;
+    const d=_RX.datos, r=d.resumen||{}, cola=d.cola||[];
+    const porT={}; (d.por_turno||[]).forEach(x=>porT[x.turno]=x.en_cola);
+    const hechos=(d.trabajado_hoy||[]).reduce((s,x)=>s+Number(x.n||0),0);
+    const tab=(k,lbl)=>`<button class="mini-btn ${_RX.turno===k?'green':'gray'}"
+        onclick="crmRxTurno('${k}')">${lbl}${porT[k]!=null?' <b>'+porT[k]+'</b>':''}</button>`;
+    b.innerHTML =
+      `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+         ${tab('TM','TM 06-14')} ${tab('TT','TT 14-22')} ${tab('TN','TN 22-06')}
+         <button class="mini-btn ${_RX.turno===''?'green':'gray'}" onclick="crmRxTurno('')">Todos</button>
+         <span style="flex:1"></span>
+         <span class="small" style="color:#8b949e">
+           <b style="color:#e6edf3">${cola.length}</b> en cola ·
+           ${r.con_push||0} con push · ${hechos} marcados hoy ·
+           <b style="color:#22c55e">${d.recuperados||0}</b> recuperados</span>
+       </div>`
+    + (!cola.length
+       ? '<div class="alert-box" style="padding:14px">Sin pendientes en este turno. 👌</div>'
+       : `<div style="max-height:56vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="position:sticky;top:0;background:#161b26;z-index:1">
+            <th style="padding:7px;text-align:left">Usuario</th>
+            <th style="padding:7px;text-align:left">Teléfono</th>
+            <th style="padding:7px">Canal</th><th style="padding:7px">Hace</th>
+            <th style="padding:7px">Intentos</th><th style="padding:7px">Acciones</th></tr></thead><tbody>${
+          cola.map(c=>{
+            const u=String(c.usuario).replace(/'/g,"\\'");
+            const tel=String(c.telefono||'').replace(/\D/g,'');
+            return `<tr style="border-top:1px solid #21283a">
+             <td style="padding:6px 7px"><b>${escapeHtml(c.usuario)}</b>
+               <div class="small" style="color:#5a6474">${escapeHtml(c.tipo||'')}${c.atendio?' · '+escapeHtml(c.atendio):''}</div></td>
+             <td style="padding:6px 7px;font-family:ui-monospace,monospace">${escapeHtml(c.telefono||'—')}</td>
+             <td style="padding:6px 7px;text-align:center">${c.push
+                ? '<span style="background:rgba(111,143,208,.18);color:#8fa9e0;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">PUSH</span>'
+                : '<span style="background:#22303f;color:#8b949e;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">WHATSAPP</span>'}</td>
+             <td style="padding:6px 7px;text-align:center;color:#8b949e">${c.dias===0?'hoy':c.dias+' d'}</td>
+             <td style="padding:6px 7px;text-align:center">${Number(c.intentos)>0
+                ? '<span style="background:rgba(245,197,24,.16);color:#f5c518;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:800">2º intento</span>'
+                : '<span style="color:#5a6474">1º</span>'}</td>
+             <td style="padding:6px 7px;text-align:right;white-space:nowrap">
+               ${c.push?`<button class="mini-btn green" onclick="crmPushIndividual('${u}')" title="Mandarle una notificación">📲</button>`:''}
+               ${tel?`<button class="mini-btn blue" onclick="window.open('https://wa.me/${tel}','_blank')" title="Abrir WhatsApp">💬</button>`:''}
+               <button class="mini-btn gray" onclick="abrirPerfilJugador('${u}')" title="Ver ficha">🌳</button>
+               <button class="mini-btn yellow" onclick="crmRxMarcar('${u}','CONTACTADO','${c.canal}')" title="Ya lo contacté">✓</button>
+               <button class="mini-btn red" onclick="crmRxMarcar('${u}','NO_CONTESTA','${c.canal}')" title="No contesta">✕</button>
+             </td></tr>`;}).join('')}</tbody></table></div>
+          <div class="small" style="color:#5a6474;margin-top:8px">
+            ✓ marca contactado y lo saca de la cola · ✕ no contesta, vuelve en 3 días para un
+            segundo intento · «recuperado» se detecta solo cuando el usuario opera.</div>`);
+  }
+  window.crmRxTurno = function(t){ _RX.turno=t; _rxCargar(); };
+  window.crmRxMarcar = async function(usuario, estado, canal){
+    try{
+      // Variante con secreto del panel: el operador no tiene sesión de Admi, así que no puede
+      // usar admin_od_reconexion_marcar. Queda registrado quién marcó, leído de Chunior.
+      const quien = (typeof operador!=='undefined' && operador)
+        ? (operador.usuario || operador.nombre || '') : '';
+      const { data, error } = await supabaseClient.rpc('panel_reconexion_marcar',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_usuario: usuario, p_estado: estado, p_canal: canal||null,
+        p_nota: null, p_operador: quien||null });
+      if(error) throw new Error(error.message||'no se pudo marcar');
+      if(data && data.ok===false) throw new Error(data.error||'no se pudo marcar');
+      toast(estado==='CONTACTADO' ? ('✓ '+usuario+' contactado')
+            : (data && data.cerrado) ? ('✕ '+usuario+' · 2º intento, se cierra')
+            : ('✕ '+usuario+' · vuelve en 3 días'),
+            estado==='CONTACTADO'?'green':'yellow');
+      _rxCargar();
+    }catch(e){ toast('No se pudo marcar: '+(e.message||''),'red'); }
+  };
+
+  // ── Prevalidar antes de crear ─────────────────────────────────────────────
+  window.crmAbrirPrevalidar = function(){
+    abrirModal('✅ Prevalidar antes de crear un usuario',
+      `<div style="display:flex;flex-direction:column;gap:9px">
+         <div class="small" style="color:#8b949e">Antes de dar de alta, chequeá si esa persona ya
+           tiene cuenta. Con el teléfono alcanza; el usuario que pide es opcional.</div>
+         <div style="display:flex;gap:8px;flex-wrap:wrap">
+           <input id="pvTel" placeholder="Teléfono" inputmode="numeric"
+                  style="flex:1;min-width:170px;height:38px;padding:0 10px">
+           <input id="pvUsr" placeholder="Usuario que pide (opcional)"
+                  style="flex:1;min-width:170px;height:38px;padding:0 10px">
+           <button class="mini-btn green" style="height:38px;padding:0 16px" onclick="crmPrevalidar()">Consultar</button>
+         </div>
+         <div id="pvOut"></div>
+       </div>`, null, 'Cerrar');
+    setTimeout(()=>{ const t=document.getElementById('pvTel'); if(t) t.focus(); },80);
+    const go=e=>{ if(e.key==='Enter') window.crmPrevalidar(); };
+    setTimeout(()=>{ ['pvTel','pvUsr'].forEach(i=>{const el=document.getElementById(i); if(el) el.addEventListener('keydown',go);}); },80);
+  };
+  window.crmPrevalidar = async function(){
+    const out=document.getElementById('pvOut'); if(!out) return;
+    const tel=(document.getElementById('pvTel')||{}).value||'';
+    const usr=(document.getElementById('pvUsr')||{}).value||'';
+    if(!String(tel).replace(/\D/g,'') && !String(usr).trim()){
+      out.innerHTML='<div class="alert-box" style="padding:9px">Poné al menos el teléfono o el usuario.</div>'; return; }
+    out.innerHTML='<div class="small" style="color:#8b949e;padding:9px">Consultando…</div>';
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||'',
+        p_telefono: tel||null, p_usuario: usr||null });
+      if(error) throw new Error(error.message||'falló la consulta');
+      if(!data || data.ok===false) throw new Error((data&&data.error)||'sin datos');
+      const col = data.veredicto==='LIBRE' ? '#22c55e' : data.veredicto==='YA_EXISTE' ? '#ef4444' : '#f5c518';
+      const txt = data.veredicto==='LIBRE' ? 'SE PUEDE CREAR'
+                : data.veredicto==='YA_EXISTE' ? 'YA TIENE CUENTA — NO CREAR' : 'REVISAR ANTES DE CREAR';
+      out.innerHTML =
+        `<div style="border:1.5px solid ${col};background:${col}14;border-radius:10px;padding:11px 13px">
+           <div style="font-weight:900;color:${col};font-size:15px">${txt}</div>
+           <ul style="margin:7px 0 0;padding-left:19px;font-size:13px">${
+             (data.motivos||[]).map(m=>`<li style="margin:3px 0;color:${
+               m.nivel==='ALTO'?'#fca5a5':m.nivel==='MEDIO'?'#fde68a':m.nivel==='OK'?'#86efac':'#8b949e'
+             }">${escapeHtml(m.texto)}</li>`).join('')}</ul>
+         </div>`
+      + ((data.cuentas||[]).length
+        ? `<div style="margin-top:10px"><div class="small" style="color:#8b949e;margin-bottom:4px">Cuentas de ese teléfono</div>
+           <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+             <thead><tr><th style="text-align:left;padding:5px">Ofi</th><th style="text-align:left;padding:5px">Usuario</th>
+               <th style="padding:5px">Estado</th><th style="padding:5px">Cargas</th><th style="padding:5px">Retiros</th>
+               <th style="padding:5px">Bonos</th><th style="padding:5px"></th></tr></thead><tbody>${
+             data.cuentas.map(c=>`<tr style="border-top:1px solid #21283a;${c.misma_oficina?'background:rgba(239,68,68,.07)':''}">
+               <td style="padding:5px;font-family:ui-monospace,monospace;font-weight:700">${escapeHtml(c.pc)}</td>
+               <td style="padding:5px"><b>${escapeHtml(c.usuario)}</b></td>
+               <td style="padding:5px;text-align:center;color:#8b949e">${escapeHtml(c.estado||'—')}</td>
+               <td style="padding:5px;text-align:center">${c.cargas||0}</td>
+               <td style="padding:5px;text-align:center">${c.retiros||0}</td>
+               <td style="padding:5px;text-align:center">${Number(c.bonos)?'<b style="color:#f5c518">'+c.bonos+'</b>':'0'}</td>
+               <td style="padding:5px;text-align:right"><button class="mini-btn gray"
+                   onclick="abrirPerfilJugador('${String(c.usuario).replace(/'/g,"\\'")}')">🌳</button></td>
+             </tr>`).join('')}</tbody></table></div>` : '')
+      + ((data.cbus||[]).length
+        ? `<div style="margin-top:10px"><div class="small" style="color:#8b949e;margin-bottom:4px">CBU compartido con otras cuentas</div>${
+           data.cbus.map(c=>`<div style="background:#1a1f2b;border:1px solid #2a3344;border-radius:7px;padding:8px 10px;margin-bottom:5px">
+             <div style="font-family:ui-monospace,monospace;font-size:12px">${escapeHtml(c.cbu)}${c.titular?' · <b>'+escapeHtml(c.titular)+'</b>':''}</div>
+             <div class="small" style="color:#fca5a5;margin-top:2px">${c.cuentas} cuentas: ${escapeHtml(c.usuarios||'')}</div>
+           </div>`).join('')}</div>` : '');
+    }catch(e){ out.innerHTML='<div class="err-box" style="padding:9px">'+escapeHtml(e.message||'error')+'</div>'; }
+  };
+
+  function renderCRM(){installCss();const view=document.getElementById("viewJugadores");if(!view)return;const data=buildCRM();const stats={total:data.length,vip:data.filter(j=>j.segmento==="VIP").length,activos:data.filter(j=>j.segmento==="ACTIVO").length,tibios:data.filter(j=>j.segmento==="TIBIO").length,frios:data.filter(j=>j.segmento==="FRIO").length,nuevos:data.filter(j=>j.segmento==="NUEVO").length};view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn green" onclick="crmAbrirReconexion()" title="Usuarios que entraron al portal y nunca completaron una operación — cola de tu turno">🔁 Reconectar</button><button class="mini-btn yellow" onclick="crmAbrirPrevalidar()" title="Antes de crear un usuario: chequear si ese teléfono ya tiene cuenta, si ya cobró el bono o si su CBU está en otras cuentas">✅ Prevalidar</button><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn gray" onclick="mostrarBaseLocalJugadores()" title="Base local: teléfonos, CBUs/alias y titulares por jugador">📇 Base local</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="crm-stat-grid"><div class="crm-stat"><div class="k">Total</div><div class="v">${stats.total}</div></div><div class="crm-stat" title="Total de usuarios registrados en la base de Whaticket. Usá el buscador para encontrar cualquiera (no se cargan todos)."><div class="k">Registrados (WTK)</div><div class="v" style="color:#7dd3fc" id="crmWtkTotal">${(window._crmWtkTotal!=null?Number(window._crmWtkTotal).toLocaleString("es-AR"):"…")}</div></div><div class="crm-stat"><div class="k">VIP</div><div class="v" style="color:#fdb022">${stats.vip}</div></div><div class="crm-stat"><div class="k">Activos</div><div class="v" style="color:#12b76a">${stats.activos}</div></div><div class="crm-stat"><div class="k">Tibios</div><div class="v" style="color:#fde68a">${stats.tibios}</div></div><div class="crm-stat"><div class="k">Fríos</div><div class="v" style="color:#f04438">${stats.frios}</div></div><div class="crm-stat"><div class="k">Nuevos</div><div class="v">${stats.nuevos}</div></div></div><div class="card"><h2 class="card-title">🔎 Filtros CRM</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Usuario, billetera, operador..." oninput="crmFiltrar()"><select id="crmSeg" onchange="crmFiltrar()"><option value="">Todos los segmentos</option><option value="VIP">VIP</option><option value="ACTIVO">Activo</option><option value="TIBIO">Tibio</option><option value="FRIO">Frío</option><option value="NUEVO">Nuevo</option></select><select id="crmTurno" onchange="crmFiltrar()"><option value="">Todos los turnos</option><option value="TM">TM 06-14</option><option value="TT">TT 14-22</option><option value="TN">TN 22-06</option></select><select id="crmOrigen" onchange="crmFiltrar()"><option value="">Todos los orígenes</option><option value="AGENTE">Agente (CSV)</option><option value="PORTAL">Portal</option><option value="PANEL">Panel</option><option value="MANUAL">Manual</option><option value="WHATICKET">Whaticket / registro</option></select><select id="crmOrden" onchange="crmFiltrar()"><option value="score">Orden: score</option><option value="ultima">Orden: última operación</option><option value="cargas">Orden: cargas $</option><option value="neto">Orden: neto</option></select><div class="small" style="display:flex;align-items:center">Mostrando: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div>
     <div class="card" style="margin-top:14px">
       <h2 class="card-title">📣 Campaña Push</h2>
       <div class="small" style="color:var(--muted);margin-bottom:14px">Enviá una notificación push a un segmento de jugadores que tengan el portal instalado.</div>

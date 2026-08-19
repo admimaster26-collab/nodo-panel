@@ -870,7 +870,11 @@ const PANEL_RPC_ALLOW = new Set([
   'panel_core_get_chat_mensajes_json',
   'panel_v154_plus_get_chat_mensajes',
   'panel_core_enviar_chat_json',
-  'panel_v154_plus_enviar_chat'
+  'panel_v154_plus_enviar_chat',
+  // CRM · reconexión y prevalidación (v1.1.61)
+  'panel_reconexion_cola',
+  'panel_reconexion_marcar',
+  'panel_prevalidar_usuario'
 ]);
 
 ipcMain.handle('panel:rpc', async (_event, arg1, arg2 = {}) => {
