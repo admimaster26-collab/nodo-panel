@@ -18613,6 +18613,24 @@ async function ejecutarSolicitudPortalSimple(ctx){
 
   // ── Fríos y tibios ───────────────────────────────────────────────────────
   // Salen del CRM que ya está calculado en memoria; no hace falta ir a la base.
+  // El CRM en memoria casi nunca trae el teléfono (Whaticket son 170k filas y no se
+  // carga entera). Lo pedimos para los que se están viendo y lo guardamos acá.
+  _RX.contactos = _RX.contactos || {};
+  async function _rxEnriquecer(usuarios){
+    const faltan = usuarios.filter(u => _RX.contactos[u] === undefined).slice(0,500);
+    if(!faltan.length) return false;
+    faltan.forEach(u => { _RX.contactos[u] = null; });   // marca "pedido", evita repetir
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_usuarios_contacto',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_usuarios: faltan });
+      if(error || !data || data.ok===false) return false;
+      (data.usuarios||[]).forEach(x => { _RX.contactos[String(x.usuario).toLowerCase()] = x; });
+      return true;
+    }catch(_e){ return false; }
+  }
+
   function _rxPintarFrios(){
     const b=_rxDestino(); if(!b) return;
     let base=[];
@@ -18620,6 +18638,19 @@ async function ejecutarSolicitudPortalSimple(ctx){
     const seg=_RX.segFiltro||'FRIO';
     const arr=base.filter(j=>String(j.segmento).toUpperCase()===seg)
                   .sort((a,b2)=>(b2.montoCargas||0)-(a.montoCargas||0)).slice(0,300);
+    // Completamos con lo que ya vino de la base; lo que falte se pide y se repinta.
+    arr.forEach(j=>{
+      const c=_RX.contactos[String(j.usuario).toLowerCase()];
+      if(c){ if(!j.telefono && c.telefono) j.telefono=c.telefono;
+             if(c.push) j.push=true;
+             if(!j.titular && c.titular) j.titular=c.titular; }
+    });
+    const pedir = arr.map(j=>String(j.usuario).toLowerCase())
+                     .filter(u=>_RX.contactos[u]===undefined);
+    if(pedir.length){
+      _rxEnriquecer(pedir).then(hubo=>{ if(hubo && _RX.tab==='frios') _rxPintarFrios(); });
+    }
+    const sinTel = arr.filter(j=>!j.telefono).length;
     const nF=base.filter(j=>String(j.segmento).toUpperCase()==='FRIO').length;
     const nT=base.filter(j=>String(j.segmento).toUpperCase()==='TIBIO').length;
     b.innerHTML =
@@ -18627,7 +18658,9 @@ async function ejecutarSolicitudPortalSimple(ctx){
          <button class="mini-btn ${seg==='FRIO'?'green':'gray'}" onclick="crmRxSeg('FRIO')">❄ Fríos <b>${nF}</b></button>
          <button class="mini-btn ${seg==='TIBIO'?'green':'gray'}" onclick="crmRxSeg('TIBIO')">🌡 Tibios <b>${nT}</b></button>
          <span style="flex:1"></span>
-         <span class="small" style="color:#5a6474">Ordenados por lo que cargaron: primero los que más valen.</span>
+         <span class="small" style="color:#5a6474">Ordenados por lo que cargaron: primero los que más valen.${
+           pedir.length?' · <span style="color:#8b949e">buscando teléfonos…</span>'
+           :(sinTel?' · <b style="color:#8b949e">'+sinTel+' sin teléfono</b>':'')}</span>
        </div>`
     + (!arr.length
        ? '<div class="alert-box" style="padding:14px">No hay jugadores en este segmento. Probá 🔄 Recalcular en el CRM.</div>'
