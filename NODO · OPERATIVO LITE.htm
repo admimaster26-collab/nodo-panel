@@ -8132,7 +8132,8 @@ function abrirModalVincular(usuarioSugerido, telefono, prefill, desdeChat){
      <input id="vincUsuarioInp" type="text" value="${valUsuario}" placeholder="usuario que creaste en el casino" autocomplete="off" oninput="_altaCotejoTrigger()">
      <label style="margin-top:6px">Teléfono (el que ingresó en el portal)</label>
      <input id="vincTelInp" type="text" value="${escV(telefono)}" placeholder="con código de área" autocomplete="off" oninput="_altaCotejoTrigger()">
-     <div id="altaCotejoBox" style="margin-top:8px"></div>`,
+     <div id="altaCotejoBox" style="margin-top:8px"></div>
+     <div id="altaPrevalBox" style="margin-top:8px"></div>`,
     async function(){
       const u=String((document.getElementById("vincUsuarioInp")||{}).value||"").trim();
       const tel=String((document.getElementById("vincTelInp")||{}).value||"").trim();
@@ -8279,7 +8280,57 @@ let _altaCotejoTimer=null;
 window._altaCotejoTrigger=function(){
   try{ clearTimeout(_altaCotejoTimer); }catch(_e){}
   _altaCotejoTimer=setTimeout(_altaCotejoRender, 500);
+  // La prevalidación va acá adentro: antes de validar hay que saber si ese teléfono ya
+  // tiene cuenta, si ya cobró el bono o si su CBU aparece en otras. Antes vivía en el
+  // CRM, en otra pantalla, y en la práctica nadie la abría antes de dar de alta.
+  try{ clearTimeout(window._altaPrevalTimer); }catch(_e){}
+  window._altaPrevalTimer=setTimeout(_altaPrevalRender, 650);
 };
+
+async function _altaPrevalRender(){
+  const box=document.getElementById('altaPrevalBox'); if(!box) return;
+  const tel=String((document.getElementById('vincTelInp')||{}).value||'').trim();
+  const usr=String((document.getElementById('vincUsuarioInp')||{}).value||'').trim();
+  if(tel.replace(/\D/g,'').length < 8){ box.innerHTML=''; return; }
+  const marca=tel+'|'+usr;
+  if(box.__ultima===marca) return;            // no repreguntar por lo mismo
+  box.__ultima=marca;
+  box.innerHTML='<div class="small" style="color:#8b949e">Chequeando antecedentes…</div>';
+  try{
+    const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
+      p_secret: window.PANEL_DATA_SECRET,
+      p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+      p_telefono: tel, p_usuario: usr||null });
+    if(box.__ultima!==marca) return;           // el operador siguió escribiendo
+    if(error) throw new Error(error.message||'');
+    if(data && data.ok===false) throw new Error(data.error||'');
+    const v=String(data.veredicto||'').toUpperCase();
+    if(v==='LIBRE'){
+      box.innerHTML='<div style="border-left:3px solid #12b76a;padding:3px 0 3px 10px">'
+        +'<b style="color:#12b76a;font-size:12px">SIN ANTECEDENTES</b>'
+        +'<div class="small" style="color:#8b949e">Ese teléfono no figura. Podés validar tranquilo.</div></div>';
+      return;
+    }
+    const col = v==='YA_EXISTE' ? '#f5c518' : '#f04438';
+    const tit = v==='YA_EXISTE' ? 'ESE TELÉFONO YA TIENE CUENTA' : 'REVISAR ANTES DE VALIDAR';
+    box.innerHTML =
+      `<div style="border:1px solid ${col}55;background:${col}12;border-radius:7px;padding:9px 11px">
+         <b style="color:${col};font-size:12.5px">⚠ ${tit}</b>`
+      + (data.motivos||[]).map(m=>{
+          const n=String(m.nivel||m.gravedad||'').toUpperCase();
+          const c=n==='ALTO'?'#f04438':(n==='MEDIO'?'#f5c518':'#8b949e');
+          return `<div class="small" style="color:#c9d1d9;margin-top:4px">
+                    <b style="color:${c}">${escapeHtml(n||'INFO')}</b> · ${escapeHtml(m.detalle||m.texto||m.motivo||'')}</div>`;
+        }).join('')
+      + ((data.cuentas||[]).length
+          ? '<div class="small" style="color:#8b949e;margin-top:5px">Cuentas: '
+            + (data.cuentas||[]).map(x=>'<b style="color:#e6edf3">'+escapeHtml(x.usuario||x)+'</b>').join(' · ')+'</div>'
+          : '')
+      + '<div class="small" style="color:#5a6474;margin-top:5px">Esto informa, no traba: si igual corresponde, validá.</div></div>';
+  }catch(e){
+    box.innerHTML='<div class="small" style="color:#8b949e">No se pudo chequear antecedentes ('+escapeHtml(e.message||'')+')</div>';
+  }
+}
 async function _altaCotejoRender(){
   const box=document.getElementById('altaCotejoBox'); if(!box) return;
   const uInp=String((document.getElementById('vincUsuarioInp')||{}).value||'').trim();
@@ -18031,6 +18082,11 @@ async function ejecutarSolicitudPortalSimple(ctx){
     return lista.filter(x=>S(x.usuario).trim() && !["SOPORTE","CHAT"].includes(U(x.tipo)));
   }
   function buildCRM(){
+    // El CRM abre VACÍO y trabaja por búsqueda. Antes armaba la lista entera al entrar:
+    // en P4 son 4 RPC en cadena (4,2 s) y hasta 2000 filas dibujadas de una, que además
+    // se redibujaban en cada tecla. Eso era lo que tildaba la app.
+    // La lista completa se arma sólo si el operador la pide (📥 Cargar lista).
+    if(!window._crmCargado){ window._crmJugadoresData=[]; return []; }
     const hist=getHistorialBase(), map=new Map();
     hist.forEach(h=>{
       const usuario=S(h.usuario).trim(), key=U(usuario); if(!key)return;
@@ -18126,7 +18182,21 @@ async function ejecutarSolicitudPortalSimple(ctx){
       },400);
     }
   };
-  function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=`<div class="alert-box">No hay jugadores para esos filtros.</div>`;return}let html=`<div class="crm-table-wrap"><table><thead><tr><th>Jugador</th><th>Segmento</th><th>Score</th><th>Cargas</th><th>Retiros</th><th>Neto</th><th>Última</th><th>Turno</th><th>Billetera</th><th>Acción</th><th>Acciones</th></tr></thead><tbody>`;arr.forEach(j=>{const uEsc=String(j.usuario).replace(/'/g,"\\'");html+=`<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador('${uEsc}')" title="Abrir perfil completo del jugador"><td><b>${j.usuario}</b> <span title="Push: ${j.push?'sí':'no'}" style="opacity:${j.push?1:.28}">🔔</span><span title="App instalada: ${j.app?'sí':'no'}" style="opacity:${j.app?1:.28}">📱</span><div class="small">${j.totalOps} ops · ${j.origenHabitual}${j.telefono?' · 📱 '+j.telefono:''}${j.titular?' · 👤 '+j.titular:''}${j._wtkOnly?' <span style="color:#7dd3fc;font-weight:900">· WTK'+(j.pcCodigo?' '+j.pcCodigo:'')+'</span>':''}</div></td><td><span class="crm-seg ${clsSeg(j.segmento)}">${j.segmento}</span></td><td><span class="crm-score">${j.score}</span></td><td>${j.cargas}<div class="small">${fmtMoney(j.montoCargas)}</div></td><td>${j.retiros}<div class="small">${fmtMoney(j.montoRetiros)}</div></td><td><b style="color:${j.neto>=0?"#12b76a":"#f04438"}">${fmtMoney(j.neto)}</b></td><td>${j.diasUltCarga>=9999?"—":j.diasUltCarga+" días"}<div class="small">${j.ultimaCarga?new Date(j.ultimaCarga).toLocaleDateString("es-AR"):"sin carga"}</div></td><td>${j.turnoFrecuente}</td><td>${j.billeteraHabitual}</td><td>${j.accion}</td><td onclick="event.stopPropagation()"><div class="crm-actions"><button class="mini-btn blue" onclick="crmCopiarPromo('${uEsc}')">📋 Promo</button><button class="mini-btn green" id="pushBtn_${j.usuario}" onclick="crmPushIndividual('${uEsc}')">📲 Push</button><button class="mini-btn blue" title="Escribirle por WhatsApp con el mensaje de recuperación" onclick="crmContactar('${uEsc}')">💬</button><button class="mini-btn yellow" title="Prevalidar: ver si ya tiene otra cuenta, si cobró el bono o si su CBU se repite" onclick="crmPrevalidarRapido('${uEsc}')">✅</button><button class="mini-btn gray" title="Perfil completo (CBUs, titulares, timeline)" onclick="abrirPerfilJugador('${uEsc}')">🌳</button></div></td></tr>`});html+=`</tbody></table></div>`;box.innerHTML=html;const total=document.getElementById("crmTotalVisible");if(total)total.textContent=String(arr.length)}
+  function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=(window._crmCargado?`<div class="alert-box">No hay jugadores para esos filtros.</div>`:`<div class="alert-box" style="padding:16px;line-height:1.7"><b>Escribí en el buscador</b> para encontrar a cualquiera de los registrados — la búsqueda va al servidor, no hace falta cargar nada.<br><span class="small" style="color:#8b949e">Si necesitás la lista entera de la oficina, usá <b>📥 Cargar lista</b> arriba. Tarda unos segundos.</span></div>`);return}
+  // De a 50: dibujar 2000 filas juntas, y encima en cada tecla, era lo que trababa la app.
+  const _tope=window._crmTope||50, _hay=arr.length; arr=arr.slice(0,_tope);
+  let html=`<div class="crm-table-wrap"><table><thead><tr><th>Jugador</th><th>Segmento</th><th>Score</th><th>Cargas</th><th>Retiros</th><th>Neto</th><th>Última</th><th>Turno</th><th>Billetera</th><th>Acción</th><th>Acciones</th></tr></thead><tbody>`;arr.forEach(j=>{const uEsc=String(j.usuario).replace(/'/g,"\\'");html+=`<tr class="crm-row" style="cursor:pointer" onclick="abrirPerfilJugador('${uEsc}')" title="Abrir perfil completo del jugador"><td><b>${j.usuario}</b> <span title="Push: ${j.push?'sí':'no'}" style="opacity:${j.push?1:.28}">🔔</span><span title="App instalada: ${j.app?'sí':'no'}" style="opacity:${j.app?1:.28}">📱</span><div class="small">${j.totalOps} ops · ${j.origenHabitual}${j.telefono?' · 📱 '+j.telefono:''}${j.titular?' · 👤 '+j.titular:''}${j._wtkOnly?' <span style="color:#7dd3fc;font-weight:900">· WTK'+(j.pcCodigo?' '+j.pcCodigo:'')+'</span>':''}</div></td><td><span class="crm-seg ${clsSeg(j.segmento)}">${j.segmento}</span></td><td><span class="crm-score">${j.score}</span></td><td>${j.cargas}<div class="small">${fmtMoney(j.montoCargas)}</div></td><td>${j.retiros}<div class="small">${fmtMoney(j.montoRetiros)}</div></td><td><b style="color:${j.neto>=0?"#12b76a":"#f04438"}">${fmtMoney(j.neto)}</b></td><td>${j.diasUltCarga>=9999?"—":j.diasUltCarga+" días"}<div class="small">${j.ultimaCarga?new Date(j.ultimaCarga).toLocaleDateString("es-AR"):"sin carga"}</div></td><td>${j.turnoFrecuente}</td><td>${j.billeteraHabitual}</td><td>${j.accion}</td><td onclick="event.stopPropagation()"><div class="crm-actions"><button class="mini-btn blue" onclick="crmCopiarPromo('${uEsc}')">📋 Promo</button><button class="mini-btn green" id="pushBtn_${j.usuario}" onclick="crmPushIndividual('${uEsc}')">📲 Push</button><button class="mini-btn blue" title="Escribirle por WhatsApp con el mensaje de recuperación" onclick="crmContactar('${uEsc}')">💬</button><button class="mini-btn yellow" title="Prevalidar: ver si ya tiene otra cuenta, si cobró el bono o si su CBU se repite" onclick="crmPrevalidarRapido('${uEsc}')">✅</button><button class="mini-btn gray" title="Perfil completo (CBUs, titulares, timeline)" onclick="abrirPerfilJugador('${uEsc}')">🌳</button></div></td></tr>`});html+=`</tbody></table></div>`;
+  if(_hay>arr.length) html+=`<div style="text-align:center;padding:10px">
+      <button class="mini-btn gray" onclick="crmVerMas()">Ver 50 más · quedan ${_hay-arr.length}</button></div>`;
+  box.innerHTML=html;const total=document.getElementById("crmTotalVisible");
+  if(total)total.textContent=(_hay>arr.length? (arr.length+" de "+_hay) : String(_hay))}
+window.crmVerMas=function(){ window._crmTope=(window._crmTope||50)+50; crmFiltrar(); };
+// Espera a que dejes de escribir: antes filtraba y redibujaba en cada tecla.
+window.crmBuscarDebounce=function(){
+  window._crmTope=50;                                  // texto nuevo, arranca de arriba
+  clearTimeout(window._crmTeclaTimer);
+  window._crmTeclaTimer=setTimeout(function(){ try{ crmFiltrar(); }catch(_e){} }, 350);
+};
   // ══════════════════════════════════════════════════════════════════════════
   // CRM · RECONEXIÓN Y PREVALIDACIÓN
   //
@@ -18860,7 +18930,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
     }catch(e){ out.innerHTML='<div class="err-box" style="padding:9px">'+escapeHtml(e.message||'error')+'</div>'; }
   };
 
-  function renderCRM(){installCss();const view=document.getElementById("viewJugadores");if(!view)return;const data=buildCRM();const stats={total:data.length,vip:data.filter(j=>j.segmento==="VIP").length,activos:data.filter(j=>j.segmento==="ACTIVO").length,tibios:data.filter(j=>j.segmento==="TIBIO").length,frios:data.filter(j=>j.segmento==="FRIO").length,nuevos:data.filter(j=>j.segmento==="NUEVO").length};view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn green" onclick="crmAbrirReconexion()" title="Usuarios que entraron al portal y nunca completaron una operación — cola de tu turno">🔁 Reconectar</button><button class="mini-btn yellow" onclick="crmAbrirPrevalidar()" title="Antes de crear un usuario: chequear si ese teléfono ya tiene cuenta, si ya cobró el bono o si su CBU está en otras cuentas">✅ Prevalidar</button><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn gray" onclick="mostrarBaseLocalJugadores()" title="Base local: teléfonos, CBUs/alias y titulares por jugador">📇 Base local</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="crm-stat-grid"><div class="crm-stat"><div class="k">Total</div><div class="v">${stats.total}</div></div><div class="crm-stat" title="Total de usuarios registrados en la base de Whaticket. Usá el buscador para encontrar cualquiera (no se cargan todos)."><div class="k">Registrados (WTK)</div><div class="v" style="color:#7dd3fc" id="crmWtkTotal">${(window._crmWtkTotal!=null?Number(window._crmWtkTotal).toLocaleString("es-AR"):"…")}</div></div><div class="crm-stat"><div class="k">VIP</div><div class="v" style="color:#fdb022">${stats.vip}</div></div><div class="crm-stat"><div class="k">Activos</div><div class="v" style="color:#12b76a">${stats.activos}</div></div><div class="crm-stat"><div class="k">Tibios</div><div class="v" style="color:#fde68a">${stats.tibios}</div></div><div class="crm-stat"><div class="k">Fríos</div><div class="v" style="color:#f04438">${stats.frios}</div></div><div class="crm-stat"><div class="k">Nuevos</div><div class="v">${stats.nuevos}</div></div></div><div class="card"><h2 class="card-title">🔎 Filtros CRM</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Usuario, billetera, operador..." oninput="crmFiltrar()"><select id="crmSeg" onchange="crmFiltrar()"><option value="">Todos los segmentos</option><option value="VIP">VIP</option><option value="ACTIVO">Activo</option><option value="TIBIO">Tibio</option><option value="FRIO">Frío</option><option value="NUEVO">Nuevo</option></select><select id="crmTurno" onchange="crmFiltrar()"><option value="">Todos los turnos</option><option value="TM">TM 06-14</option><option value="TT">TT 14-22</option><option value="TN">TN 22-06</option></select><select id="crmOrigen" onchange="crmFiltrar()"><option value="">Todos los orígenes</option><option value="AGENTE">Agente (CSV)</option><option value="PORTAL">Portal</option><option value="PANEL">Panel</option><option value="MANUAL">Manual</option><option value="WHATICKET">Whaticket / registro</option></select><select id="crmOrden" onchange="crmFiltrar()"><option value="score">Orden: score</option><option value="ultima">Orden: última operación</option><option value="cargas">Orden: cargas $</option><option value="neto">Orden: neto</option></select><div class="small" style="display:flex;align-items:center">Mostrando: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div>
+  function renderCRM(){installCss();const view=document.getElementById("viewJugadores");if(!view)return;const data=buildCRM();const stats={total:data.length,vip:data.filter(j=>j.segmento==="VIP").length,activos:data.filter(j=>j.segmento==="ACTIVO").length,tibios:data.filter(j=>j.segmento==="TIBIO").length,frios:data.filter(j=>j.segmento==="FRIO").length,nuevos:data.filter(j=>j.segmento==="NUEVO").length};view.innerHTML=`<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:14px"><div><h1 style="font-size:26px">🏅 Jugadores / CRM operativo</h1><div class="small">Segmentación interna calculada desde historial. Luego se conecta al portal para promos.</div></div><div style="display:flex;gap:8px"><button class="mini-btn green" onclick="crmAbrirReconexion()" title="Usuarios que entraron al portal y nunca completaron una operación — cola de tu turno">🔁 Reconectar</button><button class="mini-btn ${window._crmCargado?'gray':'yellow'}" onclick="crmCargarLista()" title="Arma la lista completa de la oficina. Tarda unos segundos: normalmente alcanza con buscar.">📥 ${window._crmCargado?'Recargar lista':'Cargar lista'}</button><button class="mini-btn gray" onclick="mostrarBlacklist24h()" id="btnVerBlacklist" title="Usuarios con retiros en las últimas 24hs">🚫 Blacklist 24hs</button><button class="mini-btn gray" onclick="mostrarBaseLocalJugadores()" title="Base local: teléfonos, CBUs/alias y titulares por jugador">📇 Base local</button><button class="mini-btn blue" onclick="cargarJugadores()">🔄 Recalcular</button></div></div><div class="crm-stat-grid"><div class="crm-stat"><div class="k">Total</div><div class="v">${stats.total}</div></div><div class="crm-stat" title="Total de usuarios registrados en la base de Whaticket. Usá el buscador para encontrar cualquiera (no se cargan todos)."><div class="k">Registrados (WTK)</div><div class="v" style="color:#7dd3fc" id="crmWtkTotal">${(window._crmWtkTotal!=null?Number(window._crmWtkTotal).toLocaleString("es-AR"):"…")}</div></div><div class="crm-stat"><div class="k">VIP</div><div class="v" style="color:#fdb022">${stats.vip}</div></div><div class="crm-stat"><div class="k">Activos</div><div class="v" style="color:#12b76a">${stats.activos}</div></div><div class="crm-stat"><div class="k">Tibios</div><div class="v" style="color:#fde68a">${stats.tibios}</div></div><div class="crm-stat"><div class="k">Fríos</div><div class="v" style="color:#f04438">${stats.frios}</div></div><div class="crm-stat"><div class="k">Nuevos</div><div class="v">${stats.nuevos}</div></div></div><div class="card"><h2 class="card-title">🔎 Filtros CRM</h2><div class="crm-toolbar"><input id="crmBuscar" placeholder="Buscá usuario o teléfono…" oninput="crmBuscarDebounce()"><select id="crmSeg" onchange="crmFiltrar()"><option value="">Todos los segmentos</option><option value="VIP">VIP</option><option value="ACTIVO">Activo</option><option value="TIBIO">Tibio</option><option value="FRIO">Frío</option><option value="NUEVO">Nuevo</option></select><select id="crmTurno" onchange="crmFiltrar()"><option value="">Todos los turnos</option><option value="TM">TM 06-14</option><option value="TT">TT 14-22</option><option value="TN">TN 22-06</option></select><select id="crmOrigen" onchange="crmFiltrar()"><option value="">Todos los orígenes</option><option value="AGENTE">Agente (CSV)</option><option value="PORTAL">Portal</option><option value="PANEL">Panel</option><option value="MANUAL">Manual</option><option value="WHATICKET">Whaticket / registro</option></select><select id="crmOrden" onchange="crmFiltrar()"><option value="score">Orden: score</option><option value="ultima">Orden: última operación</option><option value="cargas">Orden: cargas $</option><option value="neto">Orden: neto</option></select><div class="small" style="display:flex;align-items:center">Mostrando: <b id="crmTotalVisible" style="margin-left:5px">${data.length}</b></div></div><div id="crmTabla"></div></div>
     <div class="card" style="margin-top:14px">
       <h2 class="card-title">📣 Campaña Push</h2>
       <div class="small" style="color:var(--muted);margin-bottom:14px">Enviá una notificación push a un segmento de jugadores que tengan el portal instalado.</div>
@@ -18955,7 +19025,23 @@ async function ejecutarSolicitudPortalSimple(ctx){
     if(campo)campo.value=txt;
   };
 
-  window.cargarJugadores=async function(){ try{ if(typeof cargarOperacionesAgente==="function") await cargarOperacionesAgente(); }catch(_e){} renderCRM(); };
+  // Abrir el CRM ya NO dispara ninguna consulta: pinta la pantalla y listo.
+  window.cargarJugadores=function(){ renderCRM(); };
+
+  // La lista completa, sólo si la piden. Las 4 consultas van juntas y no en fila india
+  // (en P4 eran 2,0 + 0,9 + 0,7 + 0,5 s esperando una a la otra).
+  window.crmCargarLista=async function(){
+    const box=document.getElementById("crmTabla");
+    if(box) box.innerHTML='<div class="alert-box">Armando la lista de la oficina…</div>';
+    try{
+      if(typeof cargarOperacionesAgente==="function") await cargarOperacionesAgente();
+      window._crmCargado=true;
+    }catch(e){
+      if(box) box.innerHTML='<div class="err-box">No se pudo cargar: '+escapeHtml(e.message||'')+'</div>';
+      return;
+    }
+    renderCRM();
+  };
   const oldMostrarVista=window.mostrarVista;if(typeof oldMostrarVista==="function"){window.mostrarVista=function(v){oldMostrarVista(v);if(v==="jugadores"){ (typeof cargarOperacionesAgente==="function"?cargarOperacionesAgente():Promise.resolve()).finally(function(){ setTimeout(renderCRM,80); }); }}}
   setTimeout(()=>{const v=document.getElementById("viewJugadores");if(v&&!v.classList.contains("hidden"))renderCRM()},1000);
 })();
