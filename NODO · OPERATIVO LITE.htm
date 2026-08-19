@@ -4832,7 +4832,10 @@ window.abrirPerfilJugador = function(usuario){
   // lo completamos con lo que trajo la búsqueda de whaticket (_crmWtkBuscados), que sí lo tiene.
   // Antes el lookup se quedaba con el item de ops (sin titular) → mostraba "sin datos" aunque lo
   // hubieras encontrado JUSTO buscando por ese titular.
-  const _crmWtk = (window._crmWtkBuscados||{})[uLow] || {};
+  // _crmBuscados lo llena el buscador del CRM (panel_crm_perfil_v1): trae teléfono,
+  // titular y el perfil calculado sobre TODAS las operaciones. _crmWtkBuscados es el
+  // buscador viejo, queda de respaldo.
+  const _crmWtk = (window._crmBuscados||{})[uLow] || (window._crmWtkBuscados||{})[uLow] || {};
   const crmTel = String(crm.telefono || _crmWtk.telefono || '').replace(/\D/g,'');
   const crmTit = String(crm.titular || _crmWtk.titular || '').trim();
   const crmEst = String(crm.estadoVinculo || _crmWtk.estadoVinculo || '').trim().toUpperCase();
@@ -18161,27 +18164,42 @@ async function ejecutarSolicitudPortalSimple(ctx){
     if(orden==="neto")arr.sort((a,b)=>b.neto-a.neto);
     if(orden==="score")arr.sort((a,b)=>b.score-a.score);
     renderCRMTabla(arr);
-    // Buscador ON-DEMAND sobre la base WTK COMPLETA (53k+): trae los que NO están en la lista local.
-    // Debounced (400ms) y acotado por el RPC; no carga los 53k, sólo lo que matchea.
-    clearTimeout(window._crmWtkTimer);
-    if(qraw.trim().length>=3 && !seg && !turn){
-      window._crmWtkTimer=setTimeout(async function(){
-        try{
-          // Buscamos en TODAS las oficinas (p_pc_codigos:null) → base WTK completa. El resultado trae pc_codigo.
-          const r=await supabaseClient.rpc("panel_crm_vinculos_buscar",{p_pc_codigos:null,p_query:qraw.trim(),p_limit:80});
-          if((document.getElementById("crmBuscar")?.value||"")!==qraw)return; // el texto cambió → descartar resultado viejo
-          if(r&&r.error){ try{ toast("Falta correr el SQL del buscador (panel_crm_vinculos_buscar)","red"); }catch(_e){} return; }
-          const wtk=(r&&Array.isArray(r.data))?r.data:[];
-          if(!wtk.length)return;
-          const ya=new Set(arr.map(j=>U(j.usuario)));
-          const extras=wtk.filter(v=>!ya.has(U(v.usuario))).map(v=>({usuario:S(v.usuario),telefono:S(v.telefono_canon||"").trim(),titular:S(v.titular||"").trim(),estadoVinculo:U(v.estado_vinculo||""),pcCodigo:U(v.pc_codigo||""),segmento:"NUEVO",score:0,cargas:0,retiros:0,montoCargas:0,montoRetiros:0,neto:0,totalOps:0,diasUltCarga:9999,turnoFrecuente:"-",billeteraHabitual:"-",origenHabitual:"WHATICKET",operadorHabitual:"-",accion:"",ultimaOperacion:null,ultimaCarga:null,push:false,app:false,_wtkOnly:true}));
-          window._crmWtkBuscados=window._crmWtkBuscados||{};
-          extras.forEach(function(e){ window._crmWtkBuscados[String(e.usuario).toLowerCase()]=e; });
-          if(extras.length)renderCRMTabla(arr.concat(extras));
-        }catch(_e){}
-      },400);
-    }
+    // Con texto, manda el servidor: score y segmento calculados sobre TODAS las
+    // operaciones del usuario, no sobre las 200 que hay en memoria. El RPC devuelve los
+    // mismos nombres de campo que arma buildCRM, así que la tabla no cambia.
+    if(qraw.trim().length >= 3) _crmBuscarServidor(qraw.trim(), seg, turn, orden);
   };
+
+  async function _crmBuscarServidor(q, seg, turn, orden){
+    const box=document.getElementById("crmTabla");
+    if(box && !window._crmCargado) box.innerHTML='<div class="alert-box">Buscando…</div>';
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_crm_perfil_v1',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_query: q, p_usuario: null, p_limit: 100 });
+      // Si el operador siguió escribiendo, este resultado ya no sirve.
+      if(String((document.getElementById("crmBuscar")||{}).value||'').trim() !== q) return;
+      if(error) throw new Error(error.message||'');
+      if(data && data.ok===false){
+        if(data.error==='BUSQUEDA_CORTA') return;
+        throw new Error(data.error);
+      }
+      let res=(data&&data.jugadores)||[];
+      // Los guardamos para que el perfil y los botones de la fila los encuentren.
+      window._crmBuscados=window._crmBuscados||{};
+      res.forEach(function(j){ window._crmBuscados[String(j.usuario).toLowerCase()]=j; });
+      if(seg)  res=res.filter(j=>U(j.segmento)===seg);
+      if(turn) res=res.filter(j=>U(j.turnoFrecuente)===turn);
+      if(orden==="ultima") res.sort((a,b)=>(toDate(b.ultimaOperacion)||0)-(toDate(a.ultimaOperacion)||0));
+      else if(orden==="cargas") res.sort((a,b)=>b.montoCargas-a.montoCargas);
+      else if(orden==="neto")   res.sort((a,b)=>b.neto-a.neto);
+      else res.sort((a,b)=>b.score-a.score);
+      renderCRMTabla(res);
+    }catch(e){
+      if(box) box.innerHTML='<div class="err-box" style="padding:10px">No se pudo buscar: '+escapeHtml(e.message||'')+'</div>';
+    }
+  }
   function renderCRMTabla(arr){const box=document.getElementById("crmTabla");if(!box)return;if(!arr.length){box.innerHTML=(window._crmCargado?`<div class="alert-box">No hay jugadores para esos filtros.</div>`:`<div class="alert-box" style="padding:16px;line-height:1.7"><b>Escribí en el buscador</b> para encontrar a cualquiera de los registrados — la búsqueda va al servidor, no hace falta cargar nada.<br><span class="small" style="color:#8b949e">Si necesitás la lista entera de la oficina, usá <b>📥 Cargar lista</b> arriba. Tarda unos segundos.</span></div>`);return}
   // De a 50: dibujar 2000 filas juntas, y encima en cada tecla, era lo que trababa la app.
   const _tope=window._crmTope||50, _hay=arr.length; arr=arr.slice(0,_tope);
