@@ -56,7 +56,10 @@ contextBridge.exposeInMainWorld('chunior', {
 contextBridge.exposeInMainWorld('panelAPI', {
   rpc: (fn, params = {}) => ipcRenderer.invoke('panel:rpc', { fn, params }),
   ping: () => ipcRenderer.invoke('panel:ping'),
-  getContext: () => ipcRenderer.invoke('panel:get-context')
+  getContext: () => ipcRenderer.invoke('panel:get-context'),
+  // Abre en el navegador del operador, NO en una ventana de NODO: así usa la sesión de
+  // WhatsApp Web que ya tiene abierta y no hay que escanear el QR adentro de la app.
+  abrirExterno: (url) => ipcRenderer.invoke('app:abrir-externo', url)
 });
 
 // ============================================================

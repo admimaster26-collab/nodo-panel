@@ -18186,7 +18186,18 @@ async function ejecutarSolicitudPortalSimple(ctx){
            <b style="color:#e6edf3">${cola.length}</b> en cola ·
            ${r.con_push||0} con push · ${hechos} marcados hoy ·
            <b style="color:#22c55e">${d.recuperados||0}</b> recuperados</span>
-       </div>`
+       </div>
+       <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
+         <span class="small" style="color:#8b949e;white-space:nowrap">Mensaje:</span>
+         <input id="rxMsg" value="${escapeHtml(_rxMsg())}" oninput="crmRxGuardarMsg()"
+                placeholder="Texto que se manda por push y por WhatsApp"
+                style="flex:1;background:#0f141d;border:1px solid #21283a;border-radius:6px;
+                       padding:6px 9px;color:#e6edf3;font-size:12.5px">
+         <button class="mini-btn gray" onclick="crmRxResetMsg()" title="Volver al texto por defecto">↺</button>
+       </div>
+       <div class="small" style="color:#5a6474;margin:-4px 0 10px">
+         Se usa para el push y para el WhatsApp. <b>{usuario}</b> se reemplaza por el nombre.
+         Queda guardado en esta PC.</div>`
     + (!cola.length
        ? '<div class="alert-box" style="padding:14px">Sin pendientes en este turno. 👌</div>'
        : `<div style="max-height:56vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -18210,8 +18221,8 @@ async function ejecutarSolicitudPortalSimple(ctx){
                 ? '<span style="background:rgba(245,197,24,.16);color:#f5c518;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:800">2º intento</span>'
                 : '<span style="color:#5a6474">1º</span>'}</td>
              <td style="padding:6px 7px;text-align:right;white-space:nowrap">
-               ${c.push?`<button class="mini-btn green" onclick="crmPushIndividual('${u}')" title="Mandarle una notificación">📲</button>`:''}
-               ${tel?`<button class="mini-btn blue" onclick="window.open('https://wa.me/${tel}','_blank')" title="Abrir WhatsApp">💬</button>`:''}
+               ${c.push?`<button class="mini-btn green" onclick="crmRxPush('${u}')" title="Mandarle la notificación con el texto de arriba">📲</button>`:''}
+               ${tel?`<button class="mini-btn blue" onclick="crmRxWhatsapp('${u}','${tel}')" title="Abrir WhatsApp en el navegador con el mensaje listo">💬</button>`:''}
                <button class="mini-btn gray" onclick="abrirPerfilJugador('${u}')" title="Ver ficha">🌳</button>
                <button class="mini-btn yellow" onclick="crmRxMarcar('${u}','CONTACTADO','${c.canal}')" title="Ya lo contacté">✓</button>
                <button class="mini-btn red" onclick="crmRxMarcar('${u}','NO_CONTESTA','${c.canal}')" title="No contesta">✕</button>
@@ -18221,6 +18232,82 @@ async function ejecutarSolicitudPortalSimple(ctx){
             segundo intento · «recuperado» se detecta solo cuando el usuario opera.</div>`);
   }
   window.crmRxTurno = function(t){ _RX.turno=t; _rxCargar(); };
+
+  // ── Mensaje de reconexión ────────────────────────────────────────────────
+  // Editable por el operador y guardado en ESTA PC (cada oficina escribe distinto).
+  // Se usa igual para el push y para el WhatsApp, así el usuario recibe lo mismo
+  // por los dos lados.
+  const _RX_MSG_KEY = 'nodo_rx_mensaje';
+  const _RX_MSG_DEF = 'Hola {usuario} 👋 Te escribimos de BET300. Vimos que quedaste a mitad de camino. ¿Te ayudamos a terminar la carga?';
+  function _rxMsg(){
+    try{ return localStorage.getItem(_RX_MSG_KEY) || _RX_MSG_DEF; }catch(_e){ return _RX_MSG_DEF; }
+  }
+  function _rxMsgPara(usuario){
+    return _rxMsg().replace(/\{usuario\}/gi, usuario || '').replace(/\s+/g,' ').trim();
+  }
+  window.crmRxGuardarMsg = function(){
+    const el = document.getElementById('rxMsg'); if(!el) return;
+    try{ localStorage.setItem(_RX_MSG_KEY, el.value || ''); }catch(_e){}
+  };
+  window.crmRxResetMsg = function(){
+    try{ localStorage.removeItem(_RX_MSG_KEY); }catch(_e){}
+    const el = document.getElementById('rxMsg'); if(el) el.value = _RX_MSG_DEF;
+    toast('Mensaje vuelto al texto por defecto','green');
+  };
+
+  // NODO guarda los teléfonos con 10 dígitos (área + número, sin país). Así como está
+  // wa.me no lo entiende: hay que mandarle el internacional completo.
+  function _rxNumeroWa(tel){
+    let d = String(tel||'').replace(/\D/g,'');
+    if(!d) return '';
+    if(d.startsWith('00')) d = d.slice(2);
+    if(d.startsWith('54')){                    // ya viene con país
+      let r = d.slice(2);
+      if(r.startsWith('9')) r = r.slice(1);    // lo sacamos para reponerlo prolijo
+      return '549' + r;
+    }
+    if(d.length === 10) return '549' + d;      // el formato normal de la base
+    if(d.length === 11 && d.startsWith('9')) return '54' + d;
+    return d;                                  // otro país o formato raro: va tal cual
+  }
+
+  window.crmRxWhatsapp = async function(usuario, tel){
+    const num = _rxNumeroWa(tel);
+    if(!num){ toast('Ese usuario no tiene teléfono cargado','orange'); return; }
+    const url = 'https://wa.me/' + num + '?text=' + encodeURIComponent(_rxMsgPara(usuario));
+    // Al navegador del operador, NO a una ventana de NODO: ahí ya tiene la sesión de
+    // WhatsApp Web abierta y no hay que escanear ningún QR.
+    try{
+      if(window.panelAPI && window.panelAPI.abrirExterno){
+        const r = await window.panelAPI.abrirExterno(url);
+        if(r && r.ok === false) throw new Error(r.message||'');
+      }else{
+        window.open(url,'_blank');             // fuera de Electron (navegador suelto)
+      }
+    }catch(e){ toast('No se pudo abrir WhatsApp: '+(e.message||''),'red'); }
+  };
+
+  // Push propio de la cola: NO reusa crmPushIndividual porque ese busca al jugador en
+  // el CRM y estos usuarios justamente nunca operaron, así que el texto salía vacío.
+  window.crmRxPush = async function(usuario){
+    try{
+      const res = await pushEnviar({
+        usuario: String(usuario).trim().toLowerCase(),
+        title: 'BET300 · Hola ' + usuario,
+        body: _rxMsgPara(usuario),
+        url: '/', tag: 'bet300-reconexion'
+      });
+      if(res && res.sent > 0){
+        toast('Push enviado a '+usuario,'green');
+      }else if(res && res.error){
+        toast('Error: '+res.error,'red');
+      }else if(res && res.reason === 'sin_suscripciones'){
+        toast(usuario+' ya no tiene la notificación activa — escribile por WhatsApp','orange');
+      }else{
+        toast('No se envió el push a '+usuario,'orange');
+      }
+    }catch(e){ toast('No se pudo enviar: '+(e.message||''),'red'); }
+  };
   window.crmRxMarcar = async function(usuario, estado, canal){
     try{
       // Variante con secreto del panel: el operador no tiene sesión de Admi, así que no puede

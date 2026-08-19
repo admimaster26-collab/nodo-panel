@@ -1007,6 +1007,21 @@ ipcMain.handle('updater:open-releases', async () => {
   catch (e) { return { ok: false, message: String(e && e.message || e) }; }
 });
 
+// Abrir un link en el navegador del sistema. Lo usa Reconectar para WhatsApp: si se
+// abriera dentro de NODO habría que escanear el QR aparte, y encima WhatsApp Web
+// rechaza el user-agent de Electron. En el navegador del operador la sesión ya está.
+// Allowlist chica a propósito: esto lo dispara el renderer, no le abrimos cualquier URL.
+const EXTERNO_OK = new Set(['wa.me', 'api.whatsapp.com', 'web.whatsapp.com', 'github.com']);
+ipcMain.handle('app:abrir-externo', async (_event, url) => {
+  try {
+    const u = new URL(String(url || ''));
+    if (u.protocol !== 'https:') return { ok: false, message: 'SOLO_HTTPS' };
+    if (!EXTERNO_OK.has(u.hostname)) return { ok: false, message: 'DOMINIO_NO_PERMITIDO: ' + u.hostname };
+    await shell.openExternal(u.toString());
+    return { ok: true };
+  } catch (e) { return { ok: false, message: String(e && e.message || e) }; }
+});
+
 // Abre/enfoca la ventana del backoffice
 // Navega la ventana del backoffice a la URL de búsqueda y espera a que cargue
 ipcMain.handle('drex:navigate', async (_event, url) => {
