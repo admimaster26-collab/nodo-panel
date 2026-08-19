@@ -18187,17 +18187,24 @@ async function ejecutarSolicitudPortalSimple(ctx){
            ${r.con_push||0} con push · ${hechos} marcados hoy ·
            <b style="color:#22c55e">${d.recuperados||0}</b> recuperados</span>
        </div>
-       <div style="display:flex;gap:6px;align-items:center;margin-bottom:10px">
-         <span class="small" style="color:#8b949e;white-space:nowrap">Mensaje:</span>
-         <input id="rxMsg" value="${escapeHtml(_rxMsg())}" oninput="crmRxGuardarMsg()"
-                placeholder="Texto que se manda por push y por WhatsApp"
-                style="flex:1;background:#0f141d;border:1px solid #21283a;border-radius:6px;
-                       padding:6px 9px;color:#e6edf3;font-size:12.5px">
-         <button class="mini-btn gray" onclick="crmRxResetMsg()" title="Volver al texto por defecto">↺</button>
+       <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+         <span class="small" style="color:#8b949e;white-space:nowrap">
+           Variantes del mensaje (<b id="rxNVar" style="color:#e6edf3">${_rxVariantes().length}</b>)</span>
+         <span style="flex:1"></span>
+         <span class="small" id="rxCont" style="color:#8b949e">${_rxContadorHtml()}</span>
+         <button class="mini-btn gray" onclick="crmRxEjemplo()" title="Ver cómo salen">👁</button>
+         <button class="mini-btn gray" onclick="crmRxResetMsg()" title="Volver a las variantes originales">↺</button>
        </div>
-       <div class="small" style="color:#5a6474;margin:-4px 0 10px">
-         Se usa para el push y para el WhatsApp. <b>{usuario}</b> se reemplaza por el nombre.
-         Queda guardado en esta PC.</div>`
+       <textarea id="rxMsg" oninput="crmRxGuardarMsg()" rows="4" spellcheck="false"
+                 placeholder="Una variante por línea"
+                 style="width:100%;background:#0f141d;border:1px solid #21283a;border-radius:6px;
+                        padding:7px 9px;color:#e6edf3;font-size:12px;line-height:1.5;
+                        font-family:ui-monospace,monospace;resize:vertical">${escapeHtml(_rxVariantes().join('\n'))}</textarea>
+       <div class="small" style="color:#5a6474;margin:5px 0 10px">
+         <b>Una variante por línea</b> — cada envío usa una distinta, rotando, para que WhatsApp
+         no lo lea como spam. Dentro de cada línea, <b>{rojo|azul|verde}</b> sortea una de esas
+         palabras y <b>{usuario}</b> pone el nombre. Con el 👁 ves cómo salen de verdad.
+         Se guarda en esta PC.</div>`
     + (!cola.length
        ? '<div class="alert-box" style="padding:14px">Sin pendientes en este turno. 👌</div>'
        : `<div style="max-height:56vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -18237,22 +18244,102 @@ async function ejecutarSolicitudPortalSimple(ctx){
   // Editable por el operador y guardado en ESTA PC (cada oficina escribe distinto).
   // Se usa igual para el push y para el WhatsApp, así el usuario recibe lo mismo
   // por los dos lados.
-  const _RX_MSG_KEY = 'nodo_rx_mensaje';
-  const _RX_MSG_DEF = 'Hola {usuario} 👋 Te escribimos de BET300. Vimos que quedaste a mitad de camino. ¿Te ayudamos a terminar la carga?';
-  function _rxMsg(){
-    try{ return localStorage.getItem(_RX_MSG_KEY) || _RX_MSG_DEF; }catch(_e){ return _RX_MSG_DEF; }
+  // Mandar SIEMPRE el mismo texto a mucha gente es la forma más rápida de que WhatsApp
+  // marque la línea como spam y la caiga. Por eso no hay un mensaje: hay una lista de
+  // variantes (una por línea) y cada envío usa una distinta, rotando.
+  const _RX_MSG_KEY = 'nodo_rx_variantes';
+  const _RX_VAR_KEY = 'nodo_rx_ult_variante';
+  // Los {a|b|c} se eligen al azar en cada envío: con estas 5 líneas salen miles de
+  // combinaciones, así no hay dos mensajes iguales seguidos.
+  const _RX_MSG_DEF = [
+    '{Hola|Buenas|Hola!} {usuario}, {te escribo|te escribimos} de BET300. {Vimos que|Nos figura que} quedaste a {mitad de camino|medio camino} con tu carga, {¿te doy una mano|¿te ayudo a terminarla|¿lo vemos juntos}?',
+    '{Buenas|Hola} {usuario}! {Quedó|Te quedó} una carga sin terminar {por acá|en el sistema}. {¿Seguís interesado|¿La querés retomar|¿Te la destrabo}?',
+    '{Hola|Qué tal} {usuario}, {soy|te habla} del equipo de BET300. {Vi que|Me figura que} intentaste operar y no {pudiste|llegaste a completar}. {¿Necesitás ayuda|¿Te ayudo con eso|¿Qué te pasó}?',
+    '{Hola|Buenas} {usuario}, {¿todo bien|¿cómo andás}? {Quedaste|Te quedó} una operación {sin completar|a medias}. {Si querés la terminamos ahora|Avisame y la terminamos|Cualquier cosa te guío}.',
+    '{Hola|Buenas} {usuario}! {Te escribo|Paso a escribirte} porque {quedó|veo} una carga tuya {sin finalizar|incompleta}. {¿La retomamos|¿Te ayudo a cerrarla}?'
+  ].join('\n');
+
+  function _rxVariantes(){
+    let raw; try{ raw = localStorage.getItem(_RX_MSG_KEY); }catch(_e){ raw = null; }
+    if(raw == null) raw = _RX_MSG_DEF;
+    return String(raw).split('\n').map(s=>s.trim()).filter(Boolean);
+  }
+  // {a|b|c} → elige una. Pide el "|" a propósito, así {usuario} no se toca.
+  function _rxSpin(t){
+    let s = String(t||''), vueltas = 0;
+    while(/\{[^{}]*\|[^{}]*\}/.test(s) && vueltas++ < 20){
+      s = s.replace(/\{([^{}]*\|[^{}]*)\}/g, function(_m, g){
+        const op = g.split('|'); return op[Math.floor(Math.random()*op.length)];
+      });
+    }
+    return s;
+  }
+  // Rota: nunca repite la variante anterior mientras haya más de una.
+  function _rxProximaVariante(){
+    const v = _rxVariantes(); if(!v.length) return '';
+    let i = -1; try{ i = Number(localStorage.getItem(_RX_VAR_KEY)); }catch(_e){}
+    if(!(i >= 0 && i < v.length)) i = -1;
+    const sig = (i + 1) % v.length;
+    try{ localStorage.setItem(_RX_VAR_KEY, String(sig)); }catch(_e){}
+    return v[sig];
   }
   function _rxMsgPara(usuario){
-    return _rxMsg().replace(/\{usuario\}/gi, usuario || '').replace(/\s+/g,' ').trim();
+    return _rxSpin(_rxProximaVariante())
+             .replace(/\{usuario\}/gi, usuario || '')
+             .replace(/\s+/g,' ').trim();
   }
+
+  // ── Control de ritmo y volumen ───────────────────────────────────────────
+  // Lo que voltea una línea no es sólo el texto repetido: es el volumen y la
+  // velocidad. Contamos por PC y por día, y avisamos. No traba: avisa.
+  const _RX_CNT_KEY = 'nodo_rx_contador';
+  const _RX_WA_DIA_AVISO = 40;   // a partir de acá conviene aflojar
+  const _RX_WA_DIA_FRENO = 60;   // acá ya es zona de riesgo
+  const _RX_WA_SEG_MIN   = 25;   // menos de esto entre mensajes es ráfaga
+  function _rxHoy(){ return new Date().toLocaleDateString('en-CA',{timeZone:'America/Argentina/Buenos_Aires'}); }
+  function _rxContador(){
+    try{
+      const j = JSON.parse(localStorage.getItem(_RX_CNT_KEY)||'{}');
+      if(j && j.dia === _rxHoy()) return j;
+    }catch(_e){}
+    return { dia:_rxHoy(), wa:0, push:0, ultWa:0 };
+  }
+  function _rxSumar(tipo){
+    const c = _rxContador();
+    c[tipo] = (Number(c[tipo])||0) + 1;
+    if(tipo === 'wa') c.ultWa = Date.now();
+    try{ localStorage.setItem(_RX_CNT_KEY, JSON.stringify(c)); }catch(_e){}
+    const el = document.getElementById('rxCont');
+    if(el) el.innerHTML = _rxContadorHtml();
+    return c;
+  }
+  function _rxContadorHtml(){
+    const c = _rxContador();
+    const col = c.wa >= _RX_WA_DIA_FRENO ? '#f04438' : (c.wa >= _RX_WA_DIA_AVISO ? '#f5c518' : '#8b949e');
+    return 'Hoy en esta PC: <b style="color:'+col+'">'+(c.wa||0)+'</b> por WhatsApp · '
+         + '<b style="color:#8fa9e0">'+(c.push||0)+'</b> por push';
+  }
+
   window.crmRxGuardarMsg = function(){
     const el = document.getElementById('rxMsg'); if(!el) return;
     try{ localStorage.setItem(_RX_MSG_KEY, el.value || ''); }catch(_e){}
+    const n = document.getElementById('rxNVar');
+    if(n) n.textContent = _rxVariantes().length;
   };
   window.crmRxResetMsg = function(){
     try{ localStorage.removeItem(_RX_MSG_KEY); }catch(_e){}
     const el = document.getElementById('rxMsg'); if(el) el.value = _RX_MSG_DEF;
-    toast('Mensaje vuelto al texto por defecto','green');
+    const n = document.getElementById('rxNVar'); if(n) n.textContent = _rxVariantes().length;
+    toast('Variantes vueltas a las originales','green');
+  };
+  // Deja ver cómo sale de verdad, con el sorteo hecho.
+  window.crmRxEjemplo = function(){
+    const v = _rxVariantes();
+    if(!v.length){ toast('No hay ninguna variante escrita','orange'); return; }
+    const m = [];
+    for(let i=0;i<3;i++) m.push('• '+_rxMsgPara('juanperez'));
+    alert('Tres ejemplos, tal cual salen:\n\n'+m.join('\n\n')
+      +'\n\n('+v.length+' variantes escritas · el nombre real reemplaza a juanperez)');
   };
 
   // NODO guarda los teléfonos con 10 dígitos (área + número, sin país). Así como está
@@ -18274,6 +18361,22 @@ async function ejecutarSolicitudPortalSimple(ctx){
   window.crmRxWhatsapp = async function(usuario, tel){
     const num = _rxNumeroWa(tel);
     if(!num){ toast('Ese usuario no tiene teléfono cargado','orange'); return; }
+
+    // Avisos de ritmo y volumen. Ninguno traba: el operador decide, pero se entera.
+    const c = _rxContador();
+    const seg = c.ultWa ? Math.round((Date.now() - c.ultWa)/1000) : 9999;
+    if(c.wa >= _RX_WA_DIA_FRENO){
+      if(!confirm('Ya mandaste '+c.wa+' WhatsApp desde esta PC hoy.\n\n'
+        +'Seguir a este ritmo es lo que hace que WhatsApp marque la línea como spam '
+        +'y la caiga para toda la oficina.\n\nMejor seguí mañana, o usá push con los que tienen.\n\n'
+        +'¿Mandarlo igual?')) return;
+    }else if(c.wa === _RX_WA_DIA_AVISO){
+      toast('Van '+c.wa+' WhatsApp hoy. Espaciá los envíos y priorizá los que tienen push.','orange');
+    }
+    if(seg < _RX_WA_SEG_MIN){
+      toast('Muy seguido ('+seg+'s). Esperá unos segundos entre mensajes.','orange');
+    }
+
     const url = 'https://wa.me/' + num + '?text=' + encodeURIComponent(_rxMsgPara(usuario));
     // Al navegador del operador, NO a una ventana de NODO: ahí ya tiene la sesión de
     // WhatsApp Web abierta y no hay que escanear ningún QR.
@@ -18284,6 +18387,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       }else{
         window.open(url,'_blank');             // fuera de Electron (navegador suelto)
       }
+      _rxSumar('wa');
     }catch(e){ toast('No se pudo abrir WhatsApp: '+(e.message||''),'red'); }
   };
 
@@ -18298,6 +18402,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
         url: '/', tag: 'bet300-reconexion'
       });
       if(res && res.sent > 0){
+        _rxSumar('push');
         toast('Push enviado a '+usuario,'green');
       }else if(res && res.error){
         toast('Error: '+res.error,'red');
