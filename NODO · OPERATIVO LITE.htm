@@ -18149,12 +18149,53 @@ async function ejecutarSolicitudPortalSimple(ctx){
     const h = new Date().getHours();
     return (h>=6&&h<14) ? 'TM' : (h>=14&&h<22) ? 'TT' : 'TN';
   }
+  // Recuperación ocupa la pantalla completa del CRM (ya no es un modal): los operadores
+  // trabajan la cola y la prevalidación en paralelo, caso por caso, y en un modal chico
+  // no entra. _RX.tab decide qué se muestra adentro.
+  _RX.tab = 'cola';
+  function _rxDestino(){ return document.getElementById('rxCuerpo'); }
+
   window.crmAbrirReconexion = async function(turno){
     _RX.turno = (turno!==undefined) ? turno : _rxTurnoActual();
-    abrirModal('🔁 Reconectar · usuarios que quedaron en el camino',
-      '<div class="load" style="padding:16px;color:#8b949e">Buscando…</div>', null, 'Cerrar');
+    const view = document.getElementById('viewJugadores');
+    if(!view) return;
+    view.innerHTML =
+      `<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+         <div>
+           <h1 style="font-size:24px">🔁 Recuperación de usuarios</h1>
+           <div class="small">Cola del turno, duplicados por tipeo, prevalidación y jugadores enfriados.</div>
+         </div>
+         <div style="display:flex;gap:8px">
+           <button class="mini-btn blue" onclick="crmAbrirReconexion(_rxTurnoAct())">🔄 Actualizar</button>
+           <button class="mini-btn gray" onclick="cargarJugadores()">← Volver al CRM</button>
+         </div>
+       </div>
+       <div id="rxTabs" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px"></div>
+       <div id="rxCuerpo"><div class="load" style="padding:16px;color:#8b949e">Buscando…</div></div>`;
+    _rxTabs();
     await _rxCargar();
   };
+  window._rxTurnoAct = function(){ return _RX.turno; };
+
+  function _rxTabs(){
+    const c = document.getElementById('rxTabs'); if(!c) return;
+    const d = _RX.datos || {}, r = d.resumen || {};
+    const t = (k,lbl,n,color) =>
+      `<button class="mini-btn ${_RX.tab===k?(color||'green'):'gray'}" onclick="crmRxTab('${k}')">${lbl}${
+        n!=null?' <b>'+n+'</b>':''}</button>`;
+    c.innerHTML =
+      t('cola','📋 Cola del turno', r.en_cola)
+    + t('dup','🔀 Duplicados', r.duplicados, 'yellow')
+    + t('pre','✅ Prevalidar', null, 'blue')
+    + t('frios','❄ Fríos y tibios', null, 'blue');
+  }
+  window.crmRxTab = function(k){
+    _RX.tab = k; _rxTabs();
+    if(k==='pre')   return _rxPintarPrevalidar();
+    if(k==='frios') return _rxPintarFrios();
+    _rxPintar();
+  };
+
   async function _rxCargar(){
     if(_RX.cargando) return; _RX.cargando = true;
     try{
@@ -18164,15 +18205,22 @@ async function ejecutarSolicitudPortalSimple(ctx){
         p_turno: _RX.turno || null, p_limit: 300 });
       if(error) throw new Error(error.message||'no se pudo consultar');
       if(data && data.ok===false) throw new Error(data.error||'sin datos');
-      _RX.datos = data; _rxPintar();
+      _RX.datos = data; _rxTabs();
+      if(_RX.tab==='pre') _rxPintarPrevalidar();
+      else if(_RX.tab==='frios') _rxPintarFrios();
+      else _rxPintar();
     }catch(e){
-      const b=document.getElementById('modalBody');
+      const b=_rxDestino();
       if(b) b.innerHTML='<div class="err-box" style="padding:10px">No se pudo cargar: '+escapeHtml(e.message||'')+'</div>';
     }finally{ _RX.cargando = false; }
   }
   function _rxPintar(){
-    const b=document.getElementById('modalBody'); if(!b||!_RX.datos) return;
-    const d=_RX.datos, r=d.resumen||{}, cola=d.cola||[];
+    const b=_rxDestino(); if(!b||!_RX.datos) return;
+    const d=_RX.datos, r=d.resumen||{};
+    // La pestaña Duplicados es la misma cola filtrada: son los que hay que limpiar,
+    // no contactar.
+    const soloDup = (_RX.tab==='dup');
+    const cola=(d.cola||[]).filter(c => soloDup ? c.duplicado_de : true);
     const porT={}; (d.por_turno||[]).forEach(x=>porT[x.turno]=x.en_cola);
     const hechos=(d.trabajado_hoy||[]).reduce((s,x)=>s+Number(x.n||0),0);
     const tab=(k,lbl)=>`<button class="mini-btn ${_RX.turno===k?'green':'gray'}"
@@ -18218,7 +18266,12 @@ async function ejecutarSolicitudPortalSimple(ctx){
             const tel=String(c.telefono||'').replace(/\D/g,'');
             return `<tr style="border-top:1px solid #21283a">
              <td style="padding:6px 7px"><b>${escapeHtml(c.usuario)}</b>
-               <div class="small" style="color:#5a6474">${escapeHtml(c.tipo||'')}${c.atendio?' · '+escapeHtml(c.atendio):''}</div></td>
+               <div class="small" style="color:#5a6474">${escapeHtml(c.tipo||'')}${c.atendio?' · '+escapeHtml(c.atendio):''}</div>
+               ${c.duplicado_de?`<div class="small" style="color:${Number(c.distancia)<=2?'#f5c518':'#8b949e'};margin-top:2px">
+                  ${Number(c.distancia)<=2?'✏ mal tipeado':'⚠ mismo teléfono'} · ya opera como
+                  <b style="color:#e6edf3">${escapeHtml(c.duplicado_de)}</b>
+                  ${Number(c.distancia)<=2?'<span style="color:#5a6474"> ('+c.distancia+(Number(c.distancia)===1?' letra':' letras')+' de diferencia)</span>':''}
+               </div>`:''}</td>
              <td style="padding:6px 7px;font-family:ui-monospace,monospace">${escapeHtml(c.telefono||'—')}</td>
              <td style="padding:6px 7px;text-align:center">${c.push
                 ? '<span style="background:rgba(111,143,208,.18);color:#8fa9e0;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">PUSH</span>'
@@ -18231,12 +18284,19 @@ async function ejecutarSolicitudPortalSimple(ctx){
                ${c.push?`<button class="mini-btn green" onclick="crmRxPush('${u}')" title="Mandarle la notificación con el texto de arriba">📲</button>`:''}
                ${tel?`<button class="mini-btn blue" onclick="crmRxWhatsapp('${u}','${tel}')" title="Abrir WhatsApp en el navegador con el mensaje listo">💬</button>`:''}
                <button class="mini-btn gray" onclick="abrirPerfilJugador('${u}')" title="Ver ficha">🌳</button>
+               ${c.duplicado_de
+                 ? `<button class="mini-btn green" onclick="crmRxUnificar('${u}','${String(c.duplicado_de).replace(/'/g,"\\'")}')"
+                      title="Es el mismo usuario mal escrito: unificarlo con ${escapeHtml(c.duplicado_de)}">🔗 Unificar</button>`
+                 : ''}
+               <button class="mini-btn gray" onclick="crmRxMarcar('${u}','DESCARTADO','${c.canal}')" title="No corresponde: sacarlo de la lista">🗑</button>
                <button class="mini-btn yellow" onclick="crmRxMarcar('${u}','CONTACTADO','${c.canal}')" title="Ya lo contacté">✓</button>
                <button class="mini-btn red" onclick="crmRxMarcar('${u}','NO_CONTESTA','${c.canal}')" title="No contesta">✕</button>
              </td></tr>`;}).join('')}</tbody></table></div>
           <div class="small" style="color:#5a6474;margin-top:8px">
-            ✓ marca contactado y lo saca de la cola · ✕ no contesta, vuelve en 3 días para un
-            segundo intento · «recuperado» se detecta solo cuando el usuario opera.</div>`);
+            <b>✓</b> contactado, sale de la cola · <b>✕</b> no contesta, vuelve en 3 días para un
+            segundo intento · <b>🗑</b> no corresponde, sale y no vuelve ·
+            <b>🔗</b> es el mismo usuario mal escrito, se unifica con el bueno.
+            «Recuperado» se detecta solo cuando el usuario opera.</div>`);
   }
   window.crmRxTurno = function(t){ _RX.turno=t; _rxCargar(); };
 
@@ -18427,12 +18487,154 @@ async function ejecutarSolicitudPortalSimple(ctx){
       if(error) throw new Error(error.message||'no se pudo marcar');
       if(data && data.ok===false) throw new Error(data.error||'no se pudo marcar');
       toast(estado==='CONTACTADO' ? ('✓ '+usuario+' contactado')
+            : estado==='DESCARTADO' ? ('🗑 '+usuario+' sacado de la lista')
             : (data && data.cerrado) ? ('✕ '+usuario+' · 2º intento, se cierra')
             : ('✕ '+usuario+' · vuelve en 3 días'),
-            estado==='CONTACTADO'?'green':'yellow');
+            estado==='CONTACTADO'?'green':(estado==='DESCARTADO'?'gray':'yellow'));
       _rxCargar();
     }catch(e){ toast('No se pudo marcar: '+(e.message||''),'red'); }
   };
+
+  // Unificar: el de la cola es el mismo usuario escrito mal. Pide confirmación porque
+  // toca el vínculo, y un teléfono compartido en familia NO es un duplicado.
+  window.crmRxUnificar = async function(malo, bueno){
+    if(!confirm('¿"'+malo+'" es la misma persona que "'+bueno+'", escrita mal?\n\n'
+      +'Se saca de la lista y el vínculo queda marcado como duplicado de "'+bueno+'".\n\n'
+      +'Si son dos personas distintas que comparten el teléfono (familia), cancelá y usá 🗑.')) return;
+    try{
+      const quien = (typeof operador!=='undefined' && operador) ? (operador.usuario||operador.nombre||'') : '';
+      const { data, error } = await supabaseClient.rpc('panel_reconexion_unificar',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_usuario: malo, p_canonico: bueno, p_operador: quien||null });
+      if(error) throw new Error(error.message||'');
+      if(data && data.ok===false){
+        toast(data.error==='EL_CANONICO_NO_TIENE_OPERACIONES'
+          ? 'Ojo: "'+bueno+'" no tiene operaciones. No se unificó.'
+          : ('No se pudo unificar: '+data.error), 'red');
+        return;
+      }
+      toast('✓ '+malo+' unificado con '+bueno,'green');
+      _rxCargar();
+    }catch(e){ toast('No se pudo unificar: '+(e.message||''),'red'); }
+  };
+
+  // ── Prevalidar, acá adentro ──────────────────────────────────────────────
+  // Es la misma consulta del botón Prevalidar, pero al lado de la cola: los operadores
+  // revisan caso por caso y necesitan las dos cosas juntas.
+  function _rxPintarPrevalidar(){
+    const b=_rxDestino(); if(!b) return;
+    b.innerHTML =
+      `<div class="card" style="max-width:760px">
+         <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:10px">
+           <div style="flex:1;min-width:190px">
+             <div class="small" style="color:#8b949e;margin-bottom:3px">Teléfono</div>
+             <input id="rxPvTel" placeholder="2216437576" onkeydown="if(event.key==='Enter')crmRxPrevalidar()"
+                    style="width:100%;background:#0f141d;border:1px solid #21283a;border-radius:6px;
+                           padding:7px 9px;color:#e6edf3;font-family:ui-monospace,monospace"></div>
+           <div style="flex:1;min-width:190px">
+             <div class="small" style="color:#8b949e;margin-bottom:3px">Usuario (opcional)</div>
+             <input id="rxPvUsr" placeholder="mariaaa1010" onkeydown="if(event.key==='Enter')crmRxPrevalidar()"
+                    style="width:100%;background:#0f141d;border:1px solid #21283a;border-radius:6px;
+                           padding:7px 9px;color:#e6edf3;font-family:ui-monospace,monospace"></div>
+           <button class="mini-btn green" onclick="crmRxPrevalidar()">Buscar</button>
+         </div>
+         <div class="small" style="color:#5a6474">
+           Antes de crear un usuario nuevo. Dice si ese teléfono ya tiene cuenta acá, si ya
+           cobró el bono de primer ingreso y si su CBU aparece en otras cuentas.</div>
+         <div id="rxPvRes" style="margin-top:12px"></div>
+       </div>`;
+    const i=document.getElementById('rxPvTel'); if(i) i.focus();
+  }
+  window.crmRxPrevalidar = async function(){
+    const tel=(document.getElementById('rxPvTel')||{}).value||'';
+    const usr=(document.getElementById('rxPvUsr')||{}).value||'';
+    const box=document.getElementById('rxPvRes'); if(!box) return;
+    if(!String(tel).trim() && !String(usr).trim()){
+      box.innerHTML='<div class="alert-box" style="padding:10px">Poné al menos el teléfono.</div>'; return; }
+    box.innerHTML='<div class="load" style="color:#8b949e">Buscando…</div>';
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_telefono: tel||null, p_usuario: usr||null });
+      if(error) throw new Error(error.message||'');
+      if(data && data.ok===false) throw new Error(data.error||'sin datos');
+      const v=String(data.veredicto||'').toUpperCase();
+      const col = v==='LIBRE'?'#12b76a':(v==='YA_EXISTE'?'#f5c518':'#f04438');
+      const txt = v==='LIBRE'?'LIBRE · se puede crear'
+                : v==='YA_EXISTE'?'YA EXISTE · usá la cuenta que ya tiene'
+                : 'REVISAR · mirá los motivos';
+      box.innerHTML =
+        `<div style="border:1px solid ${col}55;background:${col}14;border-radius:8px;padding:11px 13px;margin-bottom:10px">
+           <b style="color:${col};font-size:15px">${escapeHtml(txt)}</b></div>`
+      + ((data.motivos||[]).length
+          ? '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">'
+            + (data.motivos||[]).map(m=>{
+                const nivel=String(m.nivel||m.gravedad||'').toUpperCase();
+                const c = nivel==='ALTO'?'#f04438':(nivel==='MEDIO'?'#f5c518':'#8b949e');
+                return `<div style="border-left:3px solid ${c};padding:2px 0 2px 10px">
+                          <b style="color:${c};font-size:11px">${escapeHtml(nivel||'INFO')}</b>
+                          <div class="small" style="color:#c9d1d9">${escapeHtml(m.detalle||m.texto||m.motivo||JSON.stringify(m))}</div>
+                        </div>`; }).join('')
+            + '</div>'
+          : '<div class="small" style="color:#5a6474;margin-bottom:10px">Sin observaciones.</div>')
+      + ((data.cuentas||[]).length
+          ? '<div class="small" style="color:#8b949e">Cuentas con ese teléfono: '
+            + (data.cuentas||[]).map(x=>'<b style="color:#e6edf3">'+escapeHtml(x.usuario||x)+'</b>').join(' · ')+'</div>'
+          : '');
+    }catch(e){
+      box.innerHTML='<div class="err-box" style="padding:10px">No se pudo consultar: '+escapeHtml(e.message||'')+'</div>';
+    }
+  };
+
+  // ── Fríos y tibios ───────────────────────────────────────────────────────
+  // Salen del CRM que ya está calculado en memoria; no hace falta ir a la base.
+  function _rxPintarFrios(){
+    const b=_rxDestino(); if(!b) return;
+    let base=[];
+    try{ base = window._crmJugadoresData || (typeof buildCRM==='function'? buildCRM():[]); }catch(_e){ base=[]; }
+    const seg=_RX.segFiltro||'FRIO';
+    const arr=base.filter(j=>String(j.segmento).toUpperCase()===seg)
+                  .sort((a,b2)=>(b2.montoCargas||0)-(a.montoCargas||0)).slice(0,300);
+    const nF=base.filter(j=>String(j.segmento).toUpperCase()==='FRIO').length;
+    const nT=base.filter(j=>String(j.segmento).toUpperCase()==='TIBIO').length;
+    b.innerHTML =
+      `<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+         <button class="mini-btn ${seg==='FRIO'?'green':'gray'}" onclick="crmRxSeg('FRIO')">❄ Fríos <b>${nF}</b></button>
+         <button class="mini-btn ${seg==='TIBIO'?'green':'gray'}" onclick="crmRxSeg('TIBIO')">🌡 Tibios <b>${nT}</b></button>
+         <span style="flex:1"></span>
+         <span class="small" style="color:#5a6474">Ordenados por lo que cargaron: primero los que más valen.</span>
+       </div>`
+    + (!arr.length
+       ? '<div class="alert-box" style="padding:14px">No hay jugadores en este segmento. Probá 🔄 Recalcular en el CRM.</div>'
+       : `<div style="max-height:62vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="position:sticky;top:0;background:#161b26;z-index:1">
+            <th style="padding:7px;text-align:left">Jugador</th><th style="padding:7px">Cargó</th>
+            <th style="padding:7px">Última</th><th style="padding:7px">Canal</th>
+            <th style="padding:7px;text-align:right">Acciones</th></tr></thead><tbody>${
+          arr.map(j=>{
+            const u=String(j.usuario).replace(/'/g,"\\'");
+            const tel=String(j.telefono||'').replace(/\D/g,'');
+            return `<tr style="border-top:1px solid #21283a">
+              <td style="padding:6px 7px"><b>${escapeHtml(j.usuario)}</b>
+                <div class="small" style="color:#5a6474">${j.totalOps||0} ops${j.telefono?' · 📱 '+escapeHtml(j.telefono):''}</div></td>
+              <td style="padding:6px 7px;text-align:center">${fmtMoney(j.montoCargas||0)}</td>
+              <td style="padding:6px 7px;text-align:center;color:#8b949e">${
+                (j.diasUltCarga>=9999?'—':j.diasUltCarga+' d')}</td>
+              <td style="padding:6px 7px;text-align:center">${j.push
+                ? '<span style="background:rgba(111,143,208,.18);color:#8fa9e0;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">PUSH</span>'
+                : '<span style="background:#22303f;color:#8b949e;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">WHATSAPP</span>'}</td>
+              <td style="padding:6px 7px;text-align:right;white-space:nowrap">
+                ${j.push?`<button class="mini-btn green" onclick="crmRxPush('${u}')" title="Notificación">📲</button>`:''}
+                ${tel?`<button class="mini-btn blue" onclick="crmRxWhatsapp('${u}','${tel}')" title="WhatsApp">💬</button>`:''}
+                <button class="mini-btn gray" onclick="abrirPerfilJugador('${u}')" title="Ficha">🌳</button>
+              </td></tr>`; }).join('')}</tbody></table></div>
+          <div class="small" style="color:#5a6474;margin-top:8px">
+            Usa el mismo mensaje rotativo que la cola. El contador del día es compartido:
+            cuidá la línea igual que en Reconectar.</div>`);
+  }
+  window.crmRxSeg = function(s){ _RX.segFiltro=s; _rxPintarFrios(); };
 
   // ── Prevalidar antes de crear ─────────────────────────────────────────────
   window.crmAbrirPrevalidar = function(){

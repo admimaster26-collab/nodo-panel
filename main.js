@@ -874,6 +874,7 @@ const PANEL_RPC_ALLOW = new Set([
   // CRM · reconexión y prevalidación (v1.1.61)
   'panel_reconexion_cola',
   'panel_reconexion_marcar',
+  'panel_reconexion_unificar',
   'panel_prevalidar_usuario'
 ]);
 
