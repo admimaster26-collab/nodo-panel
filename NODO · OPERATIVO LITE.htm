@@ -18187,7 +18187,7 @@ async function ejecutarSolicitudPortalSimple(ctx){
       t('cola','📋 Cola del turno', r.en_cola)
     + t('dup','🔀 Duplicados', r.duplicados, 'yellow')
     + t('pre','✅ Prevalidar', null, 'blue')
-    + t('frios','❄ Fríos y tibios', null, 'blue');
+    + t('frios','😴 Dormidos', null, 'blue');
   }
   window.crmRxTab = function(k){
     _RX.tab = k; _rxTabs();
@@ -18611,96 +18611,76 @@ async function ejecutarSolicitudPortalSimple(ctx){
     }
   };
 
-  // ── Fríos y tibios ───────────────────────────────────────────────────────
-  // Salen del CRM que ya está calculado en memoria; no hace falta ir a la base.
-  // El CRM en memoria casi nunca trae el teléfono (Whaticket son 170k filas y no se
-  // carga entera). Lo pedimos para los que se están viendo y lo guardamos acá.
-  _RX.contactos = _RX.contactos || {};
-  async function _rxEnriquecer(usuarios){
-    const faltan = usuarios.filter(u => _RX.contactos[u] === undefined);
-    if(!faltan.length) return false;
-    faltan.forEach(u => { _RX.contactos[u] = null; });   // marca "pedido", evita repetir
-    const pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
-    let hubo=false;
-    // De a 200: la RPC corta en 400 y de a muchos se comía el timeout de 3 s.
-    for(let i=0;i<faltan.length;i+=200){
-      const lote = faltan.slice(i, i+200);
-      try{
-        const { data, error } = await supabaseClient.rpc('panel_usuarios_contacto',{
-          p_secret: window.PANEL_DATA_SECRET, p_pc_codigo: pc, p_usuarios: lote });
-        if(error) throw new Error(error.message||'');
-        if(!data || data.ok===false) throw new Error((data&&data.error)||'sin datos');
-        (data.usuarios||[]).forEach(x => { _RX.contactos[String(x.usuario).toLowerCase()] = x; });
-        hubo = true;
-      }catch(e){
-        // Que se note: sin esto la columna queda vacía y parece que no hay teléfonos.
-        lote.forEach(u => { delete _RX.contactos[u]; });   // permite reintentar
-        toast('No se pudieron traer los teléfonos: '+(e.message||''),'red');
-        break;
-      }
+  // Los dormidos salen de la base, NO del CRM en memoria: ahí Whaticket entra recortado
+  // a 1000 filas de 170k y al que nunca operó lo marca NUEVO. Medido en P5: 398 para
+  // recuperar y 315 no aparecían en ninguna lista.
+  async function _rxCargarDormidos(estado){
+    _RX.dormEstado = estado || _RX.dormEstado || 'DORMIDO';
+    const b=_rxDestino();
+    if(b) b.innerHTML='<div class="load" style="padding:16px;color:#8b949e">Buscando en la base de la oficina…</div>';
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_dormidos',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_estado: _RX.dormEstado, p_limit: 300 });
+      if(error) throw new Error(error.message||'');
+      if(!data || data.ok===false) throw new Error((data&&data.error)||'sin datos');
+      _RX.dormidos = data;
+    }catch(e){
+      _RX.dormidos = null;
+      if(b) b.innerHTML='<div class="err-box" style="padding:10px">No se pudo cargar: '+escapeHtml(e.message||'')+'</div>';
+      return;
     }
-    return hubo;
+    _rxPintarFrios();
   }
+  window.crmRxDorm = function(est){ _rxCargarDormidos(est); };
 
   function _rxPintarFrios(){
     const b=_rxDestino(); if(!b) return;
-    let base=[];
-    try{ base = window._crmJugadoresData || (typeof buildCRM==='function'? buildCRM():[]); }catch(_e){ base=[]; }
-    const seg=_RX.segFiltro||'FRIO';
-    const crudo=base.filter(j=>String(j.segmento).toUpperCase()===seg)
-                    .sort((a,b2)=>(b2.montoCargas||0)-(a.montoCargas||0)).slice(0,300);
-    // El CRM segmenta con las 200 operaciones que tiene en memoria, así que a alguien
-    // que cargó ayer pero quedó fuera de esa ventana lo da por frío. Pisamos con lo
-    // que dice la base.
-    crudo.forEach(j=>{
-      const c=_RX.contactos[String(j.usuario).toLowerCase()];
-      if(!c) return;
-      if(!j.telefono && c.telefono) j.telefono=c.telefono;
-      if(c.push) j.push=true;
-      if(!j.titular && c.titular) j.titular=c.titular;
-      if(c.dias!=null){ j.diasUltCarga=c.dias; j._real=true; }
-      if(c.ops>(j.totalOps||0)) j.totalOps=c.ops;
-      if(c.monto_cargas>(j.montoCargas||0)) j.montoCargas=c.monto_cargas;
-    });
-    const pedir = crudo.map(j=>String(j.usuario).toLowerCase())
-                       .filter(u=>_RX.contactos[u]===undefined);
-    if(pedir.length){
-      _rxEnriquecer(pedir).then(hubo=>{ if(hubo && _RX.tab==='frios') _rxPintarFrios(); });
-    }
-    // Si operó hace poco no hay nada que recuperar: fuera de la lista.
-    const RECIENTE=15;
-    const activos=crudo.filter(j=>j._real && j.diasUltCarga<=RECIENTE).length;
-    const arr=crudo.filter(j=>!(j._real && j.diasUltCarga<=RECIENTE))
-                   .sort((a,b2)=>(b2.montoCargas||0)-(a.montoCargas||0));
-    const sinTel = arr.filter(j=>!j.telefono).length;
-    const nF=base.filter(j=>String(j.segmento).toUpperCase()==='FRIO').length;
-    const nT=base.filter(j=>String(j.segmento).toUpperCase()==='TIBIO').length;
+    if(!_RX.dormidos){ _rxCargarDormidos(_RX.dormEstado); return; }
+    const D=_RX.dormidos, R=D.resumen||{}, lista=D.lista||[];
+    const est=_RX.dormEstado||'DORMIDO';
+    const tab=(k,lbl,n)=>`<button class="mini-btn ${est===k?'green':'gray'}" onclick="crmRxDorm('${k}')">${lbl}${n!=null?' <b>'+n+'</b>':''}</button>`;
+    const sinTel = lista.filter(x=>!x.telefono).length;
     b.innerHTML =
       `<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
-         <button class="mini-btn ${seg==='FRIO'?'green':'gray'}" onclick="crmRxSeg('FRIO')">❄ Fríos <b>${nF}</b></button>
-         <button class="mini-btn ${seg==='TIBIO'?'green':'gray'}" onclick="crmRxSeg('TIBIO')">🌡 Tibios <b>${nT}</b></button>
+         ${tab('DORMIDO','😴 Dormidos +30d', R.dormido)}
+         ${tab('ENFRIANDO','🌡 Enfriando 15-30d', R.enfriando)}
+         ${tab('NUNCA','👤 Nunca operaron', R.nunca)}
          <span style="flex:1"></span>
-         <span class="small" style="color:#5a6474">Ordenados por lo que cargaron: primero los que más valen.${
-           pedir.length?' · <span style="color:#8b949e">verificando contra la base…</span>'
-           :((activos?' · <b style="color:#12b76a">'+activos+' salieron: ya están operando</b>':'')
-             +(sinTel?' · <b style="color:#8b949e">'+sinTel+' sin teléfono</b>':''))}</span>
+         <span class="small" style="color:#5a6474">
+           Mostrando ${lista.length} de ${D.total||0}${sinTel?' · '+sinTel+' sin teléfono':''}
+           ${R.ya_trabajados?' · '+R.ya_trabajados+' ya trabajados':''}</span>
        </div>`
-    + (!arr.length
-       ? '<div class="alert-box" style="padding:14px">No hay jugadores en este segmento. Probá 🔄 Recalcular en el CRM.</div>'
-       : `<div style="max-height:62vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+    + (est==='NUNCA' && Number(R.nunca)>1000
+       ? `<div class="alert-box" style="padding:10px;margin-bottom:10px">
+            <b>Son ${Number(R.nunca).toLocaleString('es-AR')} personas.</b> Esto no es una cola de
+            trabajo: son contactos de WhatsApp que nunca operaron. A 40 mensajes por día tardarías
+            años, y mandarles a todos es lo que quema la línea. Usalo para buscar casos puntuales,
+            no para barrer.</div>`
+       : '')
+    + (est==='DORMIDO'
+       ? `<div class="small" style="color:#5a6474;margin-bottom:10px">
+            Jugaron y dejaron de venir. Ordenados por lo que cargaron: los de arriba son los que
+            más valen la pena.</div>` : '')
+    + (!lista.length
+       ? '<div class="alert-box" style="padding:14px">No hay nadie en este estado. 👌</div>'
+       : `<div style="max-height:58vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead><tr style="position:sticky;top:0;background:#161b26;z-index:1">
             <th style="padding:7px;text-align:left">Jugador</th><th style="padding:7px">Cargó</th>
             <th style="padding:7px">Última</th><th style="padding:7px">Canal</th>
             <th style="padding:7px;text-align:right">Acciones</th></tr></thead><tbody>${
-          arr.map(j=>{
+          lista.map(j=>{
             const u=String(j.usuario).replace(/'/g,"\\'");
             const tel=String(j.telefono||'').replace(/\D/g,'');
             return `<tr style="border-top:1px solid #21283a">
               <td style="padding:6px 7px"><b>${escapeHtml(j.usuario)}</b>
-                <div class="small" style="color:#5a6474">${j.totalOps||0} ops${j.telefono?' · 📱 '+escapeHtml(j.telefono):''}</div></td>
-              <td style="padding:6px 7px;text-align:center">${fmtMoney(j.montoCargas||0)}</td>
+                <div class="small" style="color:#5a6474">${j.ops||0} ops${
+                  j.telefono?' · 📱 '+escapeHtml(j.telefono):''}${
+                  j.titular?' · 👤 '+escapeHtml(j.titular):''}</div></td>
+              <td style="padding:6px 7px;text-align:center">${j.monto_cargas?fmtMoney(j.monto_cargas):'<span style="color:#5a6474">—</span>'}</td>
               <td style="padding:6px 7px;text-align:center;color:#8b949e">${
-                (j.diasUltCarga>=9999?'—':j.diasUltCarga+' d')}</td>
+                j.dias!=null?j.dias+' d':'<span style="color:#5a6474">nunca operó</span>'}</td>
               <td style="padding:6px 7px;text-align:center">${j.push
                 ? '<span style="background:rgba(111,143,208,.18);color:#8fa9e0;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">PUSH</span>'
                 : '<span style="background:#22303f;color:#8b949e;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">WHATSAPP</span>'}</td>
@@ -18708,12 +18688,13 @@ async function ejecutarSolicitudPortalSimple(ctx){
                 ${j.push?`<button class="mini-btn green" onclick="crmRxPush('${u}')" title="Notificación">📲</button>`:''}
                 ${tel?`<button class="mini-btn blue" onclick="crmRxWhatsapp('${u}','${tel}')" title="WhatsApp">💬</button>`:''}
                 <button class="mini-btn gray" onclick="abrirPerfilJugador('${u}')" title="Ficha">🌳</button>
+                <button class="mini-btn gray" onclick="crmRxMarcar('${u}','CONTACTADO','${j.push?'PUSH':'WHATSAPP'}')" title="Ya lo contacté">✓</button>
               </td></tr>`; }).join('')}</tbody></table></div>
           <div class="small" style="color:#5a6474;margin-top:8px">
-            Usa el mismo mensaje rotativo que la cola. El contador del día es compartido:
-            cuidá la línea igual que en Reconectar.</div>`);
+            Usa el mismo mensaje rotativo que la cola y el mismo contador del día: cuidá la línea
+            igual que en Reconectar. El ✓ lo saca de acá y queda registrado.</div>`);
   }
-  window.crmRxSeg = function(s){ _RX.segFiltro=s; _rxPintarFrios(); };
+
 
   // Limpieza en lote. Primero simula y muestra qué va a hacer: son muchos de una,
   // y conviene que el operador vea la lista antes de aceptar.

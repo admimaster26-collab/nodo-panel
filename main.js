@@ -876,7 +876,7 @@ const PANEL_RPC_ALLOW = new Set([
   'panel_reconexion_marcar',
   'panel_reconexion_unificar',
   'panel_reconexion_limpiar_seguros',
-  'panel_usuarios_contacto',
+  'panel_dormidos',
   'panel_prevalidar_usuario'
 ]);
 
