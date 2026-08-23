@@ -4885,7 +4885,15 @@ window.abrirPerfilJugador = function(usuario){
           + (c.verificado?' <span title="Ya cobró acá (retiro OK)" style="color:#22c55e">✓</span>':' <span title="Ingresado pero nunca cobró acá" style="color:#f5c518">●</span>')
           + (ajeno?' <span title="Titular DISTINTO a los conocidos del usuario — posible cuenta ajena" style="color:#ef4444">🚨</span>':'')+'</div>'
           + '<div class="small" style="color:'+(ajeno?'#e6a0a0':'#8b949e')+'">'+(c.titular?esc(c.titular)+' · ':'')+'×'+c.veces+(c.ultima?(' · últ. '+esc(formatFecha(c.ultima))):'')+(ajeno?' · 🚨 titular distinto':'')+'</div></div>';
-      }).join(''):'<div class="small" style="color:#5a6474">Sin destinos registrados aún.</div>')
+      }).join('')
+      // Respaldo: el CBU también viaja en las notas de los RETIROS, y de ahí lo saca el
+      // servidor. La base local es POR MÁQUINA: si el retiro lo pagó otro turno u otra PC,
+      // acá no hay nada aunque el usuario tenga destino conocido.
+      : (_crmWtk.cbu
+          ? '<div style="padding:4px 0" title="Tomado del último retiro pagado">'
+            + '<div class="pj-mono" style="font-size:12px;font-weight:700;color:#e6edf3">'+esc(_crmWtk.cbu)+'</div>'
+            + '<div class="small" style="color:#8b949e">'+(crmTit?esc(crmTit)+' · ':'')+'del último retiro</div></div>'
+          : '<div class="small" style="color:#5a6474">Sin destinos registrados aún.</div>'))
     + '</div>';
   const railBonos =
       '<div class="pj-card"><h4>🎁 Bonos</h4>'
