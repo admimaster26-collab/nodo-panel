@@ -4816,7 +4816,14 @@ window.abrirPerfilJugador = function(usuario){
   const uLow = u.toLowerCase();
   const esc = escapeHtml;
   const local = _jugStoreAll()[uLow] || {};
-  const crm = (window._crmJugadoresData||[]).find(function(x){ return String(x.usuario||'').toLowerCase()===uLow; }) || (window._crmWtkBuscados||{})[uLow] || {};
+  // Desde que el CRM abre vacío (v1.1.70) _crmJugadoresData sólo tiene datos si el
+  // operador pidió "Cargar lista". El perfil se abre igual desde el buscador, así que
+  // hay que mirar también lo que trajo la búsqueda del servidor (_crmBuscados): ahí
+  // vienen turno, última carga, score y segmento calculados sobre TODAS las operaciones.
+  // Sin esto el perfil mostraba "—" en turno y última carga teniendo el dato a mano.
+  const crm = (window._crmJugadoresData||[]).find(function(x){ return String(x.usuario||'').toLowerCase()===uLow; })
+           || (window._crmBuscados||{})[uLow]
+           || (window._crmWtkBuscados||{})[uLow] || {};
   const fl = (window._crmFlags||{})[uLow] || {};
   const ops = (typeof arbolUsuario==='function') ? arbolUsuario(u) : [];
   const uEsc = u.replace(/'/g,"\\'");
@@ -4954,6 +4961,29 @@ window.abrirPerfilJugador = function(usuario){
           window.abrirPerfilJugador(u);
         }
       });
+    }
+  }catch(_e){}
+
+  // El perfil se abre desde muchos lados (buscador, cola de reconexión, dormidos, una
+  // fila del CRM) y no todos dejan al jugador cacheado. Si no lo tenemos, lo pedimos y
+  // se repinta: así el turno, la última carga, el score y el segmento salen siempre,
+  // calculados sobre TODAS las operaciones y no sobre lo que hubiera en memoria.
+  try{
+    if(!crm.turnoFrecuente && !(window._crmBuscados||{})[uLow]){
+      window._crmBuscados = window._crmBuscados || {};
+      window._crmBuscados[uLow] = null;                 // evita pedirlo dos veces
+      supabaseClient.rpc('panel_crm_perfil_v1',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_query: null, p_usuario: u, p_limit: 1
+      }).then(function(r){
+        const j = (r && r.data && (r.data.jugadores||[])[0]) || null;
+        if(!j) return;
+        window._crmBuscados[uLow] = j;
+        if(document.getElementById('perfilJugadorOverlay') && window.__perfilJugadorAbierto===uLow){
+          window.abrirPerfilJugador(u);
+        }
+      }).catch(function(){});
     }
   }catch(_e){}
 };
