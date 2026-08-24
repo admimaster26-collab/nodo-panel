@@ -8174,6 +8174,7 @@ function abrirModalVincular(usuarioSugerido, telefono, prefill, desdeChat){
      <label style="margin-top:6px">Teléfono (el que ingresó en el portal)</label>
      <input id="vincTelInp" type="text" value="${escV(telefono)}" placeholder="con código de área" autocomplete="off" oninput="_altaCotejoTrigger()">
      <div id="altaCotejoBox" style="margin-top:8px"></div>
+     <div id="altaTelBox" style="margin-top:8px"></div>
      <div id="altaPrevalBox" style="margin-top:8px"></div>`,
     async function(){
       const u=String((document.getElementById("vincUsuarioInp")||{}).value||"").trim();
@@ -8326,6 +8327,63 @@ window._altaCotejoTrigger=function(){
   // CRM, en otra pantalla, y en la práctica nadie la abría antes de dar de alta.
   try{ clearTimeout(window._altaPrevalTimer); }catch(_e){}
   window._altaPrevalTimer=setTimeout(_altaPrevalRender, 650);
+  try{ clearTimeout(window._altaTelTimer); }catch(_e){}
+  window._altaTelTimer=setTimeout(_altaTelRender, 700);
+};
+
+// Qué teléfono se está por escribir. Vincular PISA el teléfono guardado con el que se
+// valida, así que si el operador valida con el número de la solicitud que tiene abierta
+// —y el cliente lo tipeó mal esa vez— queda guardado el malo y el portal lo rechaza para
+// siempre. Caso aril1213: usó el bueno 199 veces y el mal tipeado 13, y quedó el malo.
+async function _altaTelRender(){
+  const box=document.getElementById('altaTelBox'); if(!box) return;
+  const usr=String((document.getElementById('vincUsuarioInp')||{}).value||'').trim()
+         || String(window.__altaUsuarioDeclarado||'').trim();
+  const tel=String((document.getElementById('vincTelInp')||{}).value||'').replace(/\D/g,'');
+  if(!usr){ box.innerHTML=''; return; }
+  const marca=usr+'|'+tel;
+  if(box.__ultima===marca) return;
+  box.__ultima=marca;
+  try{
+    const { data, error } = await supabaseClient.rpc('panel_telefonos_de_usuario',{
+      p_secret: window.PANEL_DATA_SECRET,
+      p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+      p_usuario: usr });
+    if(box.__ultima!==marca) return;
+    if(error || !data || data.ok===false){ box.innerHTML=''; return; }
+    const usados=(data.usados||[]).filter(function(x){ return x.telefono !== tel; });
+    const malo = tel && tel.length !== 10;
+    // El más usado, sólo si es válido y no es el que ya está escrito.
+    const mejor = (data.usados||[]).filter(function(x){ return x.valido && x.telefono !== tel; })[0];
+    if(!malo && !mejor){ box.innerHTML=''; return; }
+    box.innerHTML =
+      '<div style="border:1px solid ' + (malo?'#f0883e55':'#6f8fd055') + ';background:'
+        + (malo?'rgba(240,136,62,.10)':'rgba(111,143,208,.10)') + ';border-radius:7px;padding:9px 11px">'
+      + (malo
+          ? '<b style="color:#f0883e;font-size:12.5px">⚠ ESE TELÉFONO TIENE '+tel.length+' DÍGITOS</b>'
+            + '<div class="small" style="color:#c9d1d9;margin-top:3px">Un número argentino tiene 10 '
+            + '(área + número). Si lo validás así, el usuario no va a poder entrar al portal.</div>'
+          : '<b style="color:#8fa9e0;font-size:12.5px">📱 ESTE USUARIO USA OTRO NÚMERO</b>')
+      + (mejor
+          ? '<div class="small" style="color:#c9d1d9;margin-top:5px">Usó <b style="color:#e6edf3">'
+            + escapeHtml(mejor.telefono)+'</b> en <b>'+mejor.veces+'</b> solicitud'+(mejor.veces===1?'':'es')+'. '
+            + '<button class="mini-btn green" style="margin-left:6px" onclick="crmUsarTel(\''
+            + escapeHtml(mejor.telefono)+'\')">usar este</button></div>'
+          : '')
+      + (usados.length>1
+          ? '<div class="small" style="color:#5a6474;margin-top:4px">Otros: '
+            + usados.slice(0,4).map(function(x){
+                return escapeHtml(x.telefono)+' ('+x.veces+(x.valido?'':' · inválido')+')'; }).join(' · ')+'</div>'
+          : '')
+      + '</div>';
+  }catch(_e){ box.innerHTML=''; }
+}
+window.crmUsarTel = function(t){
+  const i=document.getElementById('vincTelInp');
+  if(!i) return;
+  i.value = t;
+  try{ _altaCotejoTrigger(); }catch(_e){}
+  try{ toast('Teléfono cambiado a '+t,'green'); }catch(_e){}
 };
 
 async function _altaPrevalRender(){
@@ -12165,17 +12223,26 @@ function renderMacrosPanel(){
   p.innerHTML = html;
 }
 
-function aplicarMacroBilletera(){
-  const p = document.getElementById('macrosPanel');
-  if(p) p.classList.add('hidden');
+// El texto de la tarjeta vive acá solo, porque lo usan dos chats distintos (el grande y
+// el compacto de Inicio) y si se duplica el formato, uno de los dos se queda viejo.
+function textoTarjetaBilletera(){
   const b = getBilleraLanding();
-  if(!b){ toast('No hay billetera activa configurada', 'red'); return; }
+  if(!b) return '';
   const nombre    = b.NOMBRE_VISIBLE || '';
   const cbuAlias  = (b.CBU_ALIAS || b.CBU_CVU || '').trim();
   const esCBU     = /^\d{15,}$/.test(cbuAlias);
   let texto = '💳 ' + nombre.toUpperCase() + '\n';
   texto += esCBU ? 'CBU/CVU: ' + cbuAlias + '\n' : 'Alias: ' + cbuAlias + '\n';
   texto += 'Titular: ' + nombre + '\nBanco: ' + (b.TIPO || b.BANCO || 'MP') + '\n\nTransferí y luego enviá el comprobante por este chat.';
+  return texto;
+}
+window.textoTarjetaBilletera = textoTarjetaBilletera;
+
+function aplicarMacroBilletera(){
+  const p = document.getElementById('macrosPanel');
+  if(p) p.classList.add('hidden');
+  const texto = textoTarjetaBilletera();
+  if(!texto){ toast('No hay billetera activa configurada', 'red'); return; }
   const inp = document.getElementById('chatInput');
   if(inp){ inp.value = texto; inp.focus(); }
 }
@@ -20163,6 +20230,53 @@ body.nodo-chat-open #viewChat > div:first-child{display:none!important}
   setInterval(function(){
     syncPcWindow();
   },3000);
+})();
+</script>
+
+<script id="v15BotonesChatInicio">
+/* Los tres botones del chat de Inicio —💳 Billetera, Cerrar y Reabrir— apuntaban a
+   funciones que NUNCA existieron: el marcado estaba, el código no. Hacer clic no daba
+   error visible, simplemente no pasaba nada.
+   Las RPC ya estaban en la base (panel_v14_cerrar_chat_json / _reabrir_chat_json), sólo
+   faltaba conectarlas. Cierran por chat_id; el session_id es opcional y sólo firma el
+   mensaje de sistema. */
+(function(){
+  function chatDeInicio(){
+    return String(window.v15ChatActualId || window.chatActualId || '').trim();
+  }
+
+  window.v15EnviarTarjetaBilletera = function(){
+    const texto = (typeof textoTarjetaBilletera==='function') ? textoTarjetaBilletera() : '';
+    if(!texto){ toast('No hay billetera activa configurada','red'); return; }
+    const inp = document.getElementById('v15ChatInput');
+    if(!inp){ toast('No hay un chat abierto acá','orange'); return; }
+    inp.value = texto; inp.focus();
+    // Queda escrito para que el operador lo revise y mande: no se envía solo, porque
+    // manda datos de cobro y conviene que los mire antes.
+  };
+
+  async function cambiarEstado(rpc, verbo){
+    const chatId = chatDeInicio();
+    if(!chatId){ toast('Abrí un chat primero','orange'); return; }
+    try{
+      const { data, error } = await supabaseClient.rpc(rpc, {
+        p_session_id: null, p_chat_id: chatId,
+        p_motivo: verbo+' desde Inicio por '+
+          (((typeof operador!=='undefined' && operador) && (operador.usuario||operador.nombre)) || 'panel')
+      });
+      if(error) throw new Error(error.message||'');
+      if(data && data.ok === false){
+        toast(data.error==='CHAT_NO_ENCONTRADO' ? 'No se encontró ese chat' : ('No se pudo: '+data.error), 'red');
+        return;
+      }
+      toast('Chat '+verbo.toLowerCase(),'green');
+      try{ if(typeof v15CargarChatsCompacto==='function') v15CargarChatsCompacto(true); }catch(_e){}
+      try{ if(typeof v15AbrirChatCompacto==='function') v15AbrirChatCompacto(chatId); }catch(_e){}
+    }catch(e){ toast('No se pudo '+verbo.toLowerCase()+': '+(e.message||''),'red'); }
+  }
+
+  window.v15CerrarChatActual  = function(){ cambiarEstado('panel_v14_cerrar_chat_json','Cerrado'); };
+  window.v15ReabrirChatActual = function(){ cambiarEstado('panel_v14_reabrir_chat_json','Reabierto'); };
 })();
 </script>
 

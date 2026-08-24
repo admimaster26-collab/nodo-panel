@@ -878,6 +878,9 @@ const PANEL_RPC_ALLOW = new Set([
   'panel_reconexion_limpiar_seguros',
   'panel_dormidos',
   'panel_crm_perfil_v1',
+  'panel_telefonos_de_usuario',
+  'panel_v14_cerrar_chat_json',
+  'panel_v14_reabrir_chat_json',
   'panel_usuarios_contacto',
   'panel_prevalidar_usuario'
 ]);
