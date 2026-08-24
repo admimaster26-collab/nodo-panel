@@ -12839,6 +12839,29 @@ async function asegurarChatsSoportePortal(){
 }
 
 
+// Cartel de "esto está viejo". Vive FUERA de la tabla porque la tabla se repinta entera
+// y se lo llevaría puesto. Se define acá arriba porque la primera carga puede fallar
+// antes de que el render haya corrido una sola vez — y ese es justo el caso que importa.
+window._v154pAvisoDesfasaje = function(motivo){
+  const box = document.getElementById("tablaSolicitudesInicio");
+  if(!box || !box.parentNode) return;
+  let av = document.getElementById("v154pDesfasaje");
+  if(!motivo){ if(av) av.remove(); return; }
+  if(!av){
+    av = document.createElement("div");
+    av.id = "v154pDesfasaje";
+    av.style.cssText = "background:rgba(240,136,62,.12);border:1px solid #f0883e55;"
+      + "border-radius:7px;padding:7px 10px;margin-bottom:8px;font-size:12.5px;color:#f0883e";
+    box.parentNode.insertBefore(av, box);
+  }
+  const desde = (window.V154P && (V154P.solicitudesOkAt || V154P.solicitudesLastRenderAt)) || 0;
+  const min = desde ? Math.round((Date.now()-desde)/60000) : null;
+  av.innerHTML = "⚠ <b>Esta lista está desactualizada</b>"
+    + (min!=null ? " — última actualización hace "+(min<1?"menos de un minuto":(min+" min")) : "")
+    + ". No la tomes como la foto de ahora. "
+    + '<button class="mini-btn gray" style="margin-left:6px" onclick="cargarSolicitudesPortal(false)">Reintentar</button>';
+};
+
 async function cargarSolicitudesPortal(silencioso=false){
     // SAFE: anti-solapamiento. Si hay una carga en curso, dejamos una sola cola.
     if(V154P.solicitudesLoading){
@@ -12856,9 +12879,17 @@ async function cargarSolicitudesPortal(silencioso=false){
         if(box && !V154P.solicitudesLastHtml){
           box.innerHTML = `<div class="alert-box">Error solicitudes Portal: ${esc(msg)}</div>`;
         }
+        // Si ya había una lista pintada, se deja en pantalla para no vaciar la bandeja —
+        // pero AVISANDO que está vieja. Sin esto los datos viejos se ven igual que los
+        // frescos, y se puede aprobar dos veces algo que ya se resolvió.
+        V154P.solicitudesErrorAt = Date.now();
+        try{ _v154pAvisoDesfasaje(msg); }catch(_e){}
         if(!silencioso) console.error("[V15.4 PLUS] solicitudes portal", r.error);
         return r;
       }
+      V154P.solicitudesOkAt = Date.now();
+      V154P.solicitudesErrorAt = null;
+      try{ _v154pAvisoDesfasaje(null); }catch(_e){}
 
       V154P.solicitudes = normArr(r.data).map(mapSolicitudPortal);
       window.solicitudes = V154P.solicitudes.slice();
@@ -13067,7 +13098,7 @@ async function cargarSolicitudesPortal(silencioso=false){
 // _rv2Aprobar→_rv2Confirmar→_rv2Finalizar (registra historial + actualiza solicitud + PUSH).
 // Comparte recomendarRepartoRetiro/_montoRedondo con el madre. Incluye notificarRetiroParcialPortal.
 // ══════════════════════════════════════════════════════════════════════════
-async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, restante, montoTotal){
+async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, restante, montoTotal, saldoPost){
   if(!window.panelAPI || !window.panelAPI.rpc || !solicitudId) return { ok:false, detail:'sin panelAPI/id' };
   const op = (window.operador && (window.operador.usuario||window.operador.nombre)) || 'panel';
   const sid = Number(solicitudId);
@@ -13076,7 +13107,8 @@ async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, 
     //   landing_retiro_registrar_parcial(p_id, p_monto_parcial, p_operador)
     // Las A/B/C eran conjeturas y NINGUNA coincidía → el parcial se pagaba pero nunca se
     // registraba el progreso. Va primera.
-    { k:'N', p:{ p_id:sid, p_monto_parcial:Number(montoPago)||0, p_operador:op } },
+    { k:'N', p:{ p_id:sid, p_monto_parcial:Number(montoPago)||0, p_operador:op,
+                 p_saldo_post:(saldoPost!=null?Number(saldoPost):null) } },
     { k:'A', p:{ p_solicitud_id:sid, p_monto_pagado:Number(pagadoAcum)||0, p_monto_restante:Number(restante)||0, p_monto_total:Number(montoTotal)||0, p_operador:op } },
     { k:'B', p:{ p_solicitud_id:sid, p_monto:Number(montoPago)||0, p_operador:op } },
     { k:'C', p:{ p_solicitud_id:sid, p_monto:Number(montoPago)||0 } }
@@ -13577,7 +13609,11 @@ window._rv2Finalizar = async function(){
     : (st._metaTotal!=null ? st._metaTotal : st.objetivo);
   const pagadoAcum = (st.yaPagado||0) + total;
   const restante = Math.max(0, montoTotal - pagadoAcum);
-  const completo = restante <= 0.5;
+  // Si al usuario no le quedan fichas, el retiro está terminado aunque no se haya llegado
+  // al monto pedido: esa plata no existe. Antes quedaba EN_PROCESO para siempre y había
+  // que cerrarlo a mano (meli1804 pidió 28.000, tenía 26.002, quedó con 0,48 de saldo).
+  const _sinFichas = (st.saldoPost != null && Number(st.saldoPost) < 1);
+  const completo = (restante <= 0.5) || _sinFichas;
   const listaBil = st.pagar.map(function(b){ return b.nombre+' '+money(b.monto); }).join(' + ');
   // N° de movimiento de Chunior: el historial marca "⚠ Falta Chunior" cuando esta columna está
   // vacía. Se anotaba bien pero el número se descartaba. Con varias billeteras va el primero y
@@ -13597,6 +13633,21 @@ window._rv2Finalizar = async function(){
       chunior_movimiento_id: _chuMovs[0] || null
     });
   }catch(_e){}
+  // El titular y el CBU del retiro son el dato más fuerte que tenemos de esa persona:
+  // vienen del banco. Hasta ahora quedaban sepultados en las notas y había que rescatarlos
+  // con un backfill. Se guardan en el vínculo para que estén a mano en la ficha.
+  // Va en try/catch y sin await bloqueante: si falla, el retiro NO se ve afectado.
+  try{
+    const _titRet = String(st.titular||'').trim();
+    const _cbuRet = String(st.destino||st.cbu||'').replace(/\D/g,'');
+    if(_titRet || _cbuRet.length >= 18){
+      supabaseClient.rpc('panel_guardar_datos_retiro',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_usuario: st.usuario, p_titular: _titRet||null, p_cbu: _cbuRet||null
+      }).catch(function(){});
+    }
+  }catch(_e){}
   // Un parcial va a EN_PROCESO, NO a EN_REVISION: son bandejas distintas (EN_REVISION es "algo
   // falló / revisar") y además el portal muestra "💸 Te estamos pagando por partes" SOLO con
   // EN_PROCESO — con EN_REVISION el usuario veía "⏳ En verificación" y sin barra de progreso.
@@ -13614,7 +13665,7 @@ window._rv2Finalizar = async function(){
   // figuraban como no pagos aunque estuvieran abonados.
   const _hayProgreso = (Number(st.yaPagado)||0) > 0;
   if(!completo || _hayProgreso){
-    try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal); }
+    try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal, st.saldoPost); }
     catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
     if(!_rp || !_rp.ok){
       try{ toast('⚠ Parcial PAGADO pero sin registrar el progreso · revisalo','red'); }catch(_e){}
@@ -13719,7 +13770,10 @@ window._rv2Finalizar = async function(){
 
           // 2) REGISTRAR el progreso — solo porque el retiro salió bien
           const op = window.operador?.usuario || window.operador?.nombre || (typeof operador!=='undefined'?(operador?.usuario||operador?.nombre||''):'') || '';
-          const rp = await rpc("landing_retiro_registrar_parcial", { p_id:Number(id), p_monto_parcial:monto, p_operador:op });
+          // Lo que le queda al usuario después de este retiro. Si da ~0, la RPC cierra
+          // el retiro aunque no se haya llegado al monto pedido: esas fichas no existen.
+          const _saldoPost = (typeof saldo==="number" && Number.isFinite(saldo)) ? (saldo - monto) : null;
+          const rp = await rpc("landing_retiro_registrar_parcial", { p_id:Number(id), p_monto_parcial:monto, p_operador:op, p_saldo_post:_saldoPost });
           if(rp?.error){ alert("⚠️ El retiro SÍ se hizo, pero falló registrar el progreso:\n"+(rp.error.message||"")+"\nAvisale/registralo manualmente."); }
           const d = (rp && rp.data && (Array.isArray(rp.data)?rp.data[0]:rp.data)) || {pagado:monto,total:total,completado:false};
           // NO confiamos en d.completado: lo recalculamos con pagado vs total (la RPC venía marcando

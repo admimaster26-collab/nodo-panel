@@ -475,8 +475,71 @@ async function esperarListaEstable(wanted, tope) {
   return (filasJugador().length === 0 && iguales >= 3);
 }
 
+// El backoffice de BET300 abre un flyer publicitario al iniciar sesión (una imagen con
+// novedades, con la X arriba a la derecha). Mientras está abierto TAPA el buscador: la
+// búsqueda no dispara y la operación termina en "usuario no encontrado" — el mismo error
+// que después, reintentando, funciona bien.
+//
+// Cierra SOLO cosas de cerrar: nunca toca botones de acción. El flyer promociona activar
+// funciones del backoffice, así que un clic a ciegas podría activarle algo al agente.
+const _FLYER_NO_TOCAR = /(activar|activá|aceptar|confirmar|continuar|descargar|ver m[aá]s|s[ií]\b|ok)/i;
+
+async function cerrarFlyerPromocional() {
+  const overlay = firstVisible('.v-overlay--active.v-dialog') ||
+                  firstVisible('.v-overlay--active') ||
+                  firstVisible('[role="dialog"]');
+  if (!overlay) return false;
+
+  // 1) Botón con texto de cerrar, si lo hubiera.
+  const porTexto = findByText(/^(cerrar|cancelar|close|salir)$/i, 'button, .v-btn', overlay);
+  if (porTexto && !_FLYER_NO_TOCAR.test(normalizeText(porTexto.textContent || ''))) {
+    clickElement(porTexto); await delay(250);
+    if (!firstVisible('.v-overlay--active')) return true;
+  }
+
+  // 2) Ícono de cerrar (el caso del flyer: no tiene texto, es una X).
+  const iconos = ['mdi-close', 'mdi-close-circle', 'mdi-window-close', 'mdi-close-thick'];
+  for (const ic of iconos) {
+    const b = iconBtn(ic, overlay);
+    if (b && !botonDeshabilitado(b)) {
+      clickElement(b); await delay(250);
+      if (!firstVisible('.v-overlay--active')) return true;
+    }
+  }
+
+  // 3) Cualquier botón-ícono chico del cuadrante superior derecho del cuadro. Se exige
+  //    que sea chico (<=64px) para no apretar un botón grande de acción por error.
+  try {
+    const r = overlay.getBoundingClientRect();
+    const cands = Array.from(overlay.querySelectorAll('button, .v-btn, [role="button"]'))
+      .filter(function (b) {
+        if (botonDeshabilitado(b)) return false;
+        if (_FLYER_NO_TOCAR.test(normalizeText(b.textContent || ''))) return false;
+        const rb = b.getBoundingClientRect();
+        return rb.width > 0 && rb.width <= 64 && rb.height <= 64 &&
+               rb.top < r.top + r.height * 0.35 && rb.left > r.left + r.width * 0.6;
+      });
+    if (cands.length) {
+      clickElement(cands[0]); await delay(250);
+      if (!firstVisible('.v-overlay--active')) return true;
+    }
+  } catch (_e) {}
+
+  // 4) Escape.
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+  await delay(250);
+  if (!firstVisible('.v-overlay--active')) return true;
+
+  // 5) Último recurso: el fondo oscuro. Cierra los diálogos no persistentes.
+  const scrim = firstVisible('.v-overlay__scrim');
+  if (scrim) { clickElement(scrim); await delay(250); }
+  return !firstVisible('.v-overlay--active');
+}
+
 async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
   const wanted = String(alias).trim();
+  // Si quedó el flyer abierto tapando el buscador, sacarlo ANTES de escribir.
+  try { if (await cerrarFlyerPromocional()) console.log('[bet300] flyer del backoffice cerrado'); } catch (_e) {}
   await waitFor(findSearchInput, timeout, 120, 'input-busqueda');
 
   // 1) Escribir Y VERIFICAR (antes: si no aceptaba, tiraba error y cortaba todo el flujo).
