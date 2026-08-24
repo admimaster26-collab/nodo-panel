@@ -322,6 +322,10 @@ function cerrarMenusAbiertos() {
 
 // Cierra diálogos/menús/toasts colgados de una operación anterior (retoma sin refrescar).
 async function recuperarFlujoPendiente() {
+  // Primero el flyer de novedades: es un .v-dialog, así que findActiveModal() lo toma por
+  // modal de trabajo y más abajo ensureReady() da la página por "operable" sin volver al
+  // inicio. Sacándolo acá, el resto del arranque ve la pantalla real.
+  try { if (await cerrarFlyerPromocional()) console.log('[bet300] flyer del backoffice cerrado'); } catch (_e) {}
   for (let i = 0; i < 4; i++) {
     if (pageIsBlocked() || pageNeedsLogin()) return status();
     if (findActiveModal()) { await cerrarModalActual(); await delay(200); continue; }
@@ -475,65 +479,62 @@ async function esperarListaEstable(wanted, tope) {
   return (filasJugador().length === 0 && iguales >= 3);
 }
 
-// El backoffice de BET300 abre un flyer publicitario al iniciar sesión (una imagen con
-// novedades, con la X arriba a la derecha). Mientras está abierto TAPA el buscador: la
-// búsqueda no dispara y la operación termina en "usuario no encontrado" — el mismo error
-// que después, reintentando, funciona bien.
-//
-// Cierra SOLO cosas de cerrar: nunca toca botones de acción. El flyer promociona activar
-// funciones del backoffice, así que un clic a ciegas podría activarle algo al agente.
-const _FLYER_NO_TOCAR = /(activar|activá|aceptar|confirmar|continuar|descargar|ver m[aá]s|s[ií]\b|ok)/i;
+// ── Flyer de novedades de BET300 ─────────────────────────────────────────────
+// El backoffice abre una publicidad ("¡NOVEDAD EN EL BACKOFFICE!") al iniciar sesión.
+// Mientras está abierta tapa el buscador y no deja confirmar el modal de carga: la
+// operación muere con "tiempo de espera agotado". Cerrándola a mano, todo va bien.
+// Aparece UNA vez por sesión, así que alcanza con sacarla antes de buscar al usuario.
+
+// Guarda: el modal de carga/retiro TAMBIÉN es un .v-overlay--active. Cerrarlo por error
+// sería cortarle la operación al operador. Un modal de trabajo siempre tiene campos; el
+// flyer es una imagen y nada más.
+function esFlyerYNoModalDeTrabajo(overlay) {
+  if (!overlay) return false;
+  try {
+    if (overlay.querySelector('input, textarea, select')) return false;
+    if (/cargar|retirar|cantidad|bono|clave|crear|enviar|finalizar/i.test(overlay.textContent || '')) return false;
+  } catch (_e) { return false; }
+  return true;
+}
 
 async function cerrarFlyerPromocional() {
-  const overlay = firstVisible('.v-overlay--active.v-dialog') ||
-                  firstVisible('.v-overlay--active') ||
-                  firstVisible('[role="dialog"]');
-  if (!overlay) return false;
+  const capas = visibleElements('.v-overlay--active, [role="dialog"]');
+  const flyer = capas.filter(esFlyerYNoModalDeTrabajo).pop();   // la de más arriba
+  if (!flyer) return false;
+  const sigueAbierto = () => document.contains(flyer) && isVisible(flyer);
 
-  // 1) Botón con texto de cerrar, si lo hubiera.
-  const porTexto = findByText(/^(cerrar|cancelar|close|salir)$/i, 'button, .v-btn', overlay);
-  if (porTexto && !_FLYER_NO_TOCAR.test(normalizeText(porTexto.textContent || ''))) {
-    clickElement(porTexto); await delay(250);
-    if (!firstVisible('.v-overlay--active')) return true;
-  }
-
-  // 2) Ícono de cerrar (el caso del flyer: no tiene texto, es una X).
-  const iconos = ['mdi-close', 'mdi-close-circle', 'mdi-window-close', 'mdi-close-thick'];
-  for (const ic of iconos) {
-    const b = iconBtn(ic, overlay);
+  // 1) La X. Es como lo cierra el operador, así que es el camino más fiel.
+  for (const ic of ['mdi-close', 'mdi-close-circle', 'mdi-window-close', 'mdi-close-thick']) {
+    const b = iconBtn(ic, flyer);
     if (b && !botonDeshabilitado(b)) {
       clickElement(b); await delay(250);
-      if (!firstVisible('.v-overlay--active')) return true;
+      if (!sigueAbierto()) return true;
     }
   }
 
-  // 3) Cualquier botón-ícono chico del cuadrante superior derecho del cuadro. Se exige
-  //    que sea chico (<=64px) para no apretar un botón grande de acción por error.
+  // 2) Botón chico del cuadrante superior derecho (la X sin ícono mdi reconocible).
+  //    Se exige que sea CHICO para no apretar un botón grande de acción del flyer:
+  //    la publicidad ofrece ACTIVAR funciones y un clic a ciegas activaría algo.
   try {
-    const r = overlay.getBoundingClientRect();
-    const cands = Array.from(overlay.querySelectorAll('button, .v-btn, [role="button"]'))
-      .filter(function (b) {
-        if (botonDeshabilitado(b)) return false;
-        if (_FLYER_NO_TOCAR.test(normalizeText(b.textContent || ''))) return false;
-        const rb = b.getBoundingClientRect();
-        return rb.width > 0 && rb.width <= 64 && rb.height <= 64 &&
-               rb.top < r.top + r.height * 0.35 && rb.left > r.left + r.width * 0.6;
-      });
-    if (cands.length) {
-      clickElement(cands[0]); await delay(250);
-      if (!firstVisible('.v-overlay--active')) return true;
-    }
+    const r = flyer.getBoundingClientRect();
+    const chico = visibleElements('button, .v-btn, [role="button"]', flyer).find(b => {
+      if (botonDeshabilitado(b)) return false;
+      if (/activar|aceptar|confirmar|continuar|descargar|ver m[aá]s/i.test(normalizeText(b.textContent || ''))) return false;
+      const rb = b.getBoundingClientRect();
+      return rb.width > 0 && rb.width <= 64 && rb.height <= 64 &&
+             rb.top < r.top + r.height * 0.4 && rb.left > r.left + r.width * 0.55;
+    });
+    if (chico) { clickElement(chico); await delay(250); if (!sigueAbierto()) return true; }
   } catch (_e) {}
 
-  // 4) Escape.
+  // 3) Escape y, último, el fondo oscuro.
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
   await delay(250);
-  if (!firstVisible('.v-overlay--active')) return true;
+  if (!sigueAbierto()) return true;
 
-  // 5) Último recurso: el fondo oscuro. Cierra los diálogos no persistentes.
   const scrim = firstVisible('.v-overlay__scrim');
   if (scrim) { clickElement(scrim); await delay(250); }
-  return !firstVisible('.v-overlay--active');
+  return !sigueAbierto();
 }
 
 async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
@@ -785,7 +786,12 @@ async function aplicarMonto(tipo, amount, options = {}) {
     if (enviar && !botonDeshabilitado(enviar)) break;
     await delay(150);
   }
-  if (!enviar) throw new Error('No se encontró el botón "Enviar".');
+  if (!enviar) {
+    // Nunca se clickeó nada, así que cerrar es seguro — y si lo dejábamos abierto, el modal
+    // colgado le tapaba el buscador a la operación siguiente (que fallaba sin motivo visible).
+    await cerrarModalActual();
+    throw new Error('No se encontró el botón "Enviar". NO se envió nada.');
+  }
   if (botonDeshabilitado(enviar)) {
     await cerrarModalActual();
     throw new Error('El botón "Enviar" siguió deshabilitado tras 6s (¿monto inválido o campo obligatorio vacío?). NO se envió nada.');
