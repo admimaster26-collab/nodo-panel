@@ -2647,7 +2647,8 @@ function finalizarLogin(guardar=true){
   if(!timersIniciados){
     timersIniciados=true;
     setInterval(()=>cargarSolicitudes(true),60000);  // fallback lento: el tiempo real lo da el broadcast (iniciarBroadcastSolicitudes)
-    setInterval(()=>cargarChats(true),4500);
+    // (se quitó el setInterval de cargarChats cada 4,5 s: consultaba una tabla
+    //  inexistente y solo generaba pedidos fallidos — ver la nota en cargarChats)
     setInterval(()=>cargarBilleteras(false),20000);
     setInterval(()=>{ if(chatActualId) cargarChatActual(true); },3500);
   }
@@ -2972,6 +2973,18 @@ async function cargarBilleteras(render=true){
 }
 
 async function cargarChats(silencioso=false){
+  // ⛔ INERTE. Consultaba la tabla "chats", que NO EXISTE en la base: cada llamada
+  // terminaba en un 404 que el `if(error) return` se tragaba en silencio, así que
+  // renderChatList/renderInicio de acá abajo nunca corrían.
+  //
+  // Con el temporizador de 4,5 s eran ~19.200 pedidos fallidos por día en cada PC —
+  // unos 134.000 diarios entre las siete— sin que nadie lo notara.
+  //
+  // El chat de verdad son las solicitudes tipo SOPORTE (metadata.chat_thread), y las
+  // trae otro camino. renderInicio() tiene once llamadores más, así que la pantalla
+  // se refresca igual. Se deja la función (hay ~12 callers) y se saca el temporizador.
+  return;
+  /* eslint-disable no-unreachable */
   const {data,error}=await supabaseClient
     .from("chats")
     .select("*")
