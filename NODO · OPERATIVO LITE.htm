@@ -4746,7 +4746,7 @@ async function _pjCargarFicha(usuario){
   const box = document.getElementById('pjFichaBox'); if(!box) return;
   let d = null;
   try{
-    const r = await supabaseClient.rpc('panel_usuario_ficha', { p_usuario: usuario, p_pc_codigos: null });
+    const r = await supabaseClient.rpc('panel_usuario_ficha', { p_usuario: usuario, p_pc_codigos: null, p_secret: window.PANEL_DATA_SECRET });
     if(r && !r.error) d = (typeof r.data === 'string') ? JSON.parse(r.data) : r.data;
   }catch(_e){}
   // El perfil pudo cerrarse o cambiar de usuario mientras respondía.
@@ -4953,6 +4953,8 @@ window.abrirPerfilJugador = function(usuario){
     +       '<div class="small" style="color:#8b949e">'+ops.length+' operación/es · '+esc(crm.accion||'')+'</div></div>'
     +     '<button class="mini-btn blue" onclick="crmCopiarPromo(\''+uEsc+'\')">📋 Promo</button>'
     +     '<button class="mini-btn green" onclick="crmPushIndividual(\''+uEsc+'\')">📲 Push</button>'
+    +     '<button class="mini-btn blue" title="Copia un enlace que lo mete al portal ya validado, en Cargar. Vale 30 min y un solo uso." onclick="crmEnlaceAcceso(\''+uEsc+'\',\'CARGAR\')">🔗 Cargar</button>'
+    +     '<button class="mini-btn blue" title="Igual que el anterior pero lo abre en Retirar." onclick="crmEnlaceAcceso(\''+uEsc+'\',\'RETIRAR\')">🔗 Retirar</button>'
     +     '<button class="mini-btn gray" onclick="cerrarPerfilJugador()" style="font-weight:800">✕</button>'
     +   '</div>'
     +   '<div class="pj-body">'
@@ -5707,12 +5709,12 @@ async function cargarHistorial(){
 async function cargarOperacionesAgente(){
   const pcs = (typeof pcAliasesHist==="function" ? pcAliasesHist() : [String(pcOperativa||"")]);
   try{
-    const { data, error } = await supabaseClient.rpc("panel_crm_agente_resumen", { p_pc_codigos: pcs });
+    const { data, error } = await supabaseClient.rpc("panel_crm_agente_resumen", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });
     window._agenteResumen = error ? (window._agenteResumen||[]) : (data||[]);
   }catch(_e){ window._agenteResumen = window._agenteResumen||[]; }
   // Flags push/app por jugador → para mostrar 🔔/📱 en el CRM
   try{
-    const { data, error } = await supabaseClient.rpc("panel_crm_flags", { p_pc_codigos: pcs });
+    const { data, error } = await supabaseClient.rpc("panel_crm_flags", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });
     const m = {};
     if(!error && Array.isArray(data)){ data.forEach(function(f){ m[String(f.usuario||"").toLowerCase()] = {push:!!f.push, app:!!f.app}; }); }
     window._crmFlags = m;
@@ -5721,12 +5723,12 @@ async function cargarOperacionesAgente(){
   // aunque NO tengan operaciones de agente ni del panel. Aporta teléfono/estado; ops quedan en 0.
   // Requiere la RPC panel_crm_vinculos (SQL). Si no existe, el CRM sigue andando sin esta fuente.
   try{
-    const { data, error } = await supabaseClient.rpc("panel_crm_vinculos", { p_pc_codigos: pcs });
+    const { data, error } = await supabaseClient.rpc("panel_crm_vinculos", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });
     window._crmVinculos = (!error && Array.isArray(data)) ? data : (window._crmVinculos||[]);
   }catch(_e){ window._crmVinculos = window._crmVinculos||[]; }
   // Total de registrados en WTK (contador barato) → GLOBAL (todas las oficinas), sin cargar los 53k+ vínculos.
   try{
-    const { data } = await supabaseClient.rpc("panel_crm_vinculos_count", { p_pc_codigos: null });
+    const { data } = await supabaseClient.rpc("panel_crm_vinculos_count", { p_pc_codigos: null, p_secret: window.PANEL_DATA_SECRET });
     window._crmWtkTotal = (data === 0 || data) ? Number(data) : null;
     const el = document.getElementById("crmWtkTotal");
     if(el && window._crmWtkTotal != null) el.textContent = Number(window._crmWtkTotal).toLocaleString("es-AR");
@@ -8066,7 +8068,7 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
   try{
     const q=(tD.length>=6?tD:String(usuarioDecl||'').trim());
     if(q && q.length>=3 && typeof supabaseClient!=='undefined' && supabaseClient){
-      const r=await supabaseClient.rpc('panel_crm_vinculos_buscar',{p_pc_codigos:null, p_query:q, p_limit:40});
+      const r=await supabaseClient.rpc('panel_crm_vinculos_buscar',{p_pc_codigos:null, p_query:q, p_limit:40, p_secret:window.PANEL_DATA_SECRET});
       if(!r.error && Array.isArray(r.data)){
         r.data.forEach(function(v){
           const k=String(v.usuario||'').toLowerCase(); if(!k) return;
@@ -8158,7 +8160,8 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
       supabaseClient.rpc('panel_usuario_evento', {
         p_pc_codigo: pcCod, p_usuario: usuario, p_evento: 'VALIDACION',
         p_telefono_nuevo: telefono, p_nota: _notaEvento,
-        p_operador: (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || ''
+        p_operador: (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || '',
+        p_secret: window.PANEL_DATA_SECRET
       });
     }catch(_e){}
     // AGENDADO → Nexo: el alta ya queda en la base local; disparamos el sync para que Nexo reciba
@@ -9737,7 +9740,7 @@ async function _chuniorConfirmarPuesto(value, text){
     let pcCodigoNuevo = normalizarPcCodigo(text);
     let oficinaIdNueva = pcCodigoNuevo;
     try{
-      const rr = await supabaseClient.rpc('panel_resolver_puesto', { p_nombre: text });
+      const rr = await supabaseClient.rpc('panel_resolver_puesto', { p_nombre: text, p_secret: window.PANEL_DATA_SECRET });
       const row = rr && rr.data && rr.data[0];
       // Canonicalizar PCx→Px también acá: si el alias en el server devuelve "PC5", igual lo
       // dejamos como "P5" para no volver a stampear billeteras en la oficina fantasma.
@@ -18445,6 +18448,41 @@ async function ejecutarSolicitudPortalSimple(ctx){
     .crm-toolbar{display:grid;grid-template-columns:repeat(6,minmax(120px,1fr));gap:8px;margin-bottom:12px}.crm-toolbar input,.crm-toolbar select{margin:0!important;padding:8px 10px!important;font-size:12px!important}.crm-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px}.crm-stat{background:#1b202c;border:1px solid #2e3444;border-radius:14px;padding:12px}.crm-stat .k{font-size:11px;color:#98a2b3;font-weight:800;text-transform:uppercase}.crm-stat .v{font-size:22px;font-weight:950;margin-top:4px}.crm-table-wrap{max-height:560px;overflow:auto;border:1px solid #2d3342;border-radius:14px}.crm-seg{display:inline-flex;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:950}.crm-vip{background:#3b2a09;color:#ffd98f}.crm-activo{background:#11371f;color:#b9f7cb}.crm-tibio{background:#3b300b;color:#fde68a}.crm-frio{background:#3a1515;color:#ffd0d0}.crm-nuevo{background:#16235f;color:#cbd5ff}.crm-score{font-weight:950;color:#7dd3fc}.crm-actions{display:flex;gap:6px;flex-wrap:wrap}@media(max-width:1100px){.crm-toolbar{grid-template-columns:repeat(2,minmax(120px,1fr))}}`;document.head.appendChild(st)}
   function promoTexto(j){if(!j)return"";if(j.segmento==="VIP")return`Hola ${j.usuario} 👋 Tenemos una promo especial para vos por ser jugador frecuente. Consultame y te la activo.`;if(j.segmento==="ACTIVO")return`Hola ${j.usuario} 👋 ¿Seguimos jugando? Tenemos promos activas para hoy.`;if(j.segmento==="TIBIO")return`Hola ${j.usuario} 👋 Hace unos días no te vemos cargar. Hoy podemos darte un extra para volver.`;if(j.segmento==="FRIO")return`Hola ${j.usuario} 👋 Volvé hoy y consultame por un bono de reactivación.`;return`Hola ${j.usuario} 👋 Bienvenido/a. Si querés cargar, te ayudo por acá.`}
   window.crmCopiarPromo=function(usuario){const j=(window._crmJugadoresData||[]).find(x=>U(x.usuario)===U(usuario));const txt=promoTexto(j);navigator.clipboard?.writeText(txt).then(()=>{try{toast("Promo copiada","green")}catch(_e){alert("Promo copiada")}}).catch(()=>alert(txt))};
+  // ── Enlace de acceso al portal ──────────────────────────────────────────────
+  // Deja al usuario ADENTRO del portal ya validado y en la pantalla que elige el operador.
+  // Pensado para los que piden CBU por WhatsApp: en vez de explicarle cómo entrar, se le manda
+  // el enlace y hace la solicitud solo. NO es para repartir: primero se lo mira acá en el perfil,
+  // y recién si está en orden se le manda. Vale UNA vez y vence a los 30 minutos; si genera otro,
+  // el anterior queda anulado automáticamente.
+  window.PORTAL_BASE_URL = localStorage.getItem("nodo_portal_base_url") || "https://portal-bet300-a4xj.vercel.app";
+  window.crmEnlaceAcceso = async function(usuario, destino){
+    const btnTxt = destino==="RETIRAR" ? "retirar" : "cargar";
+    try{
+      const pc = String((typeof pcOperativa!=="undefined" && pcOperativa) || window.pcOperativa || "").trim();
+      if(!pc){ toast("No sé de qué oficina sos. Reabrí el panel.","red"); return; }
+      const op = (typeof operador!=="undefined" && operador && (operador.usuario||operador.nombre)) || "";
+      const r = await supabaseClient.rpc("panel_acceso_link_crear",{
+        p_secret: window.PANEL_DATA_SECRET, p_pc: pc, p_usuario: usuario,
+        p_destino: destino, p_operador: op, p_minutos: 30
+      });
+      if(r.error){
+        // "sin vínculo" y "bloqueado" ya vienen redactados para leer; el resto son técnicos.
+        const m = String(r.error.message||"");
+        toast(/no-auth/i.test(m) ? "Este panel no tiene permiso para generar enlaces. Avisá a soporte."
+            : m ? m
+            : "No se pudo generar el enlace", "red");
+        return;
+      }
+      const row = Array.isArray(r.data) ? r.data[0] : r.data;
+      if(!row || !row.o_token){ toast("No se pudo generar el enlace","red"); return; }
+      // El ?r= sirve de red: si el enlace ya fue usado, igual cae en el portal de ESTA oficina.
+      const url = window.PORTAL_BASE_URL + "/?r=" + encodeURIComponent(row.o_public_code||"") + "&t=" + row.o_token;
+      const msg = "Entrá por acá para " + btnTxt + ", ya validado 👇\n" + url + "\n\n(Es personal y vale por 30 minutos.)";
+      try{ await navigator.clipboard.writeText(msg); toast("Enlace para "+btnTxt+" copiado · pegalo en el WhatsApp","green"); }
+      catch(_e){ prompt("Copiá el enlace:", url); }
+    }catch(e){ toast("No se pudo generar el enlace","red"); }
+  };
+
   window.crmFiltrar=function(){
     const data=window._crmJugadoresData||buildCRM();
     const qraw=document.getElementById("crmBuscar")?.value||"";
