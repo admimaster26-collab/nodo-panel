@@ -6663,11 +6663,25 @@ async function procesarColaCambioBilletera(filas, bilNueva){
       const r = await _cambiarBilleteraChunior(h.chunior_movimiento_id, bilNueva.CHUNIOR_UID);
       if(r && r.ok){
         ok++;
+        // La billetera anterior se guarda ANTES del update, que la pisa.
+        const _bilAntesId     = h.billetera_id;
+        const _bilAntesNombre = h.billetera_nombre;
         try {
           await supabaseClient.from("historial_ops")
             .update({ billetera_id: bilNueva.ID_BILLETERA, billetera_nombre: bilNueva.NOMBRE_VISIBLE })
             .eq("id", h.id);
         } catch(eUpd){ console.warn("update historial_ops lote:", eUpd); }
+        await _asentarCambioBilletera({
+          movId: h.chunior_movimiento_id,
+          historialId: h.id,
+          solicitudId: h.solicitud_id || null,
+          monto: h.monto || 0,
+          bilAnteriorId: _bilAntesId,
+          bilAnteriorNombre: _bilAntesNombre,
+          bilNuevaId: bilNueva.ID_BILLETERA,
+          bilNuevaNombre: bilNueva.NOMBRE_VISIBLE,
+          origen: 'MANUAL_LOTE'
+        });
         h.billetera_id = bilNueva.ID_BILLETERA;
         h.billetera_nombre = bilNueva.NOMBRE_VISIBLE;
       } else {
@@ -11347,8 +11361,12 @@ async function _transferirEntreBilleterasChunior(origenUid, destinoUid, monto, n
   }
   if(!injectRes || !injectRes.ok) return { ok:false, error:'Inyección falló: ' + JSON.stringify(injectRes) };
 
-  // Esperar confirmación
+  // Esperar confirmación Y LEER EL N° DE MOVIMIENTO.
+  // Antes solo devolvía {ok:true}: la plata se movía en Chunior y de este lado no quedaba
+  // ni el número, así que después no había forma de atar la transferencia a nada. Se usa
+  // el mismo lector que el depósito sin reclamar, que viene funcionando.
   await new Promise(function(r){ setTimeout(r, 2500); });
+  let movimientoId = null;
   try {
     const ok = await window.chunior.exec(
       '(function(){' +
@@ -11363,9 +11381,22 @@ async function _transferirEntreBilleterasChunior(origenUid, destinoUid, monto, n
       ).catch(function(){ return null; });
       return { ok:false, error: errMsg || 'Chunior no confirmó la transferencia' };
     }
+    // El N° es "si está, mejor": si no aparece, la transferencia igual se hizo y se
+    // registra sin número. Nunca se falla una transferencia buena por no poder leerlo.
+    movimientoId = await window.chunior.exec(
+      '(function(){' +
+        'var ok=document.querySelector("li.success")||document.querySelector(".messagelist .success")||document.querySelector(".success");' +
+        'if(!ok) return null;' +
+        'var a=ok.querySelector("a[href]");' +
+        'if(a){var mh=(a.getAttribute("href")||"").match(/(\\d{3,})/); if(mh) return mh[1];}' +
+        'var txt=ok.textContent||"";' +
+        'var mt=txt.match(/n[\\sº°o\\.]{0,4}(\\d{4,})/i) || txt.match(/(\\d{5,})/);' +
+        'return mt ? mt[1] : null;' +
+      '})()'
+    ).catch(function(){ return null; });
   } catch(_){}
 
-  return { ok:true };
+  return { ok:true, movimientoId: movimientoId || null };
 }
 
 // Modal NODO para transferir entre billeteras.
@@ -11979,9 +12010,31 @@ function abrirModalTransferirBilleteras(){
       try {
         const r = await _transferirEntreBilleterasChunior(bilOrigen.CHUNIOR_UID, bilDestino.CHUNIOR_UID, monto, notas);
         if(r.ok){
-          // Ajustar saldos locales: -monto del origen, +monto al destino
-          if(bilOrigen.ID_BILLETERA)  await ajustarSaldoBilletera(bilOrigen.ID_BILLETERA, -monto);
-          if(bilDestino.ID_BILLETERA) await ajustarSaldoBilletera(bilDestino.ID_BILLETERA,  monto);
+          // Los saldos NO se tocan a mano: Chunior es la fuente de verdad y los repinta al
+          // sincronizar. (Antes había acá dos llamadas a ajustarSaldoBilletera que no hacían
+          // nada — la función está inerte desde que se sacó el contador paralelo.)
+
+          // ASIENTO. Esto faltaba: la plata se movía en Chunior y de este lado no quedaba
+          // rastro de quién la movió, entre qué billeteras ni por qué. Mismo formato que
+          // tenían los MOV_BILLETERA del 8/8 ("ORIGEN → DESTINO"), más el N° de Chunior.
+          // Va en try: si falla el registro, la transferencia ya se hizo y no se toca.
+          try{
+            await registrarEnHistorial({
+              usuario: 'MOV BILLETERA',
+              tipo: 'MOV_BILLETERA',
+              monto: monto,
+              billetera_id: bilOrigen.ID_BILLETERA || null,       // de dónde salió
+              billetera_nombre: (bilOrigen.NOMBRE_VISIBLE||'?') + ' → ' + (bilDestino.NOMBRE_VISIBLE||'?'),
+              origen: 'MANUAL',
+              estado: 'OK',
+              notas: 'Transferencia entre billeteras'
+                     + (notas ? (' · ' + notas) : '')
+                     + (bilDestino.ID_BILLETERA ? (' · destino_id=' + bilDestino.ID_BILLETERA) : '')
+                     + (r.movimientoId ? (' · Chunior N° ' + r.movimientoId) : ' [SIN_N_CHUNIOR]'),
+              chunior_movimiento_id: r.movimientoId || null
+            });
+          }catch(eHist){ console.warn('registrar MOV_BILLETERA:', eHist); }
+
           toast("✅ Transferencia OK · " + money(monto) + " · " + bilOrigen.NOMBRE_VISIBLE + " → " + bilDestino.NOMBRE_VISIBLE, "green");
           cerrarModal();
           renderBillerasInicio();
@@ -12000,6 +12053,36 @@ function abrirModalTransferirBilleteras(){
 
 // Modal NODO para cambiar la billetera de un movimiento ya registrado.
 // El operador NUNCA ve Chunior — toda la maniobra se hace en background.
+
+// ── Asiento del cambio de billetera ──────────────────────────────────────────
+// Cambiar billetera SOBRESCRIBE: en Chunior pisa la cuenta destino del mismo N° de
+// movimiento, y acá hace un update sobre historial_ops. La billetera anterior se perdía
+// para siempre — no quedaba desde cuál se cambió, ni quién, ni cuándo.
+//
+// Esta función NO cambia nada de eso: solo deja el asiento aparte, antes de pisar.
+// El update sigue igual. Va en try porque un fallo del registro nunca debe frenar una
+// corrección que el operador necesita hacer.
+async function _asentarCambioBilletera(datos){
+  try{
+    const desde = datos.bilAnteriorNombre || (datos.bilAnteriorId ? ('id ' + datos.bilAnteriorId) : '—');
+    const hacia = datos.bilNuevaNombre || (datos.bilNuevaId ? ('id ' + datos.bilNuevaId) : '—');
+    await registrarEnHistorial({
+      usuario: 'CAMBIO BILLETERA',
+      tipo: 'CAMBIO_BILLETERA',
+      monto: Number(datos.monto || 0),
+      billetera_id: datos.bilAnteriorId || null,     // la que estaba mal anotada
+      billetera_nombre: desde + ' → ' + hacia,
+      origen: datos.origen || 'MANUAL',
+      estado: 'OK',
+      notas: 'Cambio de billetera'
+             + (datos.movId ? (' · Chunior N° ' + datos.movId) : ' · sin N° de Chunior')
+             + (datos.bilNuevaId ? (' · destino_id=' + datos.bilNuevaId) : '')
+             + (datos.historialId ? (' · historial_id=' + datos.historialId) : '')
+             + (datos.solicitudId ? (' · solicitud=' + datos.solicitudId) : ''),
+      chunior_movimiento_id: datos.movId || null
+    });
+  }catch(e){ console.warn('asentar CAMBIO_BILLETERA:', e); }
+}
 
 function cambiarBilleteraHistorialLocal(historialId, currentBilId, solicitudId){
   const bils = billeteras.filter(function(b){
@@ -12045,12 +12128,31 @@ function cambiarBilleteraHistorialLocal(historialId, currentBilId, solicitudId){
       // UUID validation: historial_ops.id is uuid — reject numeric/non-uuid strings
       const historialIdUUID = (historialId && /^[0-9a-f-]{32,}$/i.test(historialId) && historialId.includes('-')) ? historialId : '';
       try{
+        let _antesLocal = null;
         if(historialIdUUID){
+          // Leer antes de pisar, igual que en el camino con N° de Chunior.
+          try{
+            const q = await supabaseClient.from("historial_ops")
+              .select("monto,billetera_id,billetera_nombre")
+              .eq("id", historialIdUUID).maybeSingle();
+            _antesLocal = (q && q.data) ? q.data : null;
+          }catch(_e){}
           const upd = await supabaseClient.from("historial_ops")
             .update({ billetera_id: nuevoBilId, billetera_nombre: bilNueva.NOMBRE_VISIBLE })
             .eq("id", historialIdUUID);
           if(upd.error) throw new Error(upd.error.message || 'No se pudo actualizar historial_ops');
         }
+        await _asentarCambioBilletera({
+          movId: null,                                  // este camino es el que NO tiene N°
+          historialId: historialIdUUID || null,
+          solicitudId: solicitudId || null,
+          monto: _antesLocal ? _antesLocal.monto : 0,
+          bilAnteriorId: _antesLocal ? _antesLocal.billetera_id : (currentBilId || null),
+          bilAnteriorNombre: _antesLocal ? _antesLocal.billetera_nombre : null,
+          bilNuevaId: nuevoBilId,
+          bilNuevaNombre: bilNueva.NOMBRE_VISIBLE,
+          origen: 'MANUAL_LOCAL'
+        });
 
         if(solicitudId){
           try{
@@ -12128,6 +12230,17 @@ function cambiarBilleteraMovimiento(movId, historialId, currentBilId){
       try {
         const r = await _cambiarBilleteraChunior(movId, bilNueva.CHUNIOR_UID);
         if(r.ok){
+          // Leer la fila ANTES de pisarla: el update borra la billetera anterior y el
+          // monto, que son justo los datos que hacen falta para auditar el cambio.
+          let _antes = null;
+          if(historialId){
+            try{
+              const q = await supabaseClient.from("historial_ops")
+                .select("monto,billetera_id,billetera_nombre,solicitud_id")
+                .eq("id", historialId).maybeSingle();
+              _antes = (q && q.data) ? q.data : null;
+            }catch(_e){}
+          }
           // Actualizar la fila en historial_ops
           if(historialId){
             try {
@@ -12136,6 +12249,16 @@ function cambiarBilleteraMovimiento(movId, historialId, currentBilId){
                 .eq("id", historialId);
             } catch(eUpd){ console.warn("update historial_ops:", eUpd); }
           }
+          await _asentarCambioBilletera({
+            movId: movId,
+            historialId: historialId,
+            solicitudId: _antes ? _antes.solicitud_id : null,
+            monto: _antes ? _antes.monto : 0,
+            bilAnteriorId: _antes ? _antes.billetera_id : (currentBilId || null),
+            bilAnteriorNombre: _antes ? _antes.billetera_nombre : null,
+            bilNuevaId: nuevoBilId,
+            bilNuevaNombre: bilNueva.NOMBRE_VISIBLE
+          });
           const tagMov = r.movId ? ' (N° ' + r.movId + ')' : '';
           toast("✅ Billetera cambiada · " + bilNueva.NOMBRE_VISIBLE + tagMov, "green");
           cerrarModal();
