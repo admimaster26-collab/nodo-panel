@@ -14159,11 +14159,23 @@ window._rv2Finalizar = async function(){
       const reqs = '🔔 Push '+(d.push?'✅':'❌')+' &nbsp;·&nbsp; 📱 App '+(d.app?'✅':'❌');
       const _bmax = Number(d.bono_max)||0;
       const _topeTxt = _bmax ? ` <span style="color:#fbbf24">· tope ${esc(money(_bmax))}</span>` : '';
+      // El bono se controla por USUARIO, pero la misma persona puede abrir otro usuario y volver
+      // a cobrarlo. Lo único que no puede cambiar es la cuenta donde cobra. Si esa cuenta ya
+      // recibió el bono con otro usuario, avisamos y dejamos el tilde APAGADO: no lo bloqueamos
+      // (puede ser familia compartiendo cuenta) pero que sea una decisión y no el default.
+      const _cuentaRepetida = !!d.cuenta_compartida;
+      const _avisoCuenta = _cuentaRepetida ? `
+        <div style="background:rgba(251,191,36,.12);border:1px solid rgba(251,191,36,.42);border-radius:9px;padding:7px 9px;margin-top:8px">
+          <div style="font-weight:800;color:#fbbf24;font-size:12.5px">⚠️ La cuenta donde cobra ya recibió el bono con ${Number(d.otros_con_bono)||0} usuario${(Number(d.otros_con_bono)||0)===1?'':'s'} más</div>
+          <div style="font-size:11px;color:#cbd5e1;margin-top:3px;word-break:break-word">${esc(String(d.otros_usuarios||''))}</div>
+          <div style="font-size:11px;color:#94a3b8;margin-top:4px">Puede ser familia o pareja compartiendo cuenta. Si corresponde darlo, tildá el bono.</div>
+        </div>` : '';
       el.innerHTML = `<div style="background:rgba(34,197,94,.1);border:1px solid rgba(34,197,94,.35);border-radius:10px;padding:9px 11px">
         <div style="font-weight:900;color:#22c55e">🎁 PRIMER INGRESO — bono ${d.bono_pct}%${_topeTxt}</div>
         <div style="font-size:12px;color:#cbd5e1;margin-top:3px">${reqs}</div>
+        ${_avisoCuenta}
         <label style="display:flex;align-items:center;gap:7px;margin-top:7px;font-size:13px;font-weight:700;cursor:pointer">
-          <input type="checkbox" id="portalJobBonoChk" checked> Cargar con bono (+${d.bono_pct}% en billetera ${esc(d.promo_billetera_nombre||'PROMO')})
+          <input type="checkbox" id="portalJobBonoChk" ${_cuentaRepetida?'':'checked'}> Cargar con bono (+${d.bono_pct}% en billetera ${esc(d.promo_billetera_nombre||'PROMO')})
         </label>
         <div id="portalJobBonoPreview" style="font-size:11px;color:#94a3b8;margin-top:4px"></div>
         ${(!d.promo_billetera_id)?'<div style="font-size:11px;color:#fca5a5;margin-top:4px">⚠ No encontré la billetera PROMO de esta oficina (revisá que exista una con \"PROMO\" en el nombre).</div>':''}
