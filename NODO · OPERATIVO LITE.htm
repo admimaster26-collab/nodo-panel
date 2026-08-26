@@ -18634,6 +18634,10 @@ window.crmBuscarDebounce=function(){
     c.innerHTML =
       t('cola','📋 Cola del turno', r.en_cola)
     + t('dup','🔀 Duplicados', r.duplicados, 'yellow')
+    // Escribieron un usuario al entrar al portal y nadie lo cotejó. Quedaban invisibles:
+    // no son duplicados de teléfono, así que no aparecían en ninguna pestaña.
+    + (Number(r.vinculo_sin_validar)>0
+        ? t('sinval','🟡 Sin validar', r.vinculo_sin_validar, 'yellow') : '')
     + t('pre','✅ Prevalidar', null, 'blue')
     + t('frios','😴 Dormidos', null, 'blue');
   }
@@ -18668,7 +18672,11 @@ window.crmBuscarDebounce=function(){
     // La pestaña Duplicados es la misma cola filtrada: son los que hay que limpiar,
     // no contactar.
     const soloDup = (_RX.tab==='dup');
-    const cola=(d.cola||[]).filter(c => soloDup ? c.duplicado_de : true);
+    const soloSinValidar = (_RX.tab==='sinval');
+    const cola=(d.cola||[]).filter(c =>
+      soloDup ? c.duplicado_de
+    : soloSinValidar ? c.vinculo_estado==='PENDIENTE'
+    : true);
     // Barra de limpieza en lote: sólo en Duplicados, y sólo si hay algo seguro que limpiar.
     const barraLimpieza = (soloDup && Number(r.seguros)>0)
       ? `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;
@@ -18742,7 +18750,10 @@ window.crmBuscarDebounce=function(){
                     ${et[0]} · ya opera como <b style="color:#e6edf3">${escapeHtml(c.duplicado_de)}</b>
                     ${cl==='TIPEO'?'<span style="color:#5a6474"> ('+c.distancia+(Number(c.distancia)===1?' letra':' letras')+' de diferencia)</span>':''}
                     ${cl==='DISTINTO'?'<span style="color:#5a6474"> — puede ser otra persona</span>':''}
-                  </div>`; })():''}</td>
+                  </div>`; })():''}
+               ${c.vinculo_estado==='PENDIENTE'
+                 ? `<div class="small" style="color:#fbbf24;margin-top:2px" title="Escribió este usuario al entrar al portal y nadie lo cotejó todavía. Si es un nombre mal escrito, unificalo; si es el correcto, validalo.">🟡 vínculo sin validar</div>`
+                 : ''}</td>
              <td style="padding:6px 7px;font-family:ui-monospace,monospace">${escapeHtml(c.telefono||'—')}</td>
              <td style="padding:6px 7px;text-align:center">${c.push
                 ? '<span style="background:rgba(111,143,208,.18);color:#8fa9e0;border-radius:3px;padding:1px 7px;font-size:10px;font-weight:700">PUSH</span>'
