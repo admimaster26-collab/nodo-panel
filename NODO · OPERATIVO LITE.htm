@@ -18502,8 +18502,15 @@ async function ejecutarSolicitudPortalSimple(ctx){
       }
       const row = Array.isArray(r.data) ? r.data[0] : r.data;
       if(!row || !row.o_token){ toast("No se pudo generar el enlace","red"); return; }
-      // El ?r= sirve de red: si el enlace ya fue usado, igual cae en el portal de ESTA oficina.
-      const url = window.PORTAL_BASE_URL + "/?r=" + encodeURIComponent(row.o_public_code||"") + "&t=" + row.o_token;
+      // Enlace LIMPIO sobre el dominio propio de la oficina: https://vip.portal-bet-300.com/?t=…
+      //  · en WhatsApp se lee como la marca y no como un ".vercel.app" cualquiera
+      //  · el dominio ya dice de qué oficina es, así que el ?r= sobra y solo ensucia
+      //  · si el token ya fue usado, la persona igual cae en el portal correcto
+      // Sin dominio propio cargado se cae al genérico CON ?r=, que ahí sí hace falta para
+      // saber la oficina (el portal se muda solo al dominio bueno apenas la resuelve).
+      const url = row.o_host
+        ? ("https://" + row.o_host + "/?t=" + row.o_token)
+        : (window.PORTAL_BASE_URL + "/?r=" + encodeURIComponent(row.o_public_code||"") + "&t=" + row.o_token);
       const msg = "Entrá por acá para " + btnTxt + ", ya validado 👇\n" + url + "\n\n(Es personal y vale por 30 minutos.)";
       try{ await navigator.clipboard.writeText(msg); toast("Enlace para "+btnTxt+" copiado · pegalo en el WhatsApp","green"); }
       catch(_e){ prompt("Copiá el enlace:", url); }
