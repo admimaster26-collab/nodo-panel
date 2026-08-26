@@ -8141,9 +8141,12 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
     const pcCod=(pcOperativa||window.pcOperativa||'');
     // La llamada normal NO manda p_forzar (así anda igual en el esquema viejo de 4 args y en el
     // nuevo de 5). Solo el reintento manda p_forzar:true (requiere el SQL nuevo aplicado).
+    // Queda registrado QUIÉN validó. Antes el vínculo no guardaba el operador (la RPC ni siquiera
+    // lo recibía), así que ante una cuenta dudosa no había forma de saber de dónde había salido.
+    const _opVinc = (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || '';
     const _vinc=async(forzar)=> forzar
-      ? await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono,p_forzar:true})
-      : await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono});
+      ? await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono,p_forzar:true,p_operador:_opVinc})
+      : await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono,p_operador:_opVinc});
     let r=await _vinc(false);
     let d=(r&&r.data)||{};
     let _notaEvento=null;   // se completa si hubo que reasignar el teléfono desde otro usuario
