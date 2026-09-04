@@ -3970,10 +3970,21 @@ async function _copiarMensajeClienteNuevo(usuario, clave){
 // ── Auto-actualización: chequeo/descarga/instalación MANUAL (botón en el sidebar) ──
 // Nunca automática: mientras seguimos iterando, cada oficina actualiza cuando el
 // operador lo decide, no sola al abrir la app.
+// Saca la cajita del modo plegado SIN guardar la preferencia: si hay una versión nueva el
+// operador tiene que verla aunque la haya minimizado, pero si la vuelve a plegar se queda
+// plegada hasta el próximo chequeo. Avisar sí; hinchar, no.
+function _updaterForzarVisible(){
+  try{
+    const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
+    if(box){ box.style.display="flex"; box.style.borderColor="#3fb950"; }
+    if(chip) chip.style.display="none";
+  }catch(_e){}
+}
 function nodoUpdaterStatus(payload){
   const el=document.getElementById("updaterStatusTxt");
   if(!el || !payload) return;
   const st=payload.state;
+  if(st==="available" || st==="downloaded") _updaterForzarVisible();
   if(st==="checking") el.innerHTML="Buscando actualización...";
   else if(st==="not-available") el.innerHTML="✅ Ya tenés la última versión";
   else if(st==="available") el.innerHTML="🆕 v"+escapeHtml(payload.version||"")+" disponible — <a href=\"javascript:void 0\" onclick=\"nodoDescargarActualizacion()\" style=\"color:#58a6ff\">Descargar</a>";
@@ -4010,6 +4021,19 @@ async function nodoInitUpdater(){
     window.updaterAPI.onStatus(nodoUpdaterStatus);
     // Restaurar si el operador lo había dejado minimizado.
     try{ if(localStorage.getItem("nodo_updater_min")==="1") nodoUpdaterMinimizar(true); }catch(_e){}
+    // Buscar SOLO. Antes esto no existía: la única forma de enterarse de que había una
+    // versión nueva era apretar 🔄 por las dudas, así que no se enteraba nadie — la 1.1.81
+    // salió y dos días después seguía sin instalarse en ninguna oficina, con máquinas
+    // cuatro versiones atrás. Ahora chequea al arrancar y cada 3 horas.
+    // Sigue SIN instalar por su cuenta: instalar reinicia la app y en medio del turno eso
+    // corta la operación. Avisar es del panel, decidir cuándo cortar es del operador.
+    setTimeout(nodoAutoBuscar, 20000);                 // dar tiempo al login
+    setInterval(nodoAutoBuscar, 3*60*60*1000);
+  }catch(_e){}
+}
+function nodoAutoBuscar(){
+  try{
+    if(window.updaterAPI && window.updaterAPI.check) window.updaterAPI.check({ channel: nodoGetCanal() });
   }catch(_e){}
 }
 // Arriba a la derecha, pero apoyado en el borde izquierdo del panel de chat: ahí está el hueco
