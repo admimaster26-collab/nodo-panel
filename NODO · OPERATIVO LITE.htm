@@ -18729,14 +18729,115 @@ window.crmBuscarDebounce=function(){
     + (Number(r.vinculo_sin_validar)>0
         ? t('sinval','🟡 Sin validar', r.vinculo_sin_validar, 'yellow') : '')
     + t('pre','✅ Prevalidar', null, 'blue')
-    + t('frios','😴 Dormidos', null, 'blue');
+    + t('frios','😴 Dormidos', null, 'blue')
+    + t('resc','🎯 Rescate', null, 'purple');
   }
   window.crmRxTab = function(k){
     _RX.tab = k; _rxTabs();
     if(k==='pre')   return _rxPintarPrevalidar();
     if(k==='frios') return _rxPintarFrios();
+    if(k==='resc')  return _rxPintarRescate();
     _rxPintar();
   };
+
+  // ── Rescate ────────────────────────────────────────────────────────────────
+  // La cola de Dormidos sale sólo de historial_ops, que arranca en julio: todo el que dejó
+  // de cargar ANTES es invisible ahí. Esta cruza además las operaciones importadas de
+  // Agentes (mayo-julio), así aparecen los que se fueron antes de que NODO existiera —
+  // que son los que de verdad valen: el primero de P4 depositó $6,3 M en 137 cargas.
+  _RX.rescSeg = 'RESCATE';
+  window.crmRxRescSeg = function(s){ _RX.rescSeg = s; _RX.rescate = null; _rxPintarRescate(); };
+
+  async function _rxCargarRescate(){
+    const b=_rxDestino(); if(b) b.innerHTML='<div class="load" style="padding:16px;color:#8b949e">Buscando…</div>';
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_rescate_cola',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo: (typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_segmento: _RX.rescSeg, p_dias: 60, p_limit: 200,
+        p_operador: (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || ''
+      });
+      if(error) throw new Error(error.message||'no se pudo consultar');
+      if(data && data.ok===false) throw new Error(data.error||'sin datos');
+      _RX.rescate = data;
+      _rxPintarRescate();
+    }catch(e){
+      if(b) b.innerHTML='<div class="err-box" style="padding:10px">No se pudo cargar: '+escapeHtml(e.message||'')+'</div>';
+    }
+  }
+
+  // Toma el contacto y recién ahí abre el WhatsApp. Si otro se lo llevó, no abre nada:
+  // el problema a evitar es que dos operadores le escriban a la misma persona.
+  window.crmRxRescContactar = async function(usuario, tel, seg){
+    try{
+      const { data, error } = await supabaseClient.rpc('panel_rescate_tomar',{
+        p_secret: window.PANEL_DATA_SECRET,
+        p_pc_codigo: (typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+        p_usuario: usuario,
+        p_operador: (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || ''
+      });
+      if(error) throw new Error(error.message||'');
+      if(data && data.ok===false){
+        toast(data.error==='YA_LO_TIENE_OTRO'
+          ? 'Lo está trabajando '+(data.operador||'otro operador')
+          : 'No se pudo tomar el contacto','orange');
+        _RX.rescate = null; return _rxPintarRescate();
+      }
+    }catch(e){ toast('No se pudo tomar el contacto','red'); return; }
+    await crmRxWhatsapp(usuario, tel, seg);
+    _RX.rescate = null; _rxPintarRescate();
+  };
+
+  function _rxPintarRescate(){
+    const b=_rxDestino(); if(!b) return;
+    if(!_RX.rescate) return _rxCargarRescate();
+    const D=_RX.rescate, lista=D.lista||[], seg=_RX.rescSeg;
+    const tab=(k,lbl)=>`<button class="mini-btn ${seg===k?'green':'gray'}" onclick="crmRxRescSeg('${k}')">${lbl}</button>`;
+    b.innerHTML =
+      `<div style="display:flex;gap:6px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+         ${tab('RESCATE','🕰 Se fueron')} ${tab('INTENTO','🚪 Quedaron a mitad')}
+         <span style="flex:1"></span>
+         <span class="small" style="color:#5a6474">Mostrando ${lista.length} de ${D.total||0}${
+           D.tomados_por_otros?' · '+D.tomados_por_otros+' los está trabajando otro':''}</span>
+       </div>`
+    + `<div class="small" style="color:#5a6474;margin-bottom:10px">${seg==='RESCATE'
+         ? 'Cargaban seguido y dejaron de venir hace más de 60 días. Ordenados por lo que depositaron: los de arriba son los que más valen. Incluye lo que operaban en Agentes antes de NODO.'
+         : 'Pidieron cargar y nunca completaron una carga. Hay una solicitud concreta de qué hablarles — mirá si se la rechazaron.'}</div>`
+    + (!lista.length
+       ? '<div class="alert-box" style="padding:14px">No queda nadie en este segmento. 👌</div>'
+       : `<div style="max-height:58vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">
+          <thead><tr style="position:sticky;top:0;background:#161b26;z-index:1">
+            <th style="padding:7px;text-align:left">Jugador</th>
+            <th style="padding:7px">${seg==='RESCATE'?'Depositó':'Pidió'}</th>
+            <th style="padding:7px">${seg==='RESCATE'?'Sin cargar':'Intentó'}</th>
+            <th style="padding:7px;text-align:right">Acciones</th></tr></thead><tbody>${
+          lista.map(j=>{
+            const u=String(j.usuario).replace(/'/g,"\\'");
+            const tel=String(j.telefono||'').replace(/\D/g,'');
+            const ocupado = !!j.reservado_por;
+            return `<tr style="border-top:1px solid #21283a${ocupado?';opacity:.45':''}">
+              <td style="padding:6px 7px"><b>${escapeHtml(j.usuario)}</b>
+                <div class="small" style="color:#5a6474">${j.ops||0} ops${
+                  j.telefono?' · 📱 '+escapeHtml(j.telefono):''}${
+                  j.titular?' · 👤 '+escapeHtml(j.titular):''}</div>
+                ${ocupado?'<div class="small" style="color:#f0b429">🔒 lo está trabajando '+escapeHtml(j.reservado_por)+'</div>':''}</td>
+              <td style="padding:6px 7px;text-align:center">${seg==='RESCATE'
+                 ? (j.valor_historico?fmtMoney(j.valor_historico):'<span style="color:#5a6474">—</span>')
+                 : (j.monto_pedido?fmtMoney(j.monto_pedido):'<span style="color:#5a6474">—</span>')}
+                 ${seg==='INTENTO'&&j.fue_rechazada?'<div class="small" style="color:#ff9d9d">rechazada</div>':''}</td>
+              <td style="padding:6px 7px;text-align:center;color:#8b949e">${seg==='RESCATE'
+                 ? (j.dias_sin_cargar!=null?j.dias_sin_cargar+' d':'—')
+                 : (j.intento_veces||1)+(j.intento_veces>1?' veces':' vez')}</td>
+              <td style="padding:6px 7px;text-align:right;white-space:nowrap">
+                ${tel&&!ocupado?`<button class="mini-btn blue" onclick="crmRxRescContactar('${u}','${tel}','${seg}')" title="Tomar el contacto y abrir WhatsApp">💬</button>`:''}
+                <button class="mini-btn gray" onclick="abrirPerfilJugador('${u}')" title="Ficha">🌳</button>
+                <button class="mini-btn gray" onclick="crmRxMarcar('${u}','DESCARTADO','WHATSAPP')" title="No corresponde">🗑</button>
+              </td></tr>`; }).join('')}</tbody></table></div>
+          <div class="small" style="color:#5a6474;margin-top:8px">
+            Al apretar 💬 el contacto queda tomado a tu nombre por 30 minutos y se marca como
+            contactado solo — no hace falta tildar nada. Si no llegaste a mandarlo, pasalo a
+            "no contesta" desde la cola.</div>`);
+  }
 
   async function _rxCargar(){
     if(_RX.cargando) return; _RX.cargando = true;
@@ -18915,8 +19016,38 @@ window.crmBuscarDebounce=function(){
     try{ localStorage.setItem(_RX_VAR_KEY, String(sig)); }catch(_e){}
     return v[sig];
   }
-  function _rxMsgPara(usuario){
-    return _rxSpin(_rxProximaVariante())
+  // Textos para el que HACE RATO NO CARGA. No puede ser el mismo juego que arriba: decirle
+  // "quedaste a mitad de camino con tu carga" a alguien que se fue hace tres meses es falso,
+  // y se lee como plantilla al toque. Acá no se promete ningún bono: eso lo decide el operador
+  // según el caso, y ponerlo en la plantilla le ata las manos.
+  const _RX_MSG_KEY_R = 'nodo_rx_variantes_rescate';
+  const _RX_VAR_KEY_R = 'nodo_rx_ult_variante_rescate';
+  const _RX_MSG_DEF_R = [
+    '{Hola|Buenas} {usuario}, {te escribo|te escribimos} de BET300. {Hace un tiempo que no te vemos|Hace rato no pasás por acá}, {¿todo bien|¿cómo venís}?',
+    '{Buenas|Hola} {usuario}! {Te tenía pendiente|Me quedaste pendiente}. {Cambiamos algunas cosas|Hay novedades} desde la última vez, {¿te cuento|¿querés que te cuente}?',
+    '{Hola|Qué tal} {usuario}, {soy|te habla} del equipo de BET300. {Si querés volver|Cuando quieras volver} {te doy una mano|te acompaño} con lo que necesites.',
+    '{Hola|Buenas} {usuario}, {¿cómo andás|¿todo bien}? {Vi que hace rato no cargás|Hace rato no te vemos por acá}. {¿Seguís jugando|¿Pasó algo|¿Te ayudo con algo}?',
+    '{Buenas|Hola} {usuario}! {Paso a saludarte|Te escribo} {del equipo de BET300|de BET300}. {Cualquier cosa que necesites, avisame|Si querés retomar, escribime y te guío}.'
+  ].join('\n');
+
+  function _rxVariantesR(){
+    let raw; try{ raw = localStorage.getItem(_RX_MSG_KEY_R); }catch(_e){ raw = null; }
+    if(raw == null) raw = _RX_MSG_DEF_R;
+    return String(raw).split('\n').map(s=>s.trim()).filter(Boolean);
+  }
+  function _rxProximaVarianteR(){
+    const v = _rxVariantesR(); if(!v.length) return '';
+    let i = -1; try{ i = Number(localStorage.getItem(_RX_VAR_KEY_R)); }catch(_e){}
+    if(!(i >= 0 && i < v.length)) i = -1;
+    const sig = (i + 1) % v.length;
+    try{ localStorage.setItem(_RX_VAR_KEY_R, String(sig)); }catch(_e){}
+    return v[sig];
+  }
+  // segmento 'RESCATE' → el juego de arriba; cualquier otra cosa → el de "quedó a mitad".
+  function _rxMsgPara(usuario, segmento){
+    const base = String(segmento||'').toUpperCase()==='RESCATE'
+      ? _rxProximaVarianteR() : _rxProximaVariante();
+    return _rxSpin(base)
              .replace(/\{usuario\}/gi, usuario || '')
              .replace(/\s+/g,' ').trim();
   }
@@ -18990,7 +19121,8 @@ window.crmBuscarDebounce=function(){
     return d;                                  // otro país o formato raro: va tal cual
   }
 
-  window.crmRxWhatsapp = async function(usuario, tel){
+  // segmento: sólo cambia el texto ('RESCATE' usa el juego de "hace rato no te vemos").
+  window.crmRxWhatsapp = async function(usuario, tel, segmento){
     const num = _rxNumeroWa(tel);
     if(!num){ toast('Ese usuario no tiene teléfono cargado','orange'); return; }
 
@@ -19009,7 +19141,7 @@ window.crmBuscarDebounce=function(){
       toast('Muy seguido ('+seg+'s). Esperá unos segundos entre mensajes.','orange');
     }
 
-    const url = 'https://wa.me/' + num + '?text=' + encodeURIComponent(_rxMsgPara(usuario));
+    const url = 'https://wa.me/' + num + '?text=' + encodeURIComponent(_rxMsgPara(usuario, segmento));
     // Al navegador del operador, NO a una ventana de NODO: ahí ya tiene la sesión de
     // WhatsApp Web abierta y no hay que escanear ningún QR.
     try{
@@ -19020,6 +19152,20 @@ window.crmBuscarDebounce=function(){
         window.open(url,'_blank');             // fuera de Electron (navegador suelto)
       }
       _rxSumar('wa');
+      // Queda marcado SOLO por haber abierto el WhatsApp, sin depender de que el operador
+      // se acuerde de tildar. Antes el ✓ era manual y el que se olvidaba dejaba a la persona
+      // en la cola: al rato otro operador le escribía de nuevo. Abrirlo cuenta como contacto.
+      // Contra: si cierra la ventana sin mandar nada, queda contactado igual — por eso la nota
+      // dice de dónde salió y el operador puede pasarlo a NO_CONTESTA con un click.
+      try{
+        await supabaseClient.rpc('panel_reconexion_marcar', {
+          p_secret: window.PANEL_DATA_SECRET,
+          p_pc_codigo: (typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
+          p_usuario: usuario, p_estado: 'CONTACTADO', p_canal: 'WHATSAPP',
+          p_nota: 'WhatsApp abierto desde NODO',
+          p_operador: (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || ''
+        });
+      }catch(_e){}
     }catch(e){ toast('No se pudo abrir WhatsApp: '+(e.message||''),'red'); }
   };
 
