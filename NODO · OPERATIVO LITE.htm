@@ -2607,6 +2607,12 @@ async function login(){
     pcsDisponibles:[],
     requiereSeleccionPc:false
   };
+  // Espejar en window: media docena de módulos (el chat, entre otros) leen window.operador
+  // porque están dentro de IIFEs y no ven esta variable. Hasta ahora window.operador se
+  // llenaba en UN solo lugar y solo cuando Chunior detectaba un cambio de turno, así que en
+  // el caso normal quedaba vacío: el chat firmaba "panel" y 1.833 de 2.334 respuestas humanas
+  // no se podían atribuir a nadie.
+  try{ window.operador = operador; }catch(_e){}
 
   setBox("loginMsg",`<div class="alert-box">Chunior OK. Esperando selección de puesto...</div>`);
   // Disparar el flujo de Chunior post-login. _chuniorConfirmarPuesto
@@ -5633,8 +5639,12 @@ async function refrescarOperadorDesdeChunior(force){
     if(nombre && typeof operador!=='undefined' && operador && String(operador.usuario||'').toLowerCase() !== nombre.toLowerCase()){
       console.log('[operador] cambió de puesto en Chunior:', operador.usuario, '→', nombre);
       operador.usuario = nombre; operador.nombre = nombre;
-      try{ window.operador = operador; }catch(_e){}
     }
+    // El espejo va AFUERA del if. Estaba adentro, así que window.operador solo se llenaba
+    // cuando el nombre de Chunior difería del del panel — o sea, únicamente en un cambio de
+    // turno. En el caso normal los nombres coinciden, el if no entra y window.operador quedaba
+    // sin definir toda la sesión.
+    try{ if(typeof operador!=='undefined' && operador) window.operador = operador; }catch(_e){}
     return (typeof operador!=='undefined' && operador && operador.usuario) || nombre || null;
   }catch(_e){ return (typeof operador!=='undefined' && operador && operador.usuario) || null; }
 }
