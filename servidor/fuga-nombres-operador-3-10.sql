@@ -1,0 +1,45 @@
+-- URGENTE 3/10: dos cosas que le llegaban al jugador y no tenian que llegarle.
+-- Las dos arregladas del lado del servidor, asi que alcanzaron a las 14 oficinas al instante.
+--
+-- ============================================================================
+-- 1. Un mensaje inventado, firmado como si lo hubiera escrito el jugador
+-- ============================================================================
+-- En la pantalla del jugador aparecia "Consulta desde portal" como mensaje PROPIO, al lado de lo
+-- que el habia escrito de verdad. Nunca lo mando.
+--
+-- De donde salia: nodo_portal_chat_local_accept -- lo que corre cuando el operador aprieta
+-- "Aceptar". Tiene un guardia para no duplicar: busca si el hilo ya trae un mensaje del jugador
+-- MARCADO con el numero de esa solicitud. Los mensajes que mete landing_enviar_mensaje_v2 -- o
+-- sea TODOS los del portal nuevo, que entran por el canal de chat -- no llevan esa marca. El
+-- guardia no los veia, creia que la consulta venia vacia, y le inyectaba el texto de relleno.
+--
+-- Lo destapo el puente que puse esta manana: antes del portal nuevo, las consultas siempre traian
+-- mensaje_inicial y el guardia funcionaba.
+--
+-- Arreglo: un mensaje del jugador SIN marca cuenta como de esa solicitud, que es lo que es.
+-- Limpieza: eran 10 solicitudes, todas del dia. Quedaron en 0.
+--
+-- ============================================================================
+-- 2. Los nombres reales de los operadores viajaban al navegador del jugador
+-- ============================================================================
+-- landing_portal_chat_thread_get devolvia el hilo CRUDO. Cada entrada de operador lleva adentro
+-- el campo `operador` con el nombre de quien atendio:
+--
+--   tomastradi (234)  santino (190)  lucastradi (171)  ema (154)  tomassan (141)
+--   soto (119)  thomas (103)  cgerman (102)  lautaroo (97)  pailin (90)  pagus (89)
+--   marcosm (83)  pluly (80)  angel (80)   -- solo en los ultimos 7 dias
+--
+-- La pagina NO los dibuja, asi que en pantalla no se veian. Pero igual le llegaban al navegador
+-- del jugador en cada consulta del chat (cada 5 segundos): cualquiera que abriera las
+-- herramientas del navegador los leia. Esto NO lo causo el portal nuevo, venia de antes.
+--
+-- Arreglo: se manda solo lo que la pagina dibuja -- origen, mensaje, imagen_url, fecha y
+-- solicitud_id (ver renderThreadMsg y threadKey en el Portal). Todo lo demas se queda adentro.
+-- Comprobado despues: entradas con nombre de operador = 0; campos que viajan = fecha, mensaje,
+-- origen.
+--
+-- NOTA para el otro camino: panel_core_enviar_chat_json se llama desde
+-- renderer/extensions/portal-chat-unificado.js con p_emisor = nombre del operador. Hoy en
+-- chat_mensajes todos los mensajes de operador de los ultimos 30 dias dicen "Sistema", asi que
+-- por ahi todavia no se filtro ninguno -- pero el camino esta abierto. landing_leer_chat_v2
+-- devuelve ese campo. Queda anotado.
