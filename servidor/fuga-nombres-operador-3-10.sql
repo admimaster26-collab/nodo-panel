@@ -67,3 +67,47 @@
 -- con `if v_msg is not null and not exists (...)`. Si no hay texto, no se agrega nada. Nunca.
 --
 -- Limpieza: las que ya lo tenian quedaron en 0.
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════
+-- 3/10, segunda pasada · LA MISMA FUGA SEGUÍA ABIERTA POR EL CAMINO NUEVO
+-- ═══════════════════════════════════════════════════════════════════════════════════════════
+--
+-- A la mañana cerramos landing_portal_chat_thread_get. Pero el portal nuevo NO lee por ahí: lee
+-- chat_mensajes con landing_leer_chat_v2 — y esa devolvía `emisor` tal cual.
+--
+-- Hoy no se filtró nada, porque las respuestas de los operadores todavía viajan por el camino
+-- viejo. La puerta igual estaba abierta: hay CUATRO funciones del panel que escriben el nombre
+-- en chat_mensajes, y una lo hace sin preguntar —
+--
+--   panel_operativo_enviar_chat     emisor = coalesce(v_s.nombre, v_s.usuario, 'Operador')
+--   panel_core_enviar_chat_json     emisor = coalesce(nullif(p_emisor,''),'panel')
+--   panel_nodo_send_chat_message    emisor = nullif(trim(coalesce(p_emisor,'panel')),'')
+--   panel_v154_plus_enviar_chat     emisor = coalesce(nullif(trim(p_emisor),''),'panel')
+--
+-- El día que el panel mandara por cualquiera de esas, el jugador se llevaba el nombre completo
+-- del operador en el navegador, cada 5 segundos.
+--
+-- ARREGLO: la base GUARDA el nombre (hace falta para auditar quién contestó) pero al jugador le
+-- llega una etiqueta fija. El portal sólo usa ese campo para saber si el mensaje es suyo o del
+-- operador (busca "OPER"/"SIST"/"BOT" adentro), nunca lo muestra.
+--
+--   landing_leer_chat_v2   case when tipo_emisor = 'USUARIO' then emisor else 'OPERADOR' end
+--   landing_leer_chat      idem
+--
+-- PROBADO: se insertó un mensaje de "Lucas Tradi" en un chat de prueba.
+--   lo que GUARDA la base   : USUARIO=ZZ_bot_prueba | OPERADOR=NODO | OPERADOR=Lucas Tradi
+--   lo que RECIBE el jugador: USUARIO=ZZ_bot_prueba | OPERADOR=OPERADOR | OPERADOR=OPERADOR
+--
+-- BARRIDO de los tres caminos que puede leer un jugador (rol anon): los tres limpios.
+--   landing_leer_chat_v2 · landing_leer_chat · landing_portal_chat_thread_get
+--
+--
+-- ── PENDIENTE para Juan: landing_leer_chat (v1) no pide token ───────────────────────────────
+-- Con saber el chat_id se lee la conversación entera. Tiene 0 llamadas en pg_stat_statements:
+-- no la usa nadie. Ya no filtra nombres, pero lo que corresponde es sacarle el permiso:
+--
+--   revoke execute on function public.landing_leer_chat(text) from anon, public;
+--
+-- No la ejecuté yo: si algún teléfono tiene todavía una página vieja en memoria, dejaría de
+-- verle el chat. Decidilo vos.
