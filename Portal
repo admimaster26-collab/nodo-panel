@@ -1972,40 +1972,75 @@ function _normComparar(v){
   return String(v||"").toLowerCase().normalize("NFD")
     .replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]/g,"");
 }
-function _datosPropiosNormalizados(){
+// Nuestros datos, separados en dos grupos, porque NO se comparan igual (Juan, 3/10).
+//
+// Un alias o un CBU son identificadores: si el jugador los escribió, se equivocó de campo, y
+// alcanza con que aparezcan en cualquier parte para saberlo.
+//
+// Un NOMBRE no. Nuestras billeteras se llaman GIORDANO, PERNA PP, MATRELO... y había gente real
+// quedando trabada porque se apellida así. Buscar el nombre "adentro de" lo que escribió deja
+// afuera a cualquiera que comparta un apellido con nosotros, sin forma de salir.
+function _identificadoresPropios(){
   const b=state.billetera||{};
-  return [b.titular,b.alias,b.cbu,b.cvu,b.nombre_visible,b.nombre]
+  return [b.alias,b.cbu,b.cvu]
+    .map(_normComparar).filter(function(x){ return x && x.length>=6; });
+}
+function _nombresPropios(){
+  const b=state.billetera||{};
+  return [b.titular,b.nombre_visible,b.nombre]
     .map(_normComparar).filter(function(x){ return x && x.length>=4; });
 }
 function validarTitular(valor){
   const v=String(valor||"").trim();
   const letras=v.replace(/[^\p{L}]/gu,"");
   if(letras.length<TITULAR_MIN_LETRAS) return "Escribí el nombre y apellido de la cuenta desde la que transferiste.";
-  const n=_normComparar(v), propios=_datosPropiosNormalizados();
-  for(const p of propios){
-    if(n===p || (n.length>=6 && p.indexOf(n)>=0) || (p.length>=6 && n.indexOf(p)>=0)){
+  const n=_normComparar(v);
+  // Alias o CBU nuestro escrito en el campo del titular: se equivocó de campo, se avisa.
+  for(const p of _identificadoresPropios()){
+    if(n===p || n.indexOf(p)>=0 || (n.length>=8 && p.indexOf(n)>=0)){
       return "Ese es el titular de NUESTRA cuenta. Poné el nombre de la cuenta desde la que vos transferiste.";
     }
   }
-  const _uNorm=_normComparar(state.usuario||"");
-  const _uLetras=String(state.usuario||"").replace(/[^\p{L}]/gu,"").toLowerCase()
-    .normalize("NFD").replace(/[̀-ͯ]/g,"");
-  for(const u of [_uNorm,_uLetras]){
-    if(!u || u.length<3) continue;
-    if(n===u || (u.length>=4 && n.indexOf(u)>=0) || (n.length>=5 && u.indexOf(n)>=0)){
-      return "Ese es tu usuario de juego, no el titular. Poné el nombre y apellido de la cuenta bancaria.";
+  // Nombres: sólo si escribió EXACTAMENTE el nuestro. Compartir un apellido no es un error.
+  for(const p of _nombresPropios()){
+    if(n===p){
+      return "Ese es el titular de NUESTRA cuenta. Poné el nombre de la cuenta desde la que vos transferiste.";
+    }
+  }
+  // Esto trababa cargas de gente real (Juan, 3/10). La regla era: si el usuario aparece EN
+  // CUALQUIER PARTE del titular, rechazar. Pero muchísimos jugadores usan su propio nombre como
+  // usuario — así que el titular de su cuenta bancaria contiene el usuario casi siempre.
+  // "Yamila Muhamad" con usuario "yamila2024" quedaba trabada, y sin forma de salir: no hay nada
+  // que pueda escribir, porque ESE es el nombre de su cuenta.
+  //
+  // Lo que se quiere evitar es que ponga su usuario de juego en vez del titular. Y eso se nota
+  // por otra cosa: un nombre y apellido son DOS palabras; un usuario es una sola. Si escribió dos
+  // o más palabras, es un nombre — no se toca, aunque contenga el usuario.
+  const _palabras = v.split(/\s+/).filter(Boolean);
+  if(_palabras.length < 2){
+    const _uNorm=_normComparar(state.usuario||"");
+    const _uLetras=String(state.usuario||"").replace(/[^\p{L}]/gu,"").toLowerCase()
+      .normalize("NFD").replace(/[̀-ͯ]/g,"");
+    for(const u of [_uNorm,_uLetras]){
+      if(!u || u.length<3) continue;
+      if(n===u || (u.length>=4 && n.indexOf(u)>=0)){
+        return "Ese es tu usuario de juego, no el titular. Poné el nombre y apellido de la cuenta bancaria.";
+      }
     }
   }
   return "";
 }
+// Segundo freno sobre lo mismo, y era el más suelto de los dos: comparaba con TRES letras y
+// buscaba para los dos lados. Con billeteras llamadas GIORDANO o PERNA PP, cualquiera que se
+// apellide parecido quedaba sin poder cargar. Ahora usa el mismo criterio que validarTitular:
+// un identificador nuestro adentro es un error; un nombre parecido no.
 function _titularEsNuestro(titular){
-  const t = String(titular||"").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const t = _normComparar(titular);
   if(t.length < 3) return false;
-  const b = state.billetera || {};
-  const propios = [b.titular, b.alias, b.cbu, b.cvu, b.nombre_visible, b.nombre]
-    .map(function(v){ return String(v||"").toLowerCase().replace(/[^a-z0-9]/g, ""); })
-    .filter(function(v){ return v.length >= 3; });
-  return propios.some(function(v){ return v === t || v.indexOf(t) !== -1 || t.indexOf(v) !== -1; });
+  const porIdentificador = _identificadoresPropios()
+    .some(function(v){ return t === v || t.indexOf(v) !== -1 || (t.length >= 8 && v.indexOf(t) !== -1); });
+  if(porIdentificador) return true;
+  return _nombresPropios().some(function(v){ return v === t; });
 }
 
 async function _titularBloqueado(titular){
