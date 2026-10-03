@@ -363,12 +363,30 @@
     // de atención. Del canal nuevo entran únicamente los que no aparecían por ningún lado.
     try{
       if(window._chatCanalNuevo){
-        const yaEstan = new Set(list.map(g => U(g.usuario || '')));
+        const porUsuario = new Map();
+        list.forEach(g => { const k = U(g.usuario || ''); if(k) porUsuario.set(k, g); });
         window._chatCanalNuevo.tickets(incluirCerrados).forEach(function(t){
           const k = U(t.usuario || '');
-          if(!k || yaEstan.has(k)) return;
-          yaEstan.add(k);
-          list.push(t);
+          if(!k) return;
+          const ya = porUsuario.get(k);
+          if(!ya){ porUsuario.set(k, t); list.push(t); return; }
+          // La conversación SIGUE ABIERTA pero por solicitudes el usuario figura cerrado.
+          //
+          // Pasa por la solicitud puente: es una solicitud de mentira que se crea para que las
+          // PCs viejas vean los chats del portal nuevo. Cuando el operador cierra la consulta se
+          // cierra el puente, y como acá un usuario se da por cerrado cuando TODAS sus
+          // solicitudes lo están, el usuario entero salía de "Abiertos" — con la conversación
+          // todavía viva del otro lado. En pantalla: "No hay chats abiertos" con el contador
+          // marcando 2. Eran 69 conversaciones en 10 oficinas (Juan, 3/10).
+          //
+          // La conversación manda sobre el espejo: si ella está abierta, el ticket está abierto.
+          if(ya.cerrado && !t.cerrado){
+            ya.cerrado = false;
+            ya.accepted = !!t.accepted;
+            ya._canalNuevo = true;
+            ya._chatId = t._chatId || ya._chatId;
+            if(toDate(t.fecha) > toDate(ya.fecha)){ ya.fecha = t.fecha; ya.mensaje = t.mensaje; }
+          }
         });
         list.sort((a,b)=>toDate(b.fecha)-toDate(a.fecha));
       }

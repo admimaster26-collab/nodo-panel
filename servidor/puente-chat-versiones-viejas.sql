@@ -117,3 +117,65 @@ $fn$;
 --   La ve la bandeja de la PC vieja: SI.  Conversaciones de chat que creo: 0.
 --   Se creo en 103 ms. Las marcas t_toque / t_envio viajan hasta la bandeja.
 --   Borrarla:  delete from landing_solicitudes where id = 299084;
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════
+-- 3/10 · DOS COSAS QUE ROMPIÓ EL PUENTE, y cómo quedaron
+-- ═══════════════════════════════════════════════════════════════════════════════════════════
+--
+-- El puente es una solicitud de mentira que se crea por conversación para que las PCs que no se
+-- actualizaron sigan viendo los chats del portal nuevo. Es un espejo. Pero es una fila REAL en
+-- landing_solicitudes, y hay dos sistemas que miran esa tabla y no saben que es un espejo.
+--
+--
+-- ── A) Los chats desaparecían de "Abiertos" ────────────────────────────────────────────────
+--
+-- El panel agrupa los chats POR USUARIO y da al usuario por cerrado cuando TODAS sus solicitudes
+-- están cerradas. El operador cierra la consulta -> se cierra el puente -> el usuario entero sale
+-- de "Abiertos"... con la conversación todavía ABIERTA en chat_sesiones.
+--
+-- En pantalla: "No hay chats abiertos" con el contador de la solapa marcando 2. El contador se
+-- calcula sin mirar los cerrados, así que seguía contando a los que la lista ya escondía.
+--
+-- Eran 69 conversaciones en 10 oficinas. De esas, 4 tenían al jugador escribiendo DESPUÉS del
+-- cierre y nadie las veía: "Todabia no se cargo", "Lo arreglan ustedes", "Adodne le mando eso".
+--
+-- ARREGLO (en la base, así vale para todas las versiones del panel):
+--   trigger trg_puente_chat_cerrar  ->  function nodo_puente_chat_cerrar()
+--   Cuando el puente pasa a CERRADO, se cierra también la conversación. Espejo y original juntos.
+--
+-- REPARACIÓN de lo que ya estaba mal:
+--   - las 4 con el jugador esperando: puente reabierto (EN_REVISION), vuelven a "Abiertos".
+--   - las 65 quietas: conversación cerrada, dejan de contarse.
+--
+-- Y del lado del panel (2.1.6): si la conversación está abierta, manda ella sobre el espejo.
+--   renderer/chat/chat-hilos.js · ticketsAgrupadosFinal
+--
+--
+-- ── B) El bot de respuestas automáticas dejó de contestar ───────────────────────────────────
+--
+-- No se rompió: se quedó ciego. Vivía en un disparador BEFORE INSERT sobre landing_solicitudes y
+-- leía `mensaje_inicial`, que es donde el portal VIEJO dejaba lo que escribía el jugador. El
+-- portal nuevo manda el texto a chat_mensajes y el puente sólo lleva el cartel
+-- "Consulta desde portal". El bot lo leía, no reconocía ningún caso y anotaba "(no contestaria)".
+--
+--   3/10, consultas por el canal nuevo: 103 · contestadas por el bot: 0
+--   (2/10, por el camino viejo: 141 evaluadas · 66 contestadas)
+--
+-- ARREGLO:
+--   trigger trg_chat_autorespuesta  ->  function trg_chat_autorespuesta()
+--   El mismo bot (soporte_auto_mensaje_v1), escuchando donde ahora caen los mensajes.
+--   - sólo sobre el mensaje del jugador, con texto
+--   - NUNCA por encima de una persona: si en esa conversación ya habló alguien que no es el
+--     jugador, se calla. Una respuesta por conversación, igual que antes era una por solicitud.
+--   - las oficinas espejo (P8 en adelante) evalúan pero no contestan, igual que en el otro camino
+--   - la respuesta se escribe en chat_mensajes Y en el chat_thread del puente, para que la vean
+--     también las PCs viejas
+--
+-- ENSAYO contra los mensajes reales de hoy (92 conversaciones):
+--   habría contestado 41. Los 35 "(no contestaria)" son mensajes sin caso (".", "Ahí hice d nuevo").
+--   Proporción igual a la de ayer por el camino viejo.
+--
+-- PROBADO de punta a punta en P1: una consulta nueva recibe la respuesta correcta
+-- (AVISO_PAGO_SIN_SOLICITUD), queda espejada en la solicitud, y un segundo mensaje del jugador
+-- NO dispara una segunda respuesta.
