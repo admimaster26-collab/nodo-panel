@@ -1,0 +1,44 @@
+-- LA CAUSA DE LOS 19 SEGUNDOS.  (Juan, 3/10: "fijate que mierda causan los 19 segundos")
+--
+-- Yo venia parchando el sintoma en la bandeja. La bandeja no era el problema:
+--
+--   bandeja de solicitudes   2.454.356 llamadas    75 ms de promedio
+--   resumen del CRM            281.352 llamadas  1.056 ms de promedio   82 HORAS de base
+--
+-- La bandeja es de lo mas rapido que hay. Su peor marca de 19.781 ms fue haciendo cola detras
+-- de otra cosa.
+--
+-- Esa otra cosa es el resumen del CRM. Le habian puesto una cache de 10 minutos y FUNCIONA --
+-- pero le faltaba ordenar la fila al vencer:
+--
+--     select c.datos into v_datos from panel_crm_resumen_cache c
+--      where c.clave = v_clave and c.generado_at > now() - interval '10 minutes';
+--     if v_datos is null then
+--       <CALCULA DE CERO>          <-- todos los paneles, a la vez
+--     end if;
+--
+-- Cuando se cumplen los 10 minutos, TODOS los paneles de TODAS las oficinas encuentran la cache
+-- vencida en el mismo instante y TODOS se ponen a recalcularla juntos. Cada calculo recorre
+-- ~200 mil filas de agente_operaciones_importadas. Catorce de esos a la vez tapan la base unos
+-- segundos -- y en esos segundos muere todo lo demas: la bandeja sale 19 s, y los 500 de
+-- panel_promo_primer_ingreso y panel_crm_vinculos salen de la misma estampida.
+--
+-- El operador lo ve como "termino dos cargas y no se van de la lista hasta el proximo refresh".
+--
+-- ARREGLO: recalcula UNO SOLO.
+--   pg_try_advisory_xact_lock(hashtext('crm_resumen:' || clave))
+--     - el que toma el turno, calcula y guarda
+--     - los demas se llevan la version anterior (unos segundos mas vieja) y siguen al instante
+--     - si no hay NADA guardado todavia, calcula igual: nadie se queda sin respuesta
+--   El turno se suelta solo al terminar la llamada (xact = por transaccion).
+--
+-- No cambia la firma, ni lo que devuelve, ni los permisos. Comprobado despues de aplicar.
+--
+-- FOTO DE ANTES, para cotejar (3/10 12:54):
+--   281.358 llamadas · 1.056 ms promedio · 3.000 ms peor (o sea: muriendo en el tope de 3 s)
+--
+-- El codigo aplicado esta en la base (migracion crm_resumen_que_recalcule_uno_solo).
+--
+-- Lo que sigue pendiente y es de fondo: cada carga del CRM dispara CUATRO consultas
+-- (agente_resumen, flags, vinculos, historial). Entre las cuatro se comieron mas de 200 horas
+-- de base. La cache arregla una. Las otras tres siguen igual.
