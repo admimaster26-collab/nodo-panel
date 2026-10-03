@@ -43,3 +43,27 @@
 -- chat_mensajes todos los mensajes de operador de los ultimos 30 dias dicen "Sistema", asi que
 -- por ahi todavia no se filtro ninguno -- pero el camino esta abierto. landing_leer_chat_v2
 -- devuelve ese campo. Queda anotado.
+
+-- ===========================================================================
+-- CORRECCION del punto 1: mi primer arreglo NO alcanzaba
+-- ===========================================================================
+-- Caso joelgoat (solicitud 299698, 3/10 13:31) -- el cartel seguia apareciendo despues de
+-- "arreglado". Yo habia puesto un guardia: no inyectar si el hilo YA trae un mensaje del jugador.
+--
+-- No alcanzaba. La secuencia real fue:
+--   13:31:36  joelgoat abre el chat        -> hilo VACIO
+--   13:31:36  el operador lo acepta en el acto -> el guardia no encuentra nada que encontrar
+--             -> inyecta "Consulta desde portal" firmado como el jugador
+--   13:31:39  joelgoat escribe de verdad   -> queda DETRAS del cartel
+--
+-- Las consultas del portal nuevo entran por el canal de chat: no traen mensaje_inicial, y muchas
+-- veces todavia no traen NINGUN mensaje cuando el operador las toma. Un hilo vacio es un hilo
+-- vacio.
+--
+-- Arreglo definitivo: se saco el relleno. Era
+--     v_msg := coalesce(v_item->>'mensaje', 'Consulta desde portal');
+-- y ahora es
+--     v_msg := nullif(btrim(coalesce(v_item->>'mensaje','')),'');
+-- con `if v_msg is not null and not exists (...)`. Si no hay texto, no se agrega nada. Nunca.
+--
+-- Limpieza: las que ya lo tenian quedaron en 0.
