@@ -27,3 +27,24 @@ alter function public.panel_v15_5_listar_solicitudes_portal(text)
 --
 -- Para volver atras:
 --   alter function public.panel_v15_5_listar_solicitudes_portal(text) reset statement_timeout;
+
+-- ===========================================================================
+-- VUELTA ATRAS, el mismo dia, a los pocos minutos. El cambio de arriba ESTA DESHECHO.
+-- ===========================================================================
+-- Lo que no calcule: el panel no deja correr dos lecturas de la bandeja a la vez (candado
+-- anti-solapamiento en requests.js). Con el tope en 3s, una consulta lenta moria y liberaba.
+-- Con el tope en 20s se queda hasta 20 -- y todo lo que el operador pide en el medio queda
+-- encolado detras de ella.
+--
+-- Medido en pg_stat_statements despues del cambio: una llamada llego a 19.781 ms.
+-- Juan lo vio como "termino dos cargas y no se van de la lista hasta el proximo refresh".
+-- Antes de mi cambio no pasaba.
+--
+--   alter function public.panel_v15_5_listar_solicitudes_portal(text) reset statement_timeout;
+--
+-- Queda el sintoma viejo (se corta y reintenta), que es preferible: cortarse deja la lista
+-- vieja en pantalla pero NO traba lo que viene atras.
+--
+-- CONCLUSION: mientras la consulta devuelva 387 kB y 300 filas enteras, cualquier numero que se
+-- le ponga al tope elige entre cortarse o trabar. No hay numero bueno. Lo unico que lo arregla
+-- es que pese menos.
