@@ -684,10 +684,29 @@
     if(!ticket)return;
     if(!confirm("¿Cerrar esta consulta de "+E(ticket.usuario)+"?"))return;
     try{
+      let algoSeCerro=false;
       for(const s of (ticket.items||[])){
         const sid=idSol(s);
-        if(sid)await actualizarSolicitudPortal(sid,"CERRADO",{chat_estado:"CERRADO",chat_master_id:ticket.masterId||ticket.solicitudId||sid});
+        if(sid){ await actualizarSolicitudPortal(sid,"CERRADO",{chat_estado:"CERRADO",chat_master_id:ticket.masterId||ticket.solicitudId||sid}); algoSeCerro=true; }
       }
+      // Las conversaciones del canal nuevo no son solicitudes: vienen con `items` vacío, así que
+      // el bucle de arriba no cerraba NADA. La pantalla se cerraba igual y parecía que había
+      // funcionado — y en el refresco siguiente la consulta volvía. (Juan, 3/10: "fallos
+      // reportados en cerrar chats".)
+      if(ticket._canalNuevo && ticket._chatId){
+        // Motivo vacío a propósito: se cierra en silencio. Con el motivo puesto, la base le
+        // escribe al JUGADOR "Cerrado manualmente desde panel" — texto nuestro, interno.
+        const r = await window.panelAPI.rpc('panel_v14_cerrar_chat_json',
+          { p_session_id:null, p_chat_id:String(ticket._chatId), p_motivo:'' });
+        if(r && r.error) throw new Error(r.error.message || 'no se pudo cerrar la conversación');
+        algoSeCerro=true;
+        // Y la solicitud puente que la acompaña, para que no quede abierta en la bandeja.
+        const sidPuente = Number(ticket.solicitudId||0);
+        if(sidPuente) await actualizarSolicitudPortal(sidPuente,"CERRADO",{chat_estado:"CERRADO"});
+      }
+      // Cerrar "para la vista" y no en la base es lo peor de los dos mundos: el operador la da
+      // por resuelta y le vuelve sola.
+      if(!algoSeCerro) throw new Error("no encontré qué cerrar en esta consulta");
       const map=getAccepted(); delete map[U(ticket.usuario)]; localStorage.setItem(ACCEPT_KEY,JSON.stringify(map));
       window.__nodoChatCurrentTicket=null;window.__nodoChatCurrentUser="";
       document.body.classList.remove("nodo-chat-open");

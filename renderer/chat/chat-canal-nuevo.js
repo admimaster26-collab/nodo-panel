@@ -73,6 +73,12 @@
     const fecha = S(s.fecha_ultimo || s.updated_at || s.created_at || '');
     const ultimo = S(s.ultimo_mensaje || '');
     const cerrado = U(s.estado || '') === 'CERRADO';
+    // Antes decía `accepted: !cerrado`, o sea: toda conversación abierta nacía ya aceptada.
+    // Consecuencia: nunca pasaba por "En espera", que es de donde sale el aviso de chat nuevo —
+    // así que una consulta del portal entraba sin que sonara ni se encendiera nada, y el operador
+    // sólo se enteraba si miraba la lista. (Juan, 3/10: "sin notificacion de nuevos chats".)
+    // Ahora se pregunta lo mismo que para el resto: ¿este operador la aceptó?
+    const aceptada = !!(window._wq2IsAccepted && window._wq2IsAccepted(usuario));
     return {
       id: 'CANAL_' + clave,
       usuario: usuario,
@@ -82,7 +88,7 @@
       mensaje: ultimo,
       solicitudId: S(s.solicitud_id || ''),
       masterId: null,
-      accepted: !cerrado,
+      accepted: !cerrado && aceptada,
       cerrado: cerrado,
       thread: ultimo ? [{ origen: 'USUARIO', usuario: usuario, mensaje: ultimo, fecha: fecha }] : [],
       unread: Number(s.sin_leer) || 0,

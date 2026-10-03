@@ -73,6 +73,12 @@
     const fecha = S(s.fecha_ultimo || s.updated_at || s.created_at || '');
     const ultimo = S(s.ultimo_mensaje || '');
     const cerrado = U(s.estado || '') === 'CERRADO';
+    // Antes decía `accepted: !cerrado`, o sea: toda conversación abierta nacía ya aceptada.
+    // Consecuencia: nunca pasaba por "En espera", que es de donde sale el aviso de chat nuevo —
+    // así que una consulta del portal entraba sin que sonara ni se encendiera nada, y el operador
+    // sólo se enteraba si miraba la lista. (Juan, 3/10: "sin notificacion de nuevos chats".)
+    // Ahora se pregunta lo mismo que para el resto: ¿este operador la aceptó?
+    const aceptada = !!(window._wq2IsAccepted && window._wq2IsAccepted(usuario));
     return {
       id: 'CANAL_' + clave,
       usuario: usuario,
@@ -82,7 +88,7 @@
       mensaje: ultimo,
       solicitudId: S(s.solicitud_id || ''),
       masterId: null,
-      accepted: !cerrado,
+      accepted: !cerrado && aceptada,
       cerrado: cerrado,
       thread: ultimo ? [{ origen: 'USUARIO', usuario: usuario, mensaje: ultimo, fecha: fecha }] : [],
       unread: Number(s.sin_leer) || 0,
@@ -823,10 +829,29 @@
     if(!ticket)return;
     if(!confirm("¿Cerrar esta consulta de "+E(ticket.usuario)+"?"))return;
     try{
+      let algoSeCerro=false;
       for(const s of (ticket.items||[])){
         const sid=idSol(s);
-        if(sid)await actualizarSolicitudPortal(sid,"CERRADO",{chat_estado:"CERRADO",chat_master_id:ticket.masterId||ticket.solicitudId||sid});
+        if(sid){ await actualizarSolicitudPortal(sid,"CERRADO",{chat_estado:"CERRADO",chat_master_id:ticket.masterId||ticket.solicitudId||sid}); algoSeCerro=true; }
       }
+      // Las conversaciones del canal nuevo no son solicitudes: vienen con `items` vacío, así que
+      // el bucle de arriba no cerraba NADA. La pantalla se cerraba igual y parecía que había
+      // funcionado — y en el refresco siguiente la consulta volvía. (Juan, 3/10: "fallos
+      // reportados en cerrar chats".)
+      if(ticket._canalNuevo && ticket._chatId){
+        // Motivo vacío a propósito: se cierra en silencio. Con el motivo puesto, la base le
+        // escribe al JUGADOR "Cerrado manualmente desde panel" — texto nuestro, interno.
+        const r = await window.panelAPI.rpc('panel_v14_cerrar_chat_json',
+          { p_session_id:null, p_chat_id:String(ticket._chatId), p_motivo:'' });
+        if(r && r.error) throw new Error(r.error.message || 'no se pudo cerrar la conversación');
+        algoSeCerro=true;
+        // Y la solicitud puente que la acompaña, para que no quede abierta en la bandeja.
+        const sidPuente = Number(ticket.solicitudId||0);
+        if(sidPuente) await actualizarSolicitudPortal(sidPuente,"CERRADO",{chat_estado:"CERRADO"});
+      }
+      // Cerrar "para la vista" y no en la base es lo peor de los dos mundos: el operador la da
+      // por resuelta y le vuelve sola.
+      if(!algoSeCerro) throw new Error("no encontré qué cerrar en esta consulta");
       const map=getAccepted(); delete map[U(ticket.usuario)]; localStorage.setItem(ACCEPT_KEY,JSON.stringify(map));
       window.__nodoChatCurrentTicket=null;window.__nodoChatCurrentUser="";
       document.body.classList.remove("nodo-chat-open");
