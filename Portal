@@ -573,7 +573,13 @@ function incomingOperatorMsg(texto,imgUrl){
 function mostrarBotonIngresar(usuario,telefono){
   usuario=String(usuario||"").trim() || (state.usuario||"");
   telefono=String(telefono||"").trim();
-  if((state.nivelAcceso||"")==="OK") return;                 // ya está adentro
+  // Acá había un "si ya está adentro, no lo muestres". Lo sacamos (Juan, 3/10): el operador lo
+  // mandó a propósito, y la página no es quién para decidir que no hace falta.
+  //
+  // El caso que importa es justo el que tapaba: cuando la página se CREE que el jugador está
+  // adentro y no lo está —marcado de una sesión anterior, de otra oficina, o de un dato que
+  // quedó viejo— el jugador ve que no le aparece la billetera y encima se queda sin el único
+  // botón que lo destraba. Que sobre un botón no le rompe nada a nadie; que falte, sí.
   if(state._ingresarUserShown===usuario && $("btnIngresarValidado")) return; // no duplicar
   state._ingresarUserShown=usuario;
   const prev=$("btnIngresarValidado"); if(prev){ const pm=prev.closest(".msg"); if(pm) pm.remove(); }
