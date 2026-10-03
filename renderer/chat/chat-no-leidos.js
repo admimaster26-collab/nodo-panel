@@ -87,27 +87,56 @@
     }catch(_e){ console.warn("markAllRead",_e); }
   };
 
+  // Hasta dónde está leído: la marca de esta PC o la última vez que contestó el operador,
+  // lo que sea más nuevo. Es el mismo corte que usa unreadForTicket.
+  function corteLeido(t){
+    const marks=getJson(readKey(),{});
+    const rd=toDate(marks[chatKey(t)]||"").getTime();
+    return Math.max(rd, ultimaRespuestaOperador(t));
+  }
+
+  // La lista de avisados no se limpiaba nunca: una clave por mensaje, para siempre, en el
+  // localStorage de la PC. Se queda con las últimas 4000 y tira el resto.
+  function podar(obj){
+    try{
+      const ks=Object.keys(obj);
+      if(ks.length<=4000) return obj;
+      const out={};
+      ks.slice(ks.length-4000).forEach(k=>{ out[k]=true; });
+      return out;
+    }catch(_e){ return obj; }
+  }
+
   function notifyNewMessages(){
     const tickets=allTickets().filter(t=>t.accepted);
     const notified=getJson(notifyKey(),{});
     let changed=false;
 
     tickets.forEach(t=>{
-      const msgs=userMsgs(t);
-      msgs.forEach(m=>{
+      const corte=corteLeido(t);
+      const isCurrent = document.body.classList.contains("nodo-chat-open") && U(window.__nodoChatCurrentUser||"")===U(t.usuario);
+      userMsgs(t).forEach(m=>{
         const k=[chatKey(t),m.solicitud_id||"",m.fecha||"",m.mensaje||""].join("|");
         if(notified[k]) return;
 
-        const unread=unreadForTicket(t);
-        const isCurrent = document.body.classList.contains("nodo-chat-open") && U(window.__nodoChatCurrentUser||"")===U(t.usuario);
-        // Si no estoy mirando ese chat y hay no leídos, aviso una sola vez.
-        if(unread>0 && !isCurrent){
+        // SIEMPRE se anota que este mensaje ya pasó por acá, avise o no.
+        //
+        // Antes sólo se anotaba cuando además había algo sin leer. Un mensaje visto con la
+        // conversación al día no quedaba anotado nunca — y el día que el jugador volvía a
+        // escribir, el aviso salía por ESE y por todos los viejos que nunca se habían anotado,
+        // todos juntos y de golpe. Eso es lo que vio Juan el 3/10: "de a ratos te marca
+        // mensajes ya viejos", cuatro avisos en el mismo segundo.
+        notified[k]=true; changed=true;
+
+        // Y el aviso mira ESTE mensaje, no el total del ticket: si es posterior a lo leído,
+        // es nuevo de verdad.
+        const esNuevo = toDate(m.fecha).getTime() > corte;
+        if(esNuevo && !isCurrent){
           try{ if(typeof toast==="function") toast("💬 Nuevo mensaje de "+(t.usuario||"usuario"),"blue"); }catch(_e){}
-          notified[k]=true; changed=true;
         }
       });
     });
-    if(changed) setJson(notifyKey(),notified);
+    if(changed) setJson(notifyKey(),podar(notified));
   }
 
   function updateChatUnreadBadges(){
