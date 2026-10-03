@@ -1,0 +1,48 @@
+-- LA CAUSA, de verdad esta vez. Cuatro dias buscandola.  (Juan, 3/10)
+--
+-- Juan: "no estas mirando el camino de la solicitud para entender pq tarda en dibujarse".
+-- Tenia razon: nunca habia abierto la consulta para ver donde se iba el tiempo. Cuando lo hice,
+-- aparecio en la primera linea del plan.
+--
+-- La bandeja hace dos busquedas: las 80 mas recientes, y las que estan ABIERTAS. La segunda:
+--
+--   Index Scan using idx_landing_sol_portal_pc_fecha
+--     Filter: upper(coalesce(estado,'PENDIENTE')) = ANY (...)
+--     Rows Removed by Filter: 81471          <-- descartaba 81.471 filas
+--     Buffers: shared hit=72878              <-- ~570 MB leidos
+--   Execution Time: 186 ms
+--
+-- O sea: para encontrar las ~180 solicitudes abiertas de Sanchez, recorria 81.471 cerradas
+-- descartandolas de a una. En cada refresco. 2,45 millones de veces.
+--
+-- POR QUE: el indice correcto YA EXISTIA -- idx_landing_sol_portal_abiertas, parcial, exactamente
+-- sobre esa condicion. Pero estaba con indisvalid = false: lo crearon con CREATE INDEX
+-- CONCURRENTLY, la construccion fallo a la mitad, y quedo ahi. Existe, se ve en la lista de
+-- indices, ocupaba 4,4 MB... y Postgres no lo puede usar. idx_scan = 0: nunca se uso, ni una vez.
+--
+-- Un indice invalido no avisa nada. No tira error, no sale en los logs. Simplemente la base lo
+-- ignora y cae al plan lento.
+--
+-- ARREGLO:
+--   reindex index concurrently public.idx_landing_sol_portal_abiertas;
+--   (el drop + create tambien sirve; el permiso no me dejo borrar, y el reindex alcanzo)
+--
+-- MEDIDO ANTES Y DESPUES, con el mismo EXPLAIN ANALYZE:
+--
+--                          antes          despues
+--   filas descartadas      81.471         0
+--   datos leidos           ~578 MB        ~10 MB      (57 veces menos)
+--   tiempo                 186,9 ms       17,6 ms     (10 veces mas rapido)
+--   tamanio del indice     4.480 kB       48 kB       (ahora indexa solo las abiertas)
+--
+-- Barrido por el resto de la base: no hay ningun otro indice invalido. Era ese solo.
+--
+-- ESTO EXPLICA TODO LO DE ESTOS DIAS:
+--   - la bandeja que se cortaba a los 3 segundos (statement timeout de anon)
+--   - las solicitudes que tardaban en dibujarse y despues caian todas juntas
+--   - las que no se iban de la lista al cargarlas hasta el refresco siguiente
+--   - y de paso, buena parte de la carga de la base que hacia morir al CRM
+--
+-- Para controlar que no se vuelva a romper:
+--   select c.relname, i.indisvalid from pg_index i join pg_class c on c.oid=i.indexrelid
+--    where not i.indisvalid;
