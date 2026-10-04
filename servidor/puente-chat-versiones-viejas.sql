@@ -179,3 +179,40 @@ $fn$;
 -- PROBADO de punta a punta en P1: una consulta nueva recibe la respuesta correcta
 -- (AVISO_PAGO_SIN_SOLICITUD), queda espejada en la solicitud, y un segundo mensaje del jugador
 -- NO dispara una segunda respuesta.
+
+
+-- ═══════════════════════════════════════════════════════════════════════════════════════════
+-- 4/10 · EL AVISO QUE DISPARABA NUESTRA PROPIA RESPUESTA
+-- ═══════════════════════════════════════════════════════════════════════════════════════════
+--
+-- Juan: "al cerrar los mensajes algunos chats se vuelven a marcar como no leidos y hasta marcar
+-- como que llegan mensajes aun". En la foto: el cartel "Nuevo mensaje de noemiacdc" mostrando
+-- "Vemos tu carga de $3.000 registrada hace 1 minutos" — que lo escribió el bot, no noemiacdc.
+--
+-- panel_core_get_chat_sesiones_json devolvía `ultimo_mensaje` y `fecha_ultimo` del ÚLTIMO MENSAJE
+-- DE CUALQUIERA, y el panel daba por sentado que eso lo había escrito el jugador: armaba la
+-- conversación con una sola línea marcada como USUARIO. Entonces cada respuesta nuestra se
+-- contaba como mensaje nuevo del jugador — el chat volvía a "no leído" y sonaba el aviso.
+--
+-- Antes casi no se notaba: por este canal apenas había respuestas de operador. Desde que el bot
+-- contesta acá (3/10) pasó a ser CADA respuesta.
+--
+-- ARREGLO EN LA BASE (vale para las versiones ya instaladas, sin actualizar nada):
+--   fecha_ultimo  = hora del último mensaje DEL JUGADOR  <- es lo que mira el panel para "sin leer"
+--   updated_at    = última actividad de cualquiera        (sin cambios)
+--   ultimo_de     = 'USUARIO' | 'OPERADOR'                (nuevo: de quién es el adelanto)
+--
+-- ARREGLO EN EL PANEL (2.1.6): comoTicket usa `ultimo_de`, así el adelanto queda atribuido a quien
+-- corresponde y la respuesta del operador lleva SU hora.
+--   renderer/chat/chat-canal-nuevo.js
+--
+--
+-- ── Y una que apareció mirando esto: el bot contestaba "al mismo segundo" ───────────────────
+--
+-- noemiacdc tenía los dos mensajes con la hora EXACTA, al microsegundo: 04:05:12.978902.
+-- Porque trg_chat_autorespuesta usaba now(), que en Postgres devuelve la hora de ARRANQUE de la
+-- transacción — y el disparador corre dentro de la misma transacción que el mensaje del jugador.
+-- La respuesta quedaba empatada con el mensaje al que contesta: orden ambiguo e imposible saber
+-- quién habló último por la hora.
+--
+-- Ahora usa clock_timestamp(). Las filas viejas quedan empatadas; el orden por id las desempata.

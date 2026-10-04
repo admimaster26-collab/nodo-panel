@@ -77,3 +77,52 @@ test('el ticket lleva con que cerrarse de verdad', () => {
   assert.equal(t._chatId, 'CHAT_abc', 'el id de la conversacion');
   assert.equal(t.solicitudId, '299698', 'y la solicitud puente, para cerrarla tambien');
 });
+
+// ── 4/10 · El aviso no puede dispararlo NUESTRA propia respuesta ──────────────────────────────
+//
+// Juan: "al cerrar los mensajes algunos chats se vuelven a marcar como no leidos y hasta marcar
+// como que llegan mensajes aun". El adelanto que muestra la lista es el ultimo mensaje de
+// CUALQUIERA, y aca se daba por sentado que lo habia escrito el jugador. Asi, cada respuesta del
+// operador —o del bot— entraba como mensaje nuevo del jugador: el chat volvia a "no leido" y
+// saltaba el cartel con el texto de nuestra propia contestacion.
+// Caso real: noemiacdc, con el cartel "Nuevo mensaje de noemiacdc" mostrando
+// "Vemos tu carga de $3.000 registrada hace 1 minutos" — que lo escribio el bot.
+
+const SESION_CONTESTADA = {
+  usuario: 'noemiacdc', telefono: '1158956858', estado: 'ABIERTO',
+  chat_id: 'CHAT_50ee', solicitud_id: 302487,
+  ultimo_mensaje: 'Vemos tu carga de $3.000 registrada hace 1 minutos.',
+  ultimo_de: 'OPERADOR',
+  fecha_ultimo: '2026-10-04T04:05:12.978Z',   // cuando escribio el jugador
+  updated_at:   '2026-10-04T04:05:40.000Z',   // cuando contesto el bot
+  sin_leer: 0
+};
+
+test('lo ultimo que dijo el bot NO figura como mensaje del jugador', () => {
+  const comoTicket = armar(['NOEMIACDC']);
+  const t = comoTicket(SESION_CONTESTADA);
+  const delUsuario = t.thread.filter(m => m.origen === 'USUARIO');
+  assert.equal(delUsuario.length, 0, 'esa linea la escribio el bot, no el jugador');
+  assert.equal(t.last.origen, 'OPERADOR');
+});
+
+test('la respuesta del operador queda con SU hora, no con la del jugador', () => {
+  const comoTicket = armar(['NOEMIACDC']);
+  const t = comoTicket(SESION_CONTESTADA);
+  assert.equal(t.last.fecha, '2026-10-04T04:05:40.000Z');
+});
+
+test('si el ultimo que hablo fue el jugador, sigue contando como suyo', () => {
+  const comoTicket = armar([]);
+  const t = comoTicket(Object.assign({}, SESION_CONTESTADA, {
+    ultimo_de: 'USUARIO', ultimo_mensaje: 'Ya cargue', sin_leer: 1 }));
+  assert.equal(t.thread[0].origen, 'USUARIO');
+  assert.equal(t.thread[0].fecha, '2026-10-04T04:05:12.978Z', 'con la hora del jugador');
+  assert.equal(t.unread, 1);
+});
+
+test('sin el dato de quien hablo (servidor viejo) se asume el jugador, como antes', () => {
+  const comoTicket = armar([]);
+  const t = comoTicket(Object.assign({}, SESION_CONTESTADA, { ultimo_de: undefined }));
+  assert.equal(t.thread[0].origen, 'USUARIO');
+});

@@ -70,8 +70,18 @@
   function comoTicket(s){
     const usuario = S(s.usuario || s.USUARIO || '');
     const clave = U(usuario).replace(/[^A-Z0-9]/g, '_');
-    const fecha = S(s.fecha_ultimo || s.updated_at || s.created_at || '');
+    // Dos horas distintas, y hacen falta las dos:
+    //   fechaUsuario = cuándo escribió por última vez EL JUGADOR → decide si hay algo sin leer
+    //   fechaActiva  = última actividad de cualquiera            → ordena la lista
+    const fechaUsuario = S(s.fecha_ultimo || s.updated_at || s.created_at || '');
+    const fechaActiva  = S(s.updated_at || s.fecha_ultimo || s.created_at || '');
     const ultimo = S(s.ultimo_mensaje || '');
+    // De quién es el texto que se muestra de adelanto. Antes esto no venía y acá se daba por
+    // sentado que era del jugador: cada respuesta del operador —o del bot— se contaba como
+    // mensaje nuevo, el chat volvía a "no leído" y saltaba el cartel "Nuevo mensaje de fulano"
+    // con el texto de nuestra propia respuesta. (Juan, 4/10.)
+    const deOperador = U(s.ultimo_de || '') === 'OPERADOR';
+    const fechaUltimo = deOperador ? (fechaActiva || fechaUsuario) : fechaUsuario;
     const cerrado = U(s.estado || '') === 'CERRADO';
     // Antes decía `accepted: !cerrado`, o sea: toda conversación abierta nacía ya aceptada.
     // Consecuencia: nunca pasaba por "En espera", que es de donde sale el aviso de chat nuevo —
@@ -84,15 +94,15 @@
       usuario: usuario,
       telefono: S(s.telefono || ''),
       items: [],
-      fecha: fecha,
+      fecha: fechaActiva,
       mensaje: ultimo,
       solicitudId: S(s.solicitud_id || ''),
       masterId: null,
       accepted: !cerrado && aceptada,
       cerrado: cerrado,
-      thread: ultimo ? [{ origen: 'USUARIO', usuario: usuario, mensaje: ultimo, fecha: fecha }] : [],
+      thread: ultimo ? [{ origen: deOperador ? 'OPERADOR' : 'USUARIO', usuario: usuario, mensaje: ultimo, fecha: fechaUltimo }] : [],
       unread: Number(s.sin_leer) || 0,
-      last: ultimo ? { origen: 'USUARIO', usuario: usuario, mensaje: ultimo, fecha: fecha } : null,
+      last: ultimo ? { origen: deOperador ? 'OPERADOR' : 'USUARIO', usuario: usuario, mensaje: ultimo, fecha: fechaUltimo } : null,
       _canalNuevo: true,
       _chatId: S(s.chat_id || s.id || '')
     };
