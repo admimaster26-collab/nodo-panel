@@ -491,7 +491,7 @@ window.cargarArbolCompletoUsuario = async function(usuario, onDone){
     if(onDone) onDone(false);
   }
 };
-window.verDetalleMovimiento = function(histId, usuarioArg){
+window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
   const esc = escapeHtml;
   // Red por si algo lo llama igual: esta ficha es de plata. Para un cambio de clave o una
   // consulta armaba "Carga · $ 0" con el árbol de otras operaciones abajo, que no tiene
@@ -507,8 +507,22 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
   }catch(_e){}
 
   const map = _movStoreAll();
-  let mov = map[String(histId)] || null;
-  const hRow = (_historialData||[]).find(function(x){ return String(x.id)===String(histId); });
+  let mov = histId ? (map[String(histId)] || null) : null;
+  const hRow = histId ? (_historialData||[]).find(function(x){ return String(x.id)===String(histId); }) : null;
+
+  // 4/10 · La fila que tocó el operador manda sobre cualquier cosa guardada.
+  //
+  // Abajo el usuario salía de `mov.usuario` —el guardado local— ANTES que del nombre de la
+  // fila. Con un número equivocado (ver historial-operaciones.js) eso abría la ficha entera
+  // de otro jugador: titular, saldos y árbol de operaciones, sin avisar nada.
+  // Si lo guardado no es de la misma persona que la fila, no es de esta fila: se descarta.
+  const _norm = function(v){ return String(v==null?"":v).trim().toLowerCase(); };
+  const _usuarioFila = _norm(usuarioArg || (hRow && hRow.usuario) || "");
+  if(mov && _usuarioFila && _norm(mov.usuario) !== _usuarioFila){
+    console.warn("[detalle] lo guardado con el id " + histId + " es de " + mov.usuario +
+                 " y la fila es de " + usuarioArg + " — se descarta");
+    mov = null;
+  }
   if(!mov && hRow){
     const p = _movParseNotas(hRow.notas);
     mov = { id:hRow.id, usuario:hRow.usuario, tipo:hRow.tipo, monto:hRow.monto,
@@ -517,8 +531,34 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
       operador:hRow.operador, estado:hRow.estado, chuniorId:hRow.chunior_movimiento_id,
       notas:hRow.notas, _fecha:hRow.created_at, origen:hRow.origen };
   }
-  const usuario = (mov&&mov.usuario) || usuarioArg || (hRow&&hRow.usuario) || '';
+  // La solicitud del portal que corresponde a esta fila. Es OTRA numeración: por eso llega
+  // aparte y nunca se mezcla con el número del movimiento.
+  const _solId = String(solicitudIdArg || (hRow && hRow.solicitud_id) || (mov && mov.solicitudId) || '').trim();
+  let _solFila = null;
+  try{
+    const _todas = (window.V154P && window.V154P.solicitudes) || [];
+    if(_solId) _solFila = _todas.find(function(x){ return String(x.ID||x.SOLICITUD_ID||'')===_solId; }) || null;
+  }catch(_e){}
+
+  const usuario = usuarioArg || (hRow&&hRow.usuario) || (mov&&mov.usuario) || (_solFila&&_solFila.USUARIO) || '';
   if(!usuario){ toast('No se encontró el movimiento', 'red'); return; }
+  // Una solicitud que todavía no llegó a ser movimiento (pendiente, rechazada) no tiene nada
+  // en el historial. Antes eso salía como "Carga · $ 0"; ahora la ficha se arma con lo que
+  // la solicitud SÍ tiene.
+  if(!mov && _solFila){
+    mov = {
+      usuario: _solFila.USUARIO || usuario,
+      tipo: String(_solFila.TIPO || _solFila.TIPO_SOLICITUD || "").toUpperCase(),
+      monto: Number(_solFila.MONTO_REAL != null ? _solFila.MONTO_REAL : _solFila.MONTO_DECLARADO || 0),
+      titular: _solFila.TITULAR || _solFila.NOMBRE_COMPLETO || "",
+      destino: _solFila.DESTINO || "",
+      billeteraNombre: _solFila.BILLETERA_NOMBRE || "",
+      operador: _solFila.OPERADOR || "",
+      estado: _solFila.ESTADO || "",
+      solicitudId: _solId,
+      _fecha: _solFila.FECHA_CREACION || _solFila.FECHA || ""
+    };
+  }
   if(!mov) mov = { usuario:usuario, tipo:'', monto:0 };
 
   const esRetiro = String(mov.tipo||'').toUpperCase()==='RETIRO';
@@ -606,6 +646,45 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
       + '</div></div>';
   }).join('') || '<div class="small" style="color:#8b949e;padding:8px">Sin otras operaciones registradas para este usuario.</div>';
 
+  // ── Por qué se rechazó ────────────────────────────────────────────────────────────────
+  // Juan, 4/10: "no tengo informacion sobre los rechazos... que va a pasar cuando abra el
+  // boton de la lupa? nada". Tenía razón: el motivo ya venía en la solicitud, guardado, y
+  // esta ficha no lo miraba. Ahora se muestra — y cuando no hay motivo guardado, se dice que
+  // no lo hay, que es un dato en sí mismo.
+  let rechazoHtml = "";
+  try{
+    const _mt = (_solFila && (_solFila.metadata || _solFila.METADATA)) || {};
+    const _estSol = String((_solFila && _solFila.ESTADO) || (hRow && hRow.estado) || (mov && mov.estado) || "").toUpperCase();
+    const _esRechazo = ["RECHAZADA","CANCELADA","ERROR"].indexOf(_estSol) >= 0;
+    let _motivo = String(_mt.motivo || _mt.motivo_rechazo || "").trim();
+    const _obs = String(_mt.observacion || "").trim();
+    const _quien = String(_mt.operador || (_solFila && _solFila.OPERADOR) || (mov && mov.operador) || "").trim();
+    // Los controles del panel guardan un código, no una frase. Al operador le sirve la frase.
+    const _enCastellano = {
+      REINCIDENTE: "Ya había mandado el mismo comprobante antes",
+      DATO_PROPIO: "Transfirió desde una cuenta nuestra",
+      USUARIO_COMO_TITULAR: "Puso su usuario de juego donde va el titular",
+      SOLO_NUMEROS: "El titular eran sólo números"
+    };
+    if(_enCastellano[_motivo]) _motivo = _enCastellano[_motivo] + " (" + _motivo + ")";
+    if(_esRechazo || _motivo){
+      const _cuerpo = _motivo
+        ? '<div style="font-size:14px;font-weight:700;color:#f0f6fc">'+esc(_motivo)+'</div>'
+        : '<div style="font-size:13px;color:#fca5a5;font-weight:700">No quedó guardado por qué se rechazó.</div>';
+      const _pie = [];
+      if(_quien) _pie.push('lo hizo '+esc(_quien));
+      if(!_quien) _pie.push('no quedó registrado quién');
+      if(_solId) _pie.push('solicitud N° '+esc(_solId));
+      rechazoHtml =
+        '<div style="margin-top:10px;border-radius:10px;padding:11px 13px;border:1px solid rgba(248,113,113,.45);background:rgba(248,113,113,.07)">'
+        + '<div style="font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#fca5a5;margin-bottom:5px">✖ Por qué se rechazó</div>'
+        + _cuerpo
+        + (_obs ? '<div style="margin-top:5px;font-size:12.5px;color:#e6edf3">'+esc(_obs)+'</div>' : "")
+        + '<div style="margin-top:6px;font-size:11.5px;color:#8b949e">'+esc(_pie.join(" · "))+'</div>'
+        + '</div>';
+    }
+  }catch(_e){}
+
   const body =
     '<div style="max-height:66vh;overflow:auto">'
     + '<div style="border-radius:10px;padding:11px 13px;border:1px solid '+(esRetiro?'rgba(251,146,60,.35)':'rgba(34,197,94,.3)')+';background:'+(esRetiro?'rgba(251,146,60,.06)':'rgba(34,197,94,.06)')+'">'
@@ -628,6 +707,7 @@ window.verDetalleMovimiento = function(histId, usuarioArg){
     +     fila('Obs', esc(mov.obs||''))
     +   '</div>'
     + '</div>'
+    + rechazoHtml
     + ((esRetiro && hRow && hRow.solicitud_id && window.nodoRetiroHistoriaHtml) ? window.nodoRetiroHistoriaHtml(hRow.solicitud_id, hRow.id) : '')
     + '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;padding:8px 11px;background:#161b22;border-radius:9px;font-size:12px">'
     +   '<span>📊 <b>'+arbol.length+'</b> operación/es</span>'

@@ -444,9 +444,23 @@ function renderHistorial(lista){
     // falte el dato: no existe el movimiento.
     const _tipoConMovimiento = ["CARGA","RETIRO","MOV_BILLETERA","CAMBIO_BILLETERA",
                                 "DEPOSITO_SR","PROPINA","RECARGA_FICHAS","GASTO"];
+    // 4/10 · Acá se mezclaban DOS numeraciones distintas y el botón abría otro jugador.
+    //
+    // Esta lista junta dos cosas: movimientos (historial_ops) y solicitudes del portal
+    // (landing_solicitudes). Cada tabla numera por su cuenta y las dos ya van por el 300.000,
+    // así que los números se pisan. El botón mandaba h.id a secas; si la fila era una
+    // SOLICITUD, el detalle buscaba ese número entre los MOVIMIENTOS y abría el de otra persona.
+    //
+    // Caso de Juan: solicitud 303566 = juijuh, carga de $2.000. Movimiento 303566 = vero8goat,
+    // carga de $4.000. Apretó la lupa de juijuh y se abrió la ficha de vero8goat, con su
+    // titular y su árbol de operaciones.
+    //
+    // La fila ya sabía de dónde venía (_fuente) y ya traía historial_id: nadie los usaba.
+    const _histIdSeguro = (h._fuente === 'SOLICITUD') ? '' : String(h.historial_id || h.id || '');
+    const _solIdFila    = String(h.solicitud_id || (h._fuente === 'SOLICITUD' ? (h.id||'') : '') || '');
     const detalleBtn = _tipoConMovimiento.indexOf(String(h.tipo||"").toUpperCase()) === -1
       ? ''
-      : '<button class="mini-btn" style="font-size:13px;background:#3b2a09;color:#fde68a;border:1px solid rgba(253,230,138,.45);padding:5px 9px;line-height:1" onclick="verDetalleMovimiento(\x27'+escapeHtml(String(h.id||''))+'\x27,\x27'+escapeHtml(String(h.usuario||''))+'\x27)" title="Ver detalle del movimiento y el árbol de operaciones del usuario">🔍</button>';
+      : '<button class="mini-btn" style="font-size:13px;background:#3b2a09;color:#fde68a;border:1px solid rgba(253,230,138,.45);padding:5px 9px;line-height:1" onclick="verDetalleMovimiento(\x27'+escapeHtml(_histIdSeguro)+'\x27,\x27'+escapeHtml(String(h.usuario||''))+'\x27,\x27'+escapeHtml(_solIdFila)+'\x27)" title="Ver el detalle de esta operación">🔍</button>';
     // Anular propina (portado de NexoBetaChan): solo en filas PROPINA con N° de Chunior → pone el monto en 0,10.
     const anularPropBtn = (String(h.tipo||'').toUpperCase()==='PROPINA' && h.chunior_movimiento_id && String(h.estado||'').toUpperCase()!=='ANULADA')
       ? '<button class="mini-btn red" style="font-size:11px" onclick="anularPropinaHistorial(\x27'+escapeHtml(String(h.id))+'\x27)" title="Anular esta propina (pone el monto en 0,10 en Chunior)">🚫 Anular</button>'
