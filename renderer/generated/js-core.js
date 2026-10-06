@@ -5923,6 +5923,14 @@ function renderHistorial(lista){
     const histAccionId = String(h.historial_id || (h._fuente!=='SOLICITUD' ? h.id : '') || '');
     const puedeAccionarHistorial = esOperacionDinero && (!!histAccionId || (h._fuente==='SOLICITUD' && !!h.solicitud_id));
     const canUndo = estadoOkVisual && puedeAccionarHistorial;
+    // 6/10 · Juan, por quinta vez: "no hay billetera registrada si no se realizo la carga".
+    // Una fila RECHAZADA no tiene saldo pre, ni saldo post, ni N° de Chunior: la plata nunca se
+    // movió. Ofrecer "Cambiar billetera" ahí es ofrecer corregir algo que no existe.
+    const _huboMovimiento = !!h.chunior_movimiento_id
+      || estadoOkVisual
+      || (h.saldo_post !== null && h.saldo_post !== undefined && h.saldo_post !== '');
+    const _rechazada = ['RECHAZADA','CANCELADA'].indexOf(String(h.estado||'').toUpperCase()) >= 0;
+    const _sidFila = String(h.solicitud_id || (h._fuente === 'SOLICITUD' ? (h.id||'') : '') || '');
     const notasTd = (h.estado==='ERROR' && h.notas)
       ? '<br><span class="small" style="color:#f87171">'+escapeHtml(_errTextoLimpio(h.notas)||_errEtiqueta(h.notas)||'sin detalle')+'</span>'
       : ((h.notas && (h.tipo==='CONSULTA'||h.tipo==='RESET_CLAVE'))
@@ -5933,7 +5941,7 @@ function renderHistorial(lista){
     const changeLocalArgs = '\x27'+escapeHtml(histAccionId)+'\x27,\x27'+escapeHtml(String(h.billetera_id||''))+'\x27,\x27'+escapeHtml(String(h.solicitud_id||''))+'\x27';
     const chuniorBtn = h.chunior_movimiento_id
       ? '<button class="mini-btn purple" onclick="cambiarBilleteraMovimiento(\x27'+escapeHtml(String(h.chunior_movimiento_id))+'\x27,\x27'+escapeHtml(histAccionId)+'\x27,\x27'+escapeHtml(String(h.billetera_id||''))+'\x27)" style="font-size:11px" title="Cambiar billetera del Mov. N° '+escapeHtml(String(h.chunior_movimiento_id))+'">💳 Cambiar billetera</button>'
-      : (puedeAccionarHistorial ? '<button class="mini-btn purple" onclick="cambiarBilleteraHistorialLocal('+changeLocalArgs+')" style="font-size:11px" title="Cambiar billetera en historial/portal">💳 Cambiar billetera</button>' : '');
+      : ((puedeAccionarHistorial && _huboMovimiento) ? '<button class="mini-btn purple" onclick="cambiarBilleteraHistorialLocal('+changeLocalArgs+')" style="font-size:11px" title="Corregir la billetera donde quedó anotada esta operación">💳 Cambiar billetera</button>' : '');
     const claveBtn = (h.usuario && h.tipo !== 'RESET_CLAVE')
       ? '<button class="mini-btn yellow" onclick="blanquearClaveUsuario(\x27'+escapeHtml(String(h.usuario))+'\x27)" style="font-size:11px" title="Blanquear clave de '+escapeHtml(String(h.usuario))+' a 12345a">🔑 Clave</button>'
       : '';
@@ -5988,7 +5996,12 @@ function renderHistorial(lista){
     const errBtn = (h.estado === 'ERROR')
       ? '<button class="mini-btn" style="font-size:12px;background:#3f1d1d;color:#fca5a5;border:1px solid rgba(248,113,113,.45);padding:5px 9px;line-height:1" onclick="verDetalleError(\x27'+escapeHtml(String(h.id||''))+'\x27)" title="Por qué falló: contexto completo, paso a paso y detalle técnico">🔎 Por qué falló</button>'
       : '';
-    const acciones = [errBtn, infoBtn, detalleBtn, retryBtn, chuniorBtn, claveBtn, undoBtn, anularPropBtn].filter(Boolean).join(' ') || '-';
+    // Lo que SÍ se puede hacer con una solicitud rechazada: volver a ponerla en revisión.
+    // Juan: "ya podemos recuperarlas... ponelo ahi".
+    const recuperarBtn = (_rechazada && _sidFila && esOperacionDinero)
+      ? '<button class="mini-btn green" onclick="recuperarSolicitudRechazada(\x27'+escapeHtml(_sidFila)+'\x27,\x27'+escapeHtml(String(h.usuario||''))+'\x27)" style="font-size:11px" title="Volver a ponerla en revisión para resolverla">↺ Recuperar</button>'
+      : '';
+    const acciones = [errBtn, infoBtn, detalleBtn, recuperarBtn, retryBtn, chuniorBtn, claveBtn, undoBtn, anularPropBtn].filter(Boolean).join(' ') || '-';
     const saldoPreTd = (h.saldo_pre !== null && h.saldo_pre !== undefined && h.saldo_pre !== '')
       ? '<span style="color:#9aa7bd">'+money(h.saldo_pre)+'</span>'
       : '<span class="small">—</span>';
@@ -6351,6 +6364,54 @@ async function reintentarOperacionFallida(historialId){
     if(movChu) _watchdogTrigger(1500);
   }, 'Ejecutar reintento');
 }
+
+// ── Recuperar una solicitud rechazada ─────────────────────────────────────────────────────
+// Juan, 6/10: "rechazadas con cambio de billetera, inescesario, ya podemos recuperarlas".
+//
+// Una rechazada no tiene billetera que corregir —nunca se movió plata— pero sí tiene algo que
+// hacer: volver a ponerla en revisión y resolverla. Eso es lo que va en esa fila.
+//
+// NO se borra el motivo del rechazo: queda guardado como `motivo_previo` junto con quién la
+// recuperó y cuándo. El historial de por qué se rechazó es justamente lo que faltaba (4/10);
+// recuperarla no puede ser la forma de perderlo.
+window.recuperarSolicitudRechazada = async function(solicitudId, usuario){
+  const sid = Number(solicitudId||0);
+  if(!sid){ try{ toast("No pude identificar la solicitud","red"); }catch(_e){} return; }
+  const quien = (window.operador && (window.operador.usuario || window.operador.nombre)) || "";
+
+  let motivoPrevio = "";
+  try{
+    const sols = (window.V154P && window.V154P.solicitudes) || [];
+    const sol = sols.find(function(x){ return String(x.ID||x.SOLICITUD_ID||"") === String(sid); });
+    const mt = (sol && (sol.metadata || sol.METADATA)) || {};
+    motivoPrevio = String(mt.motivo || mt.motivo_rechazo || "").trim();
+  }catch(_e){}
+
+  if(!confirm("¿Recuperar la solicitud #"+sid+(usuario?(" de "+usuario):"")+"?\n\n"
+      + (motivoPrevio ? ("Se había rechazado: "+motivoPrevio+"\n\n") : "")
+      + "Vuelve a la bandeja en revisión para resolverla.")) return;
+
+  const actualizar = (typeof actualizarSolicitudPortal === "function")
+    ? actualizarSolicitudPortal
+    : (typeof window.actualizarSolicitudPortal === "function" ? window.actualizarSolicitudPortal : null);
+  if(!actualizar){ try{ toast("No encontré cómo actualizar la solicitud","red"); }catch(_e){} return; }
+
+  try{
+    const r = await actualizar(sid, "EN_REVISION", {
+      recuperada_por: quien,
+      recuperada_at: new Date().toISOString(),
+      motivo_previo: motivoPrevio || null,
+      motivo: null,            // deja de estar rechazada: el motivo viejo queda en motivo_previo
+      motivo_rechazo: null
+    });
+    if(r && r.error) throw new Error(r.error.message || "no se pudo");
+    try{ toast("↺ Solicitud #"+sid+" recuperada — está en la bandeja","green"); }catch(_e){}
+    try{ if(typeof cargarSolicitudesPortal === "function") await cargarSolicitudesPortal(true); }catch(_e){}
+    try{ if(typeof filtrarHistorial === "function") filtrarHistorial(); }catch(_e){}
+  }catch(e){
+    try{ toast("No se pudo recuperar: "+(e.message||e),"red"); }catch(_e){}
+  }
+};
 
 async function deshacerOperacion(id, usuario, tipoOriginal, monto, bilId){
   if(!window.ctrlElectron){ alert("La automatización solo funciona en la app de escritorio."); return; }
