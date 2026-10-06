@@ -112,3 +112,46 @@ test('el numero de la solicitud y el del movimiento no se mezclan', () => {
   assert.equal(n2.historialId, '303566');
   assert.equal(n2.solicitudId, '');
 });
+
+// ── La cuenta de la operación: lo que el operador pega ──────────────────────────────────────
+// Juan, 6/10: "podemos copiar facilmente el usuario, de lo cual ya casi no nos sirve para nada
+// pero no podemos copiar facilmente el cbu u el alias".
+//
+// Y son DOS cosas distintas: en un RETIRO la cuenta es del jugador (a donde hay que pagarle), en
+// una CARGA es la nuestra (a la que transfirió). Copiar la que no era es pagarle a la cuenta
+// equivocada, así que cada una sale rotulada.
+
+test('en un RETIRO la cuenta es la DEL JUGADOR', () => {
+  const d = identidad.destino({ tipo:'RETIRO', metadata:{ destino:'juan.perez.mp', titular:'Juan Perez' } });
+  assert.equal(d.valor, 'juan.perez.mp');
+  assert.equal(d.etiqueta, 'CBU');
+  assert.equal(d.de, 'jugador');
+});
+
+test('en una CARGA la cuenta es la NUESTRA', () => {
+  const d = identidad.destino({ tipo:'CARGA', metadata:{ billetera_alias:'giordano.mp' } });
+  assert.equal(d.valor, 'giordano.mp');
+  assert.equal(d.etiqueta, 'Alias');
+  assert.equal(d.de, 'nuestra');
+});
+
+test('una fila vieja del historial lo saca de las notas', () => {
+  const d = identidad.destino({ tipo:'RETIRO',
+    notas:'Titular: Juan Perez · CBU/CVU: 0000003100010000000001 · Obs: nada' });
+  assert.equal(d.valor, '0000003100010000000001');
+  assert.equal(d.etiqueta, 'CBU');
+});
+
+test('sin cuenta no se dibuja un boton vacio', () => {
+  assert.equal(identidad.destino({ tipo:'CARGA' }), null);
+  assert.equal(identidad.destino({ tipo:'RETIRO', metadata:{} }), null);
+  assert.equal(identidad.destino(null), null);
+});
+
+test('la cuenta del retiro NUNCA sale rotulada como nuestra', () => {
+  // La confusion que importa: pagarle al alias de la casa en vez del del jugador.
+  const retiro = identidad.destino({ tipo:'RETIRO',
+    metadata:{ destino:'juan.perez.mp', billetera_alias:'giordano.mp' } });
+  assert.equal(retiro.valor, 'juan.perez.mp', 'manda el destino del jugador');
+  assert.equal(retiro.de, 'jugador');
+});

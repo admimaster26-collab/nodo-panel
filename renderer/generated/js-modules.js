@@ -958,6 +958,43 @@
     return { solicitudId: sol, historialId: hist };
   }
 
+  function _deNotas(fila, re){
+    const notas = S(fila && (fila.notas || fila.NOTAS));
+    if(!notas) return "";
+    const g = notas.match(re);
+    return g ? S(g[1]) : "";
+  }
+
+  // ── LA CUENTA DE ESTA OPERACIÓN ───────────────────────────────────────────────────────────
+  // Juan, 6/10: "podemos copiar facilmente el usuario, de lo cual ya casi no nos sirve para
+  // nada pero no podemos copiar facilmente el cbu u el alias".
+  //
+  // Son DOS cosas distintas y no se mezclan, por eso cada una sale rotulada:
+  //
+  //   RETIRO → la cuenta DEL JUGADOR. Es lo que el operador pega en el banco para pagarle.
+  //   CARGA  → la cuenta NUESTRA. Es a la que el jugador dice haber transferido, y la que hay
+  //            que contestarle cuando pregunta "¿a qué alias mandé?".
+  //
+  // Copiar la que no era sería pagarle a la cuenta equivocada, así que el rótulo no es adorno.
+  function destino(fila){
+    if(!fila) return null;
+    const m = _meta(fila);
+    const tipo = U(fila.tipo || fila.TIPO || fila.TIPO_SOLICITUD);
+    if(tipo === "RETIRO"){
+      const v = S(m.destino) || S(m.cbu)
+             || S(fila.DESTINO) || S(fila.destino) || S(fila.CBU) || S(fila.cbu)
+             || _deNotas(fila, /CBU\/?\s*C?V?U?\s*[:.]?\s*([^·|\n]+)/i)
+             || _deNotas(fila, /Destino\s*[:.]?\s*([^·|\n]+)/i);
+      return v ? { valor:v, etiqueta:"CBU", de:"jugador",
+                   ayuda:"CBU/alias del jugador — es a donde hay que pagarle" } : null;
+    }
+    const v = S(m.billetera_alias) || S(m.billetera_cbu)
+           || S(fila.BILLETERA_ALIAS) || S(fila.BILLETERA_CBU)
+           || _deNotas(fila, /Destino\s*[:.]?\s*([^·|\n]+)/i);
+    return v ? { valor:v, etiqueta:"Alias", de:"nuestra",
+                 ayuda:"La cuenta nuestra a la que transfirió" } : null;
+  }
+
   // ── ¿ESTÁ VALIDADO? ───────────────────────────────────────────────────────────────────────
   // El veredicto ya existe y está guardado: usuarios_portal_vinculos.estado_vinculo.
   // Al 6/10: 251.257 VINCULADO, 328 DUPLICADO, 121 PENDIENTE.
@@ -999,7 +1036,7 @@
     return false;                                // validado y la cuenta existe: no se toca
   }
 
-  return { telefono, titular, usuario, numeros, veredicto, hayQueValidar };
+  return { telefono, titular, usuario, numeros, destino, veredicto, hayQueValidar };
 });
 (function(root, factory){
   if(typeof module === 'object' && module.exports) module.exports = factory();

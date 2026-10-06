@@ -61,3 +61,33 @@ Suite completa: **452, 0 fallas.**
 Juan nombró otro caso que todavía no está: *"movimientos de billetera con un historial de lo
 mismo"* — una fila de MOV_BILLETERA debería poder abrir el historial de esa billetera. Es una
 vista que no existe; va aparte para no inventarla a medias.
+
+---
+
+## Copiar la cuenta desde la fila  ·  6/10
+
+Juan: *"podemos copiar fácilmente el usuario, de lo cual ya casi no nos sirve para nada pero no
+podemos copiar fácilmente el cbu u el alias"*.
+
+El usuario está para leerlo. Lo que el operador **pega** es la cuenta — y para eso había que abrir
+la ficha. Ahora hay un 📋 en la columna Billetera, con el copiado que ya existía
+(`portalCopiarCbu`, el que cae a `execCommand` cuando el portapapeles moderno falla en Electron y
+sólo canta "copiado" si de verdad copió).
+
+**Va rotulado, y no es adorno:**
+
+| fila | qué copia | rótulo |
+|---|---|---|
+| RETIRO | la cuenta **del jugador** — a donde hay que pagarle | `📋 CBU` |
+| CARGA | la cuenta **nuestra** — a la que transfirió | `📋 Alias` |
+
+Copiar la que no era es pagarle a la cuenta equivocada. Si una fila no tiene cuenta, no aparece
+ningún botón.
+
+La cadena vive en `NodoDomain.identidad.destino()`, junto con la del teléfono y la del titular:
+una sola, no una por pantalla. Sirve también para las filas viejas del historial, que lo tienen
+en las notas (`CBU/CVU: …`).
+
+**Pruebas:** 5 en `identidad-un-solo-lugar.test.cjs` y 3 en `botones-de-la-fila.test.cjs`,
+incluida la que importa — que en un RETIRO con los dos datos presentes gane el del jugador.
+Suite completa: **460, 0 fallas.**

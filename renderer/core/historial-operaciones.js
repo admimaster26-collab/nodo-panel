@@ -490,6 +490,22 @@ function renderHistorial(lista){
       : '<span class="small">—</span>';
     // Diferenciación visual retiro/carga (como el nodo hermano): 🟠 naranja retiro · 🟢 verde carga
     const _accH = h.tipo==='RETIRO' ? '#fb923c' : h.tipo==='CARGA' ? '#22c55e' : '';
+    // 6/10 · Juan: "podemos copiar facilmente el usuario, de lo cual ya casi no nos sirve para
+    // nada pero no podemos copiar facilmente el cbu u el alias".
+    //
+    // El usuario está ahí para leerlo; lo que el operador PEGA es la cuenta, y para eso había que
+    // abrir la ficha. Ahora se copia de la fila. Va rotulado a propósito: en un RETIRO es la
+    // cuenta del jugador —a donde hay que pagarle— y en una CARGA es la nuestra, a la que
+    // transfirió. Copiar la que no era es pagarle a la cuenta equivocada.
+    const _cuenta = (window.NodoDomain && window.NodoDomain.identidad)
+      ? window.NodoDomain.identidad.destino(h) : null;
+    const _cuentaChip = _cuenta
+      ? '<br><button type="button" class="mini-btn gray" onclick="portalCopiarCbu(this)"'
+        + ' data-valor="'+escapeHtml(_cuenta.valor)+'"'
+        + ' title="'+escapeHtml(_cuenta.ayuda+' · '+_cuenta.valor)+'"'
+        + ' style="font-size:10px;padding:1px 6px;margin-top:3px;white-space:nowrap">'
+        + '<span class="pcopy-ico">📋</span> '+escapeHtml(_cuenta.etiqueta)+'</button>'
+      : '';
     html += '<tr class="'+rowClass+'">'+
       '<td style="font-size:12px;white-space:nowrap">'+formatFecha(h.created_at)+'</td>'+
       '<td style="white-space:nowrap'+(_accH?';color:'+_accH+';font-weight:800':'')+'">'+tipoIcon(h.tipo)+' '+escapeHtml(h.tipo||'—')+'</td>'+
@@ -500,7 +516,7 @@ function renderHistorial(lista){
         +'</td>'+
       '<td style="font-size:12px;white-space:nowrap">'+saldoPreTd+'</td>'+
       '<td style="font-size:12px;white-space:nowrap">'+saldoPostTd+'</td>'+
-      '<td style="font-size:12px">'+escapeHtml(String(h.billetera_nombre||'—').split('·')[0].trim()||String(h.billetera_nombre||'—'))+'</td>'+
+      '<td style="font-size:12px">'+escapeHtml(String(h.billetera_nombre||'—').split('·')[0].trim()||String(h.billetera_nombre||'—'))+_cuentaChip+'</td>'+
       '<td>'+origenPill(h.origen)+'</td>'+
       '<td style="white-space:nowrap">'+estadoIcon(h.estado)+((h.estado==='ERROR' && _errEtiqueta(h.notas)) ? (' <span style="font-size:10.5px;font-weight:800;color:#f87171">'+escapeHtml(_errEtiqueta(h.notas))+'</span>') : '')+'</td>'+
       '<td style="font-size:11px;color:var(--muted)">'+escapeHtml(h.operador||'—')+'</td>'+

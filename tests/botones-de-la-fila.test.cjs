@@ -97,3 +97,41 @@ test('Deshacer solo donde hubo plata movida', () => {
   assert.ok(!botonesDe(RECHAZADA).includes('Deshacer'));
   assert.ok(!botonesDe(PENDIENTE).includes('Deshacer'));
 });
+
+// ── Copiar la cuenta desde la fila ──────────────────────────────────────────────────────────
+// Juan, 6/10: el usuario se copia fácil y ya casi no sirve; el CBU/alias, que es lo que se pega
+// en el banco, había que ir a buscarlo abriendo la ficha.
+
+function celdaBilletera(h){
+  const i = SRC.indexOf('    const _cuenta = (window.NodoDomain');
+  assert.notEqual(i, -1, 'no está el chip de la cuenta');
+  const fin = SRC.indexOf('      : \'\';', i);
+  assert.notEqual(fin, -1);
+  const codigo = SRC.slice(i, SRC.indexOf('\n', fin) + 1).replace(/\r/g, '');
+  const ctx = {
+    h, escapeHtml: (v) => String(v == null ? '' : v),
+    window: { NodoDomain: { identidad: require('../renderer/domain/identidad.js') } },
+    String, _cuentaChip: ''
+  };
+  vm.createContext(ctx);
+  vm.runInContext(codigo + '\n;__out = _cuentaChip;', ctx);
+  return ctx.__out;
+}
+
+test('un RETIRO deja copiar el CBU del jugador desde la fila', () => {
+  const chip = celdaBilletera({ tipo:'RETIRO', usuario:'juan', metadata:{ destino:'juan.perez.mp' } });
+  assert.ok(chip.includes('portalCopiarCbu'), 'usa el copiado que ya existe');
+  assert.ok(chip.includes('data-valor="juan.perez.mp"'));
+  assert.ok(chip.includes('CBU'), 'rotulado: es la cuenta del jugador');
+});
+
+test('una CARGA deja copiar NUESTRO alias, rotulado distinto', () => {
+  const chip = celdaBilletera({ tipo:'CARGA', usuario:'juan', metadata:{ billetera_alias:'giordano.mp' } });
+  assert.ok(chip.includes('data-valor="giordano.mp"'));
+  assert.ok(chip.includes('Alias'));
+  assert.ok(!chip.includes('>CBU'), 'no se confunde con la cuenta del jugador');
+});
+
+test('sin cuenta no aparece ningun boton', () => {
+  assert.equal(celdaBilletera({ tipo:'CARGA', usuario:'juan' }), '');
+});
