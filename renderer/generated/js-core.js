@@ -6013,13 +6013,15 @@ function renderHistorial(lista){
     // 6/10 · Juan: "podemos copiar facilmente el usuario, de lo cual ya casi no nos sirve para
     // nada pero no podemos copiar facilmente el cbu u el alias".
     //
-    // El usuario está ahí para leerlo; lo que el operador PEGA es la cuenta, y para eso había que
-    // abrir la ficha. Ahora se copia de la fila. Va rotulado a propósito: en un RETIRO es la
-    // cuenta del jugador —a donde hay que pagarle— y en una CARGA es la nuestra, a la que
-    // transfirió. Copiar la que no era es pagarle a la cuenta equivocada.
+    // El usuario está ahí para leerlo; lo que el operador PEGA es el CBU del jugador, y para eso
+    // había que abrir la ficha. Ahora se copia de la fila.
+    //
+    // SÓLO en los retiros. Juan: "la cuenta nuestra no necesitamos el cbu, para qué lo quiero".
+    // Es cierto: en una carga la cuenta es la nuestra, el operador no la pega en ningún lado y
+    // ya la tiene arriba en las billeteras. Un botón que no se usa es ruido.
     const _cuenta = (window.NodoDomain && window.NodoDomain.identidad)
       ? window.NodoDomain.identidad.destino(h) : null;
-    const _cuentaChip = _cuenta
+    const _cuentaChip = (_cuenta && _cuenta.de === 'jugador')
       ? '<br><button type="button" class="mini-btn gray" onclick="portalCopiarCbu(this)"'
         + ' data-valor="'+escapeHtml(_cuenta.valor)+'"'
         + ' title="'+escapeHtml(_cuenta.ayuda+' · '+_cuenta.valor)+'"'

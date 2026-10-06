@@ -125,13 +125,14 @@ test('un RETIRO deja copiar el CBU del jugador desde la fila', () => {
   assert.ok(chip.includes('CBU'), 'rotulado: es la cuenta del jugador');
 });
 
-test('una CARGA deja copiar NUESTRO alias, rotulado distinto', () => {
+test('una CARGA no ofrece copiar nada: la cuenta es nuestra', () => {
+  // Juan, 6/10: "la cuenta nuestra no necesitamos el cbu, para que lo quiero". El operador no
+  // la pega en ningun lado y la tiene arriba en las billeteras.
   const chip = celdaBilletera({ tipo:'CARGA', usuario:'juan', metadata:{ billetera_alias:'giordano.mp' } });
-  assert.ok(chip.includes('data-valor="giordano.mp"'));
-  assert.ok(chip.includes('Alias'));
-  assert.ok(!chip.includes('>CBU'), 'no se confunde con la cuenta del jugador');
+  assert.equal(chip, '');
 });
 
 test('sin cuenta no aparece ningun boton', () => {
   assert.equal(celdaBilletera({ tipo:'CARGA', usuario:'juan' }), '');
+  assert.equal(celdaBilletera({ tipo:'RETIRO', usuario:'juan' }), '');
 });
