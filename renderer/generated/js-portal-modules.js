@@ -3076,7 +3076,22 @@ const api = {};
     const montoReal = Number(s.MONTO_REAL != null ? s.MONTO_REAL : (meta.monto_corregido != null ? meta.monto_corregido : montoDecl));
     const estado = String(s.ESTADO || s.estado || (itemUnified && itemUnified.estado) || 'OK').toUpperCase();
     const fechaCreacion = s.FECHA_CREACION || s.FECHA || s.created_at || s.fecha || (itemUnified && itemUnified.fecha) || null;
-    const telefono = String(s.TELEFONO || s.telefono || (meta && meta.telefono) || '').trim();
+    // 6/10 · Acá decía "Teléfono: No informado" con el número a la vista en la MISMA pantalla.
+    //
+    // La cadena empezaba por la columna `telefono`, que está vacía en el 100% de las cargas,
+    // los retiros y los cambios de clave (medido: 29.360 solicitudes en 7 días). Y si el
+    // expediente se abría desde el historial de operaciones —que nunca tuvo teléfono— no había
+    // de dónde sacarlo, aunque el padrón lo tuviera.
+    //
+    // Ahora la cadena es UNA sola y vive en NodoDomain.identidad, y el padrón que consulta ya
+    // está en memoria: no agrega ni un viaje a la base.
+    const telefono = (function(){
+      try{
+        const _id = deps.window.NodoDomain && deps.window.NodoDomain.identidad;
+        if(_id) return _id.telefono(s, deps.window.padronTelefono) || _id.telefono({ metadata: meta });
+      }catch(_e){}
+      return String(s.TELEFONO || s.telefono || (meta && meta.telefono) || '').trim();
+    })();
     const operador = String(s.OPERADOR || s.operador || (meta && meta.operador) || (itemUnified && itemUnified.operador) || '').trim();
     const origen = String(s.ORIGEN || s.origen || (itemUnified && itemUnified.fuente === 'OPERACION' ? 'MANUAL' : 'PORTAL')).toUpperCase();
     const movId = s.chunior_movimiento_id || (meta && meta.chunior_movimiento_id) || (itemUnified && itemUnified.chunior_movimiento_id) || null;

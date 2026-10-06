@@ -73,6 +73,12 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
           // confirm te nombraba a otro distinto: dos veredictos para el mismo dato.
           if(!cand[k]) cand[k]={ usuario:v.usuario, telefonos:[], titular:v.titular||'', fuente:'wtk', pc:String(v.pc_codigo||'') };
           cand[k].confiable = true;   // viene del servidor
+          // 6/10 · Esto ya venía y se tiraba a la basura.
+          // panel_crm_vinculos_buscar devuelve estado_vinculo —el veredicto guardado— y la
+          // tarjeta no lo miraba: ofrecía "usar grcieeela228" cuando la base ya la tenía
+          // marcada como DUPLICADO y a gracieeela228 como VINCULADO. El operador veía tres
+          // cuentas iguales y decidía a mano algo que ya estaba decidido.
+          if(!cand[k].vinculo && v.estado_vinculo) cand[k].vinculo = String(v.estado_vinculo);
           if(!cand[k].pc && v.pc_codigo) cand[k].pc=String(v.pc_codigo);
           const t=_altaNormTel(v.telefono_canon||v.telefono);
           if(t && cand[k].telefonos.indexOf(t)<0) cand[k].telefonos.push(t);
@@ -119,7 +125,7 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
           // "varios": la tarjeta podía avisar que el teléfono estaba repetido pero no tenía con qué
           // decir CON QUIÉN, que es lo único que el operador puede hacer algo al respecto.
           if(!out.telefono.otros.some(function(o){ return _altaNormU(o.usuario)===_altaNormU(c.usuario); })){
-            out.telefono.otros.push({ usuario:c.usuario, pc:c.pc||'', _tel:tn });
+            out.telefono.otros.push({ usuario:c.usuario, pc:c.pc||'', _tel:tn, vinculo:c.vinculo||'' });
           }
           if(!out.telefono.exacto || (_mio && !_yaMio)) out.telefono.exacto=Object.assign({_tel:tn}, c);
           else if(_altaNormU(out.telefono.exacto.usuario)!==_altaNormU(c.usuario) && _mio===_yaMio) out.telefono.varios=true;
@@ -327,9 +333,21 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
       const tl=telsDe(uOk);
       // El teléfono del usuario solo se muestra si NO es el declarado; si no, se repite en la fila de abajo.
       const otroTel = tl.filter(function(x){ return x!==tN; })[0];
-      filas+=fila('Usuario', esc(uDecl), '✓ en sistema', '#3fb950',
-        (otroTel && !_typoPropio) ? sub('registrado con 📱 '+esc(otroTel))
-                : (tl.length ? '' : sub('sin teléfono registrado')));
+      // 6/10 · Juan: "la idea es que eso de ahi arriba te distinga un usuario que no esta
+      // validado = no ve el cbu". El veredicto ya estaba guardado en el padrón; acá se usa.
+      const _ver = (window.NodoDomain && window.NodoDomain.identidad)
+        ? window.NodoDomain.identidad.veredicto(uOk.vinculo)
+        : { validado:false, etiqueta:'', detalle:'', color:'#8b949e' };
+      const _sello = _ver.etiqueta
+        ? ' <span style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.05em;padding:1px 6px;border-radius:999px;color:'+_ver.color+';background:rgba(255,255,255,.06)">'+esc(_ver.etiqueta)+'</span>'
+        : '';
+      const _avisoVal = _ver.validado
+        ? ''
+        : sub('<b style="color:#e3b341">No ve el CBU hasta que lo valides.</b> '+esc(_ver.detalle));
+      filas+=fila('Usuario', esc(uDecl), '✓ en sistema'+_sello, _ver.validado?'#3fb950':'#e3b341',
+        _avisoVal
+        + ((otroTel && !_typoPropio) ? sub('registrado con 📱 '+esc(otroTel))
+                : (tl.length ? '' : sub('sin teléfono registrado'))));
     } else if(r.usuario.similares.length){
       alerta=true;
       // Un alias corto ("lau") es el principio de media base: sugerir cuatro cuentas que sólo
@@ -364,14 +382,31 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
       // tiene que decidirlo el operador. Nunca en verde.
       const mismoDueno = !r.telefono.varios && (duenoTel===uReal || duenoTel===uDeclN);
       // Las otras cuentas con este MISMO número (sin repetir al que ya se muestra como dueño).
-      const _otrosDuenos = (r.telefono.otros||[]).filter(function(o){
+      const _otrosDuenosTodos = (r.telefono.otros||[]).filter(function(o){
         return _altaNormU(o.usuario)!==_altaNormU(tOk.usuario);
       });
+      // 6/10 · Una cuenta marcada DUPLICADO ya se resolvió: no es una opción, es ruido. La
+      // tarjeta las ofrecía igual, con su botón "usar ...", y cada vez que alguien apretaba
+      // uno nacía otra cuenta en el padrón — de ahí salen los "lo comparten 3 cuentas".
+      const _esDup = function(o){
+        return (window.NodoDomain && window.NodoDomain.identidad)
+          ? !window.NodoDomain.identidad.veredicto(o.vinculo).ofrecer : false;
+      };
+      const _otrosDuenos   = _otrosDuenosTodos.filter(function(o){ return !_esDup(o); });
+      const _duplicadosYa  = _otrosDuenosTodos.filter(_esDup);
       const _tambienElDecl = (r.telefono.otros||[]).some(function(o){
         const n=_altaNormU(o.usuario); return n===uReal || n===uDeclN;
       });
       if(mismoDueno){
         filas+=fila('Teléfono', esc(tN), '✓ mismo dueño', '#3fb950', '');
+      } else if(r.telefono.varios && _tambienElDecl && !_otrosDuenos.length && _duplicadosYa.length){
+        // El número figura en varias cuentas PERO las otras ya están resueltas: son duplicados
+        // conocidos. No hay nada que preguntarle al cliente. Antes esto salía igual que un
+        // conflicto abierto y mandaba al operador a decidir algo ya decidido.
+        filas+=fila('Teléfono', esc(tN), '✓ es suyo', '#3fb950',
+          sub('Las otras '+_duplicadosYa.length+' cuentas con este número ya están marcadas como duplicadas: '
+              + _duplicadosYa.map(function(o){ return esc(o.usuario); }).join(', ')
+              + '. No hay que preguntar nada.'));
       } else if(r.telefono.varios && _tambienElDecl && _otrosDuenos.length){
         // El teléfono SÍ es del jugador, pero no es sólo suyo. Antes acá salía "⚠ es de veronica59x"
         // con veronica59x declarada: parecía un error del panel, no decía con qué otra cuenta lo
@@ -381,10 +416,11 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
           return '<b style="color:#f0f6fc">'+esc(o.usuario)+'</b>'
             + (o.pc && _altaNormU(o.pc)!==_altaNormU(pcOperativa||'') ? ' <span style="color:#8b949e">(oficina '+esc(o.pc)+')</span>' : '');
         };
-        filas+=fila('Teléfono', esc(tN), '⚠ lo comparten '+((r.telefono.otros||[]).length)+' cuentas', '#e3b341',
+        filas+=fila('Teléfono', esc(tN), '⚠ lo comparten '+(_otrosDuenos.length+1)+' cuentas', '#e3b341',
           sub('Es de <b style="color:#f0f6fc">'+esc(uDecl||tOk.usuario)+'</b>, y el mismo número está también en '
               + _otrosDuenos.map(_nom).join(', ')
-              + '. Si es la misma persona con dos cuentas, seguí; si no, preguntale cuál usa.')
+              + '. Si es la misma persona con dos cuentas, seguí; si no, preguntale cuál usa.'
+              + (_duplicadosYa.length ? (' ('+_duplicadosYa.length+' más ya están marcadas como duplicadas y no se cuentan acá.)') : ''))
           + '<div>'+_otrosDuenos.map(function(o){
               return chip(o.usuario, tN, 'usar '+esc(o.usuario), 'ambar', true); }).join('')+'</div>');
       } else {

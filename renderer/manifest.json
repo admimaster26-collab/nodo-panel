@@ -1,293 +1,295 @@
 {
-  "output": "NODO · OPERATIVO LITE.htm",
-  "blocks": [
-    {
-      "id": "css:base",
-      "type": "style",
-      "sources": [
-        "styles/base.css"
-      ]
-    },
-    {
-      "id": "js:supabase-fallback",
-      "type": "script",
-      "sources": [
-        "extensions/supabase-fallback.js"
-      ],
-      "inline": true
-    },
-    {
-      "id": "js:modules",
-      "type": "script",
-      "sources": [
-        "domain/formatos.js",
-        "domain/csv.js",
-        "domain/conciliacion.js",
-        "domain/caja-negra.js",
-        "domain/latencia.js",
-        "domain/parciales.js",
-        "domain/presencia.js",
-        "domain/telefono.js",
-        "runtime/refresh-coordinator.js",
-        "runtime/realtime.js",
-        "chat/metrics.js"
-      ]
-    },
-    {
-      "id": "js:core",
-      "type": "script",
-      "sources": [
-        "core/configuracion-y-estado.js",
-        "core/utilidades-interfaz.js",
-        "core/jugadores-importacion.js",
-        "core/retiros-y-lealtad.js",
-        "core/api-y-solicitudes.js",
-        "core/login-y-realtime.js",
-        "core/vistas-y-billeteras.js",
-        "core/operaciones-manuales.js",
-        "core/actualizaciones.js",
-        "core/alta-usuarios.js",
-        "core/historial-movimientos.js",
-        "core/nexo.js",
-        "core/jugadores-bloqueos.js",
-        "core/perfil-jugador.js",
-        "core/archivo-historial.js",
-        "core/pendientes-y-registro.js",
-        "core/historial-operaciones.js",
-        "core/historial-unificado.js",
-        "core/lotes-y-solicitudes.js",
-        "core/chat.js",
-        "core/avisos-y-watchdog.js",
-        "core/chat-acciones.js",
-        "core/cotejo-alta.js",
-        "core/caja-negra-panel.js",
-        "core/latencia-panel.js",
-        "core/caminos-chat.js",
-        "core/discord-presencia.js",
-        "core/agentes-cola-y-sesion.js",
-        "core/automatizaciones.js",
-        "core/navegacion-y-verificaciones.js",
-        "core/chunior-sesion-y-billeteras.js",
-        "core/conciliacion.js",
-        "core/chunior-verificacion-y-registro.js",
-        "core/chunior-movimientos.js",
-        "core/chunior-recuperacion-y-transferencias.js",
-        "core/macros-y-cola-verificacion.js"
-      ]
-    },
-    {
-      "id": "css:portal",
-      "type": "style",
-      "sources": [
-        "styles/portal.css"
-      ]
-    },
-    {
-      "id": "js:portal-modules",
-      "type": "script",
-      "sources": [
-        "portal/data.js",
-        "portal/withdrawal-alerts.js",
-        "portal/requests-view.js",
-        "portal/requests.js",
-        "portal/rejections.js",
-        "portal/withdrawals-view.js",
-        "portal/withdrawals-execution.js",
-        "portal/operation-modal.js",
-        "portal/operation-execution.js",
-        "portal/chat.js"
-      ]
-    },
-    {
-      "id": "js:portal-bridge",
-      "type": "script",
-      "sources": [
-        "extensions/portal-bridge.js"
-      ]
-    },
-    {
-      "id": "js:billeteras-rail",
-      "type": "script",
-      "sources": [
-        "extensions/billeteras-rail.js"
-      ]
-    },
-    {
-      "id": "js:chat-render",
-      "type": "script",
-      "sources": [
-        "chat/chat-render.js"
-      ]
-    },
-    {
-      "id": "js:billeteras-oficina",
-      "type": "script",
-      "sources": [
-        "extensions/billeteras-oficina.js"
-      ]
-    },
-    {
-      "id": "js:portal-chat-unificado",
-      "type": "script",
-      "sources": [
-        "extensions/portal-chat-unificado.js"
-      ]
-    },
-    {
-      "id": "js:portal-seleccion",
-      "type": "script",
-      "sources": [
-        "extensions/portal-seleccion.js"
-      ]
-    },
-    {
-      "id": "js:chat-local",
-      "type": "script",
-      "sources": [
-        "chat/chat-local.js"
-      ]
-    },
-    {
-      "id": "js:chat-pantalla-completa",
-      "type": "script",
-      "sources": [
-        "chat/chat-pantalla-completa.js"
-      ]
-    },
-    {
-      "id": "js:chat-ancho",
-      "type": "script",
-      "sources": [
-        "chat/chat-ancho.js"
-      ]
-    },
-    {
-      "id": "js:chat-actualizar-solicitud",
-      "type": "script",
-      "sources": [
-        "chat/chat-actualizar-solicitud.js"
-      ]
-    },
-    {
-      "id": "js:chat-apertura",
-      "type": "script",
-      "sources": [
-        "chat/chat-apertura.js"
-      ]
-    },
-    {
-      "id": "js:chat-hilos",
-      "type": "script",
-      "sources": [
-        "chat/chat-canal-nuevo.js",
-        "chat/chat-hilos.js"
-      ]
-    },
-    {
-      "id": "js:chat-no-leidos",
-      "type": "script",
-      "sources": [
-        "chat/chat-no-leidos.js"
-      ]
-    },
-    {
-      "id": "js:chat-estabilidad",
-      "type": "script",
-      "sources": [
-        "chat/chat-estabilidad.js"
-      ]
-    },
-    {
-      "id": "js:historial-filtros",
-      "type": "script",
-      "sources": [
-        "extensions/historial-filtros.js"
-      ]
-    },
-    {
-      "id": "js:chat-macros",
-      "type": "script",
-      "sources": [
-        "chat/chat-macros.js"
-      ]
-    },
-    {
-      "id": "js:chat-macros-visibles",
-      "type": "script",
-      "sources": [
-        "chat/chat-macros-visibles.js"
-      ]
-    },
-    {
-      "id": "js:jugadores-crm",
-      "type": "script",
-      "sources": [
-        "extensions/jugadores-crm.js"
-      ]
-    },
-    {
-      "id": "css:piloto",
-      "type": "style",
-      "sources": [
-        "styles/piloto.css"
-      ]
-    },
-    {
-      "id": "js:piloto",
-      "type": "script",
-      "sources": [
-        "extensions/piloto.js"
-      ]
-    },
-    {
-      "id": "css:validacion",
-      "type": "style",
-      "sources": [
-        "styles/validacion.css"
-      ]
-    },
-    {
-      "id": "css:chat-minimizado",
-      "type": "style",
-      "sources": [
-        "styles/chat-minimizado.css"
-      ]
-    },
-    {
-      "id": "css:estetica",
-      "type": "style",
-      "sources": [
-        "styles/estetica.css"
-      ]
-    },
-    {
-      "id": "js:validacion-cola",
-      "type": "script",
-      "sources": [
-        "extensions/validacion-cola.js"
-      ]
-    },
-    {
-      "id": "js:validacion-scope",
-      "type": "script",
-      "sources": [
-        "extensions/validacion-scope.js"
-      ]
-    },
-    {
-      "id": "js:validacion-pc",
-      "type": "script",
-      "sources": [
-        "extensions/validacion-pc.js"
-      ]
-    },
-    {
-      "id": "js:chat-inicio-botones",
-      "type": "script",
-      "sources": [
-        "chat/chat-inicio-botones.js"
-      ]
-    }
-  ],
-  "externalAssets": true
+ "output": "NODO · OPERATIVO LITE.htm",
+ "blocks": [
+  {
+   "id": "css:base",
+   "type": "style",
+   "sources": [
+    "styles/base.css"
+   ]
+  },
+  {
+   "id": "js:supabase-fallback",
+   "type": "script",
+   "sources": [
+    "extensions/supabase-fallback.js"
+   ],
+   "inline": true
+  },
+  {
+   "id": "js:modules",
+   "type": "script",
+   "sources": [
+    "domain/formatos.js",
+    "domain/csv.js",
+    "domain/conciliacion.js",
+    "domain/caja-negra.js",
+    "domain/latencia.js",
+    "domain/parciales.js",
+    "domain/presencia.js",
+    "domain/telefono.js",
+    "domain/identidad.js",
+    "runtime/refresh-coordinator.js",
+    "runtime/realtime.js",
+    "chat/metrics.js"
+   ]
+  },
+  {
+   "id": "js:core",
+   "type": "script",
+   "sources": [
+    "core/configuracion-y-estado.js",
+    "core/utilidades-interfaz.js",
+    "core/jugadores-importacion.js",
+    "core/retiros-y-lealtad.js",
+    "core/api-y-solicitudes.js",
+    "core/login-y-realtime.js",
+    "core/vistas-y-billeteras.js",
+    "core/operaciones-manuales.js",
+    "core/actualizaciones.js",
+    "core/alta-usuarios.js",
+    "core/historial-movimientos.js",
+    "core/nexo.js",
+    "core/jugadores-bloqueos.js",
+    "core/padron-en-memoria.js",
+    "core/perfil-jugador.js",
+    "core/archivo-historial.js",
+    "core/pendientes-y-registro.js",
+    "core/historial-operaciones.js",
+    "core/historial-unificado.js",
+    "core/lotes-y-solicitudes.js",
+    "core/chat.js",
+    "core/avisos-y-watchdog.js",
+    "core/chat-acciones.js",
+    "core/cotejo-alta.js",
+    "core/caja-negra-panel.js",
+    "core/latencia-panel.js",
+    "core/caminos-chat.js",
+    "core/discord-presencia.js",
+    "core/agentes-cola-y-sesion.js",
+    "core/automatizaciones.js",
+    "core/navegacion-y-verificaciones.js",
+    "core/chunior-sesion-y-billeteras.js",
+    "core/conciliacion.js",
+    "core/chunior-verificacion-y-registro.js",
+    "core/chunior-movimientos.js",
+    "core/chunior-recuperacion-y-transferencias.js",
+    "core/macros-y-cola-verificacion.js"
+   ]
+  },
+  {
+   "id": "css:portal",
+   "type": "style",
+   "sources": [
+    "styles/portal.css"
+   ]
+  },
+  {
+   "id": "js:portal-modules",
+   "type": "script",
+   "sources": [
+    "portal/data.js",
+    "portal/withdrawal-alerts.js",
+    "portal/requests-view.js",
+    "portal/requests.js",
+    "portal/rejections.js",
+    "portal/withdrawals-view.js",
+    "portal/withdrawals-execution.js",
+    "portal/operation-modal.js",
+    "portal/operation-execution.js",
+    "portal/chat.js"
+   ]
+  },
+  {
+   "id": "js:portal-bridge",
+   "type": "script",
+   "sources": [
+    "extensions/portal-bridge.js"
+   ]
+  },
+  {
+   "id": "js:billeteras-rail",
+   "type": "script",
+   "sources": [
+    "extensions/billeteras-rail.js"
+   ]
+  },
+  {
+   "id": "js:chat-render",
+   "type": "script",
+   "sources": [
+    "chat/chat-render.js"
+   ]
+  },
+  {
+   "id": "js:billeteras-oficina",
+   "type": "script",
+   "sources": [
+    "extensions/billeteras-oficina.js"
+   ]
+  },
+  {
+   "id": "js:portal-chat-unificado",
+   "type": "script",
+   "sources": [
+    "extensions/portal-chat-unificado.js"
+   ]
+  },
+  {
+   "id": "js:portal-seleccion",
+   "type": "script",
+   "sources": [
+    "extensions/portal-seleccion.js"
+   ]
+  },
+  {
+   "id": "js:chat-local",
+   "type": "script",
+   "sources": [
+    "chat/chat-local.js"
+   ]
+  },
+  {
+   "id": "js:chat-pantalla-completa",
+   "type": "script",
+   "sources": [
+    "chat/chat-pantalla-completa.js"
+   ]
+  },
+  {
+   "id": "js:chat-ancho",
+   "type": "script",
+   "sources": [
+    "chat/chat-ancho.js"
+   ]
+  },
+  {
+   "id": "js:chat-actualizar-solicitud",
+   "type": "script",
+   "sources": [
+    "chat/chat-actualizar-solicitud.js"
+   ]
+  },
+  {
+   "id": "js:chat-apertura",
+   "type": "script",
+   "sources": [
+    "chat/chat-apertura.js"
+   ]
+  },
+  {
+   "id": "js:chat-hilos",
+   "type": "script",
+   "sources": [
+    "chat/chat-canal-nuevo.js",
+    "chat/chat-hilos.js"
+   ]
+  },
+  {
+   "id": "js:chat-no-leidos",
+   "type": "script",
+   "sources": [
+    "chat/chat-no-leidos.js"
+   ]
+  },
+  {
+   "id": "js:chat-estabilidad",
+   "type": "script",
+   "sources": [
+    "chat/chat-estabilidad.js"
+   ]
+  },
+  {
+   "id": "js:historial-filtros",
+   "type": "script",
+   "sources": [
+    "extensions/historial-filtros.js"
+   ]
+  },
+  {
+   "id": "js:chat-macros",
+   "type": "script",
+   "sources": [
+    "chat/chat-macros.js"
+   ]
+  },
+  {
+   "id": "js:chat-macros-visibles",
+   "type": "script",
+   "sources": [
+    "chat/chat-macros-visibles.js"
+   ]
+  },
+  {
+   "id": "js:jugadores-crm",
+   "type": "script",
+   "sources": [
+    "extensions/jugadores-crm.js"
+   ]
+  },
+  {
+   "id": "css:piloto",
+   "type": "style",
+   "sources": [
+    "styles/piloto.css"
+   ]
+  },
+  {
+   "id": "js:piloto",
+   "type": "script",
+   "sources": [
+    "extensions/piloto.js"
+   ]
+  },
+  {
+   "id": "css:validacion",
+   "type": "style",
+   "sources": [
+    "styles/validacion.css"
+   ]
+  },
+  {
+   "id": "css:chat-minimizado",
+   "type": "style",
+   "sources": [
+    "styles/chat-minimizado.css"
+   ]
+  },
+  {
+   "id": "css:estetica",
+   "type": "style",
+   "sources": [
+    "styles/estetica.css"
+   ]
+  },
+  {
+   "id": "js:validacion-cola",
+   "type": "script",
+   "sources": [
+    "extensions/validacion-cola.js"
+   ]
+  },
+  {
+   "id": "js:validacion-scope",
+   "type": "script",
+   "sources": [
+    "extensions/validacion-scope.js"
+   ]
+  },
+  {
+   "id": "js:validacion-pc",
+   "type": "script",
+   "sources": [
+    "extensions/validacion-pc.js"
+   ]
+  },
+  {
+   "id": "js:chat-inicio-botones",
+   "type": "script",
+   "sources": [
+    "chat/chat-inicio-botones.js"
+   ]
+  }
+ ],
+ "externalAssets": true
 }
