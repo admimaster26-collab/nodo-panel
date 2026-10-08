@@ -2253,6 +2253,8 @@ function marcarFaltantes(ids){
 }
 
 async function enviarSolicitudCargaDirecta(){
+  if(!_tomarEnvio("btnEnviarCarga")) return;   // ya hay una en vuelo: este toque no cuenta
+  try{
   _marcarToque();
   const monto=($("cargaMonto")?.value||"").trim();
   const titular=($("cargaTitular")?.value||"").trim();
@@ -2281,12 +2283,9 @@ async function enviarSolicitudCargaDirecta(){
     haptic(18);
     return toast("Ese titular no se puede usar");
   }
-  const btn=$("btnEnviarCarga");
-  if(btn){btn.disabled=true;btn.textContent="Enviando...";}
-  try{
-    await enviarSolicitudCarga(state.usuario,monto,titular);
+  await enviarSolicitudCarga(state.usuario,monto,titular);
   } finally {
-    _restaurarBoton("btnEnviarCarga","Ya transferí · Enviar solicitud");
+    _soltarEnvio("btnEnviarCarga","Ya transferí · Enviar solicitud");
   }
 }
 
@@ -2294,6 +2293,40 @@ function _restaurarBoton(id,texto){
   const b=$(id); if(!b) return;
   if(tieneSolicitudPendiente()) return;
   b.disabled=false; b.textContent=texto;
+}
+
+// ── Un envío a la vez ───────────────────────────────────────────────────────────────────────
+// 7/10 · El mismo jugador mandaba la misma carga 5 y 8 veces seguidas. Se veía como un jugador
+// insistente; no lo era. Lo dicen las horas que el propio portal manda en cada solicitud:
+//
+//   rodrigocuarteto, 8 cargas de $3.000:
+//     la 1ª  → toque 01:09:04.520 · envío 01:09:10.824   (6,3 s esperando)
+//     las 7  → toque = envío, entre .826 y .848           (22 ms entre todas)
+//
+// Toque = envío significa que NO hubo un toque nuevo: el reloj del toque ya se había consumido.
+// O sea, los 8 envíos salieron de la MISMA pantalla, con el botón todavía apretable.
+//
+// Por qué quedaba apretable: el botón se apagaba DESPUÉS de las consultas al servidor
+// (_titularBloqueado, _puedeOperarConServidor, _ipPublica). Entre el toque y el envío pasan
+// 0,85 s de promedio, pero el peor medido fue de 39 segundos. El jugador ve que no pasa nada y
+// vuelve a tocar. Y otra vez.
+//
+// Desde el 3/10 —el día del portal nuevo— esto pasó de 0 por día a 73.
+//
+// Ahora el botón se apaga ANTES de cualquier consulta, y además hay un cerrojo: si ya hay un
+// envío en vuelo, el segundo toque no hace nada. El cerrojo se suelta SIEMPRE (finally), así que
+// una validación que corta temprano deja el botón como estaba.
+let _enviando = false;
+function _tomarEnvio(idBtn, textoEnviando){
+  if(_enviando) return false;
+  _enviando = true;
+  const b = $(idBtn);
+  if(b){ b.disabled = true; b.textContent = textoEnviando || "Enviando..."; }
+  return true;
+}
+function _soltarEnvio(idBtn, textoNormal){
+  _enviando = false;
+  _restaurarBoton(idBtn, textoNormal);
 }
 
 async function copyText(t,btn){
@@ -2414,6 +2447,8 @@ async function _rellenarDatosRetiro(){
 }
 
 async function enviarSolicitudRetiro(){
+  if(!_tomarEnvio("btnEnviarRetiro")) return;
+  try{
   _marcarToque();
   if(!await _puedeOperarConServidor())return;
   const restRet=retiroCooldownRestanteMs();
@@ -2484,6 +2519,9 @@ async function enviarSolicitudRetiro(){
   startChatPoll();
   setTimeout(()=>startEstadoPoll(),8000);
   setTimeout(()=>subscribePush(),1200);
+  } finally {
+    _soltarEnvio("btnEnviarRetiro","Enviar retiro a revisión");
+  }
 }
 
 function renderClave(){
@@ -2500,6 +2538,8 @@ function renderClave(){
 }
 
 async function enviarSolicitudClave(){
+  if(!_tomarEnvio("btnEnviarClave")) return;
+  try{
   if(state.nivelAcceso==="SOPORTE"){ toast("Validá tus datos para operar. Escribinos por soporte."); try{goChat();}catch(_e){} return; }
   if(!state.pcCodigo){ toast("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte."); return; }
   const claveRaw=($("claveNueva")?.value||"").trim();
@@ -2520,6 +2560,9 @@ async function enviarSolicitudClave(){
   addMsg('Solicitud de cambio de clave enviada 🔑<br><span class="status-pill">En proceso</span><br>Un operador la procesará en breve. Te avisamos por este mismo chat.',"bot");
   startChatPoll();startPortalThreadPoll();
   setTimeout(()=>subscribePush(),1200);
+  } finally {
+    _soltarEnvio("btnEnviarClave","Solicitar reseteo de clave");
+  }
 }
 
 // Una consulta va al CANAL DE CHAT. No crea una solicitud.

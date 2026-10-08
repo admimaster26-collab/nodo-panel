@@ -3696,3 +3696,27 @@ y hoy se leen igual.
 **Alcance** — Pasa igual en validar/vincular y en crear usuario: es el mismo cuadro.
 
 **Estado** — ANOTADO, sin tocar. Va junto con D-118: los dos son el mismo momento de trabajo.
+
+---
+
+## D-120 · La respuesta del casino puede indicar rechazo y el retiro continuar como aprobado
+
+**Verificado el 2026-10-06**, sobre el código local `72ab33f`, ejecutando la función real
+`_rv2Aprobar` con dependencias simuladas y sin conexión a servicios externos. Es la confirmación
+ejecutable del caso pendiente de D-91 y de «Por revisar» en `MAPA-MOVIMIENTOS.md`.
+
+**Evidencia** — `renderer/portal/withdrawals-execution.js:219-236` comprueba `ok`, pero no
+`exito`. Los preloads admiten la respuesta `{ ok: true, exito: false }` cuando se llegó al
+resultado y el casino rechazó la acción (`agent-preload.js:1127-1133` y
+`agent-preload-bet300.js:955-965`). Con esa respuesta, la reproducción mostró un aviso verde
+«Retiro OK», una llamada a registrar en Chunior, un descuento del saldo de la billetera y la
+llamada al cierre. Los datos de la prueba son inventados.
+
+**Impacto** — Se pueden registrar consecuencias de un retiro que la plataforma rechazó. La
+reproducción comprueba el defecto del código; no demuestra que haya ocurrido en una oficina.
+
+**Mejora** — Unificar el significado de resultado confirmado, rechazo e incertidumbre, revisar
+todas las llamadas a carga/retiro y ejecutar pruebas del rechazo en cada camino. Una respuesta
+incierta tampoco debe provocar un reintento monetario automático.
+
+**Estado** — ABIERTO. Auditoría solicitada; código sin modificar.

@@ -30,3 +30,8 @@ delete from public.usuarios_portal_vinculos where usuario ilike 'ZZ\_%';
 
 -- revisar que no quede nada y recién ahí:
 commit;
+
+-- ── 7/10 · más filas de prueba (duplicados) ────────────────────────────────────────────────
+-- ZZ_dup_prueba en P1, de probar la guarda de solicitudes repetidas.
+delete from public.landing_solicitudes where usuario ilike 'ZZ\_dup\_prueba';
+delete from public.usuarios_portal_vinculos where fuente = 'PRUEBA_CLAUDE';
