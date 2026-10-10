@@ -136,3 +136,29 @@ test('sin cuenta no aparece ningun boton', () => {
   assert.equal(celdaBilletera({ tipo:'CARGA', usuario:'juan' }), '');
   assert.equal(celdaBilletera({ tipo:'RETIRO', usuario:'juan' }), '');
 });
+
+// ── Deshacer sólo donde se sabe QUÉ se revierte ─────────────────────────────────────────────
+// Auditoría del 9/10. Una solicitud acreditada no tiene número de movimiento, y el botón salía
+// igual: deshacerOperacion arrancaba con el id vacío, sacaba las fichas, después intentaba
+// marcar REVERTIDA una fila que no existe —sin mirar el resultado— y anotaba una reversión
+// colgada de la nada. La solicitud tampoco se reabría.
+
+const SOLICITUD_ACREDITADA_SIN_MOVIMIENTO = {
+  id: 311900, usuario: 'jugador', tipo: 'CARGA', monto: 5000,
+  estado: 'ACREDITADA', origen: 'PORTAL', _fuente: 'SOLICITUD',
+  solicitud_id: 311900, historial_id: null,
+  saldo_pre: null, saldo_post: null, chunior_movimiento_id: null, billetera_id: 'b1'
+};
+
+test('una solicitud acreditada SIN movimiento no ofrece Deshacer', () => {
+  const b = botonesDe(SOLICITUD_ACREDITADA_SIN_MOVIMIENTO);
+  assert.ok(!b.includes('Deshacer'), 'no hay movimiento que revertir ni donde anotarlo');
+});
+
+test('un movimiento de verdad SI ofrece Deshacer', () => {
+  const b = botonesDe({ id: 303567, usuario: 'otro', tipo: 'CARGA', monto: 2000,
+    estado: 'OK', origen: 'PORTAL', _fuente: 'HISTORIAL', historial_id: 303567,
+    saldo_pre: 8, saldo_post: 2008, billetera_id: 'b1' });
+  assert.ok(b.includes('Deshacer'));
+  assert.ok(b.includes('deshacerOperacion(\x27303567\x27'), 'con el numero del movimiento');
+});

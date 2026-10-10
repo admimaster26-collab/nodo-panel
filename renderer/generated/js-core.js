@@ -5922,7 +5922,14 @@ function renderHistorial(lista){
     const esOperacionDinero = (h.tipo==='CARGA'||h.tipo==='RETIRO');
     const histAccionId = String(h.historial_id || (h._fuente!=='SOLICITUD' ? h.id : '') || '');
     const puedeAccionarHistorial = esOperacionDinero && (!!histAccionId || (h._fuente==='SOLICITUD' && !!h.solicitud_id));
-    const canUndo = estadoOkVisual && puedeAccionarHistorial;
+    // Deshacer sólo donde sabemos QUÉ movimiento se está revirtiendo.
+    //
+    // Antes alcanzaba con que fuera una operación de dinero con número de solicitud. Una fila de
+    // solicitud acreditada no tiene número de movimiento, así que `deshacerOperacion` salía con el
+    // id vacío: sacaba las fichas, después intentaba marcar REVERTIDA una fila que no existe, no
+    // miraba el resultado, y anotaba una reversión colgada de la nada. La solicitud tampoco se
+    // reabría. Quedaba plata movida sin registro que la explique.
+    const canUndo = estadoOkVisual && esOperacionDinero && !!histAccionId;
     // 6/10 · Juan, por quinta vez: "no hay billetera registrada si no se realizo la carga".
     // Una fila RECHAZADA no tiene saldo pre, ni saldo post, ni N° de Chunior: la plata nunca se
     // movió. Ofrecer "Cambiar billetera" ahí es ofrecer corregir algo que no existe.
@@ -6433,6 +6440,18 @@ window.recuperarSolicitudRechazada = async function(solicitudId, usuario){
 
 async function deshacerOperacion(id, usuario, tipoOriginal, monto, bilId){
   if(!window.ctrlElectron){ alert("La automatización solo funciona en la app de escritorio."); return; }
+  // Sin saber QUÉ movimiento se revierte no se toca una ficha.
+  //
+  // Esto llegaba con el id vacío desde las filas de solicitud. El orden era al revés: primero
+  // sacaba las fichas y después intentaba anotar sobre una fila inexistente, sin mirar si había
+  // anotado algo. Resultado: plata movida, una reversión colgada de la nada y la solicitud
+  // intacta. La guarda va ANTES de mover nada, que es el único momento en que sirve.
+  if(!String(id||'').trim()){
+    alert("No puedo revertir esto: esta fila no tiene un movimiento identificado.\n\n"
+        + "Es una solicitud sin operación registrada en el historial, así que no hay qué revertir "
+        + "ni dónde anotarlo. Si hay que sacarle las fichas, hacelo desde Operación manual.");
+    return;
+  }
   if(!confirm("¿Revertir "+tipoOriginal+" de "+money(Number(monto))+" para "+usuario+"?")) return;
 
   const tipoReversion = tipoOriginal==='CARGA'?'RETIRO':'CARGA';
@@ -6448,7 +6467,16 @@ async function deshacerOperacion(id, usuario, tipoOriginal, monto, bilId){
     if(tipoReversion==='CARGA') r = await callDrex("cargarSaldo", montoNum);
     else r = await callDrex("retirarSaldo", montoNum);
 
-    const ok = r && r.ok !== false;
+    // Mismo criterio que el resto: `ok` es "la automatización contestó", `exito === false` es el
+    // casino diciendo que NO. Una reversión rechazada no movió fichas y no puede anotarse en OK.
+    const _rechazoCasino = r && r.exito === false;
+    const ok = r && r.ok !== false && !_rechazoCasino;
+    if(_rechazoCasino){
+      toast("El casino RECHAZÓ la reversión — no se movió nada.","red");
+      alert("⛔ El casino RECHAZÓ la reversión de "+money(montoNum)+".\n\n"
+          + ((r&&r.resultado)||(r&&r.message)||'') + "\n\nNo se movieron fichas. Revisá en Agentes.");
+      return;
+    }
 
     // La reversión también genera su movimiento espejo en Chunior para mantener el ledger.
     let movChu = null;
@@ -6465,7 +6493,18 @@ async function deshacerOperacion(id, usuario, tipoOriginal, monto, bilId){
     }
 
     const chuOk = !!movChu || !usaChunior;
-    await supabaseClient.from("historial_ops").update({estado:"REVERTIDA"}).eq("id", id);
+    // Y se mira si de verdad quedó marcada. Esta escritura no se revisaba: si no encontraba la
+    // fila, seguía como si nada y el movimiento original quedaba figurando normal mientras abajo
+    // se anotaba su reversión. Dos registros que se contradicen y nadie avisa.
+    const _rev = await supabaseClient.from("historial_ops")
+      .update({estado:"REVERTIDA"}).eq("id", id).select("id");
+    if(_rev && _rev.error){
+      toast("⚠ Se revirtió en Agentes pero no se pudo marcar el movimiento original","red");
+      console.error("[deshacer] no se marcó REVERTIDA el movimiento "+id, _rev.error);
+    } else if(_rev && Array.isArray(_rev.data) && _rev.data.length === 0){
+      toast("⚠ Se revirtió en Agentes pero no encontré el movimiento "+id+" para marcarlo","red");
+      console.error("[deshacer] ningún movimiento con id "+id);
+    }
     await registrarEnHistorial({usuario, tipo:tipoReversion, monto:montoNum,
       billetera_id:bil?bil.ID_BILLETERA:null, billetera_nombre:bil?bil.NOMBRE_VISIBLE:null,
       origen:'MANUAL', estado:(ok&&chuOk)?'OK':'ERROR',
