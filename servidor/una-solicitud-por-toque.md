@@ -63,3 +63,32 @@ contra el portal anterior.
 
 **El portal hay que publicarlo** — se sube aparte y lo hace Juan. La guarda del servidor ya está
 viva, así que el problema está contenido desde ahora aunque el portal tarde.
+
+---
+
+## 10/10 · La guarda contestaba antes de validar, y filtraba datos ajenos
+
+Lo encontró la auditoría del servidor del 10/10 y es un defecto que metí yo tres días antes.
+
+La guarda anti-duplicados estaba **arriba** del control de vínculo. Con la oficina, el usuario,
+el tipo y el monto de los últimos 20 segundos, cualquiera recibía la solicitud ajena **con su
+metadata**. Comprobado ejecutándolo: pasando un teléfono que no era el del jugador, volvió
+
+```
+telefono=1100000009 · ip=1.2.3.4 · cbu=0000031000010000001
+```
+
+El teléfono, la IP y el CBU de otra persona — sin pasar por ningún control.
+
+**Dos cambios:**
+
+1. El control de vínculo va **primero que todo**. Ninguna rama puede devolver nada antes.
+2. La guarda devuelve **lo mínimo**: el número y el estado. El metadata de la solicitud previa
+   no vuelve nunca, aunque el que pregunta haya pasado el control.
+
+**Verificado ejecutando:** con teléfono ajeno ahora frena con `VINCULO_NO_VALIDO`; el jugador
+de verdad toca 6 veces y sigue habiendo **1 sola fila**; y la respuesta ya no trae metadata.
+
+La lección es la de siempre, y la volví a aprender de la peor manera: **una guarda que devuelve
+datos va después de la autorización, nunca antes.** Cuando la escribí noté el orden y me
+convencí de que no importaba porque "es una solicitud que el usuario ya tiene". No era así.
