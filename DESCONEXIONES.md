@@ -3720,3 +3720,222 @@ todas las llamadas a carga/retiro y ejecutar pruebas del rechazo en cada camino.
 incierta tampoco debe provocar un reintento monetario automático.
 
 **Estado** — ABIERTO. Auditoría solicitada; código sin modificar.
+
+---
+
+## D-121 · El respaldo de un retiro parcial falla justo cuando falla su registro
+
+**Verificado el 2026-10-09**, sobre `d9b4494`, ejecutando `_rv2Finalizar` con servicios
+simulados y datos inventados, sin red.
+
+**Evidencia** — `renderer/portal/withdrawals-execution.js:470` declara `_desde` dentro de
+un bloque. El respaldo la usa fuera de ese bloque en `:518`. Si falla la RPC de progreso,
+se produce `ReferenceError: _desde is not defined` antes de llamar a
+`actualizarSolicitudPortal` (`:522`). Con confirmación normal se actualiza la solicitud;
+con el fallo simulado, se registra el historial pero no se actualiza la solicitud. Después
+se sigue construyendo el aviso del pago para el jugador.
+
+**Impacto** — Un pago ya realizado puede quedar sin su progreso y estado actualizados;
+también se rompe el mecanismo que intentaba recuperarlo.
+
+**Mejora** — Conservar los datos del pago en el alcance del cierre completo y ejecutar
+pruebas del registro normal, rechazo y pérdida de confirmación. Una confirmación perdida
+requiere reconciliar el pago existente antes de acumularlo otra vez.
+
+**Estado** — ABIERTO. No se modificó el funcionamiento.
+
+---
+
+## D-122 · Deshacer puede mover fichas sin identificar el movimiento original
+
+**Verificado el 2026-10-09**, sobre `d9b4494`, ejecutando el armado real de la fila y
+`deshacerOperacion` con datos inventados y servicios simulados.
+
+**Evidencia** — `renderer/core/historial-operaciones.js:403-419` habilita Deshacer para una
+fila de solicitud acreditada con `solicitud_id` pero sin `historial_id`. El botón pasa un
+identificador de historial vacío. El handler mueve fichas en `:928-929` antes de intentar
+actualizar `historial_ops` en `:948`; no comprueba el error devuelto por esa actualización.
+La reproducción registra una reversión con `reversion_de` vacío y no reabre la solicitud
+original. El unificador admite este tipo de fila (`renderer/core/historial-unificado.js:137-151`).
+
+**Impacto** — La reversión puede ocurrir en la plataforma mientras su vínculo contable y
+la solicitud del jugador quedan descoordinados. Los botones por tipo de fila no cubren
+actualmente esta combinación.
+
+**Mejora** — Resolver y verificar el movimiento original antes de ofrecer o ejecutar su
+reversión; conservar por separado los identificadores de solicitud y de historial; comprobar
+los resultados de las escrituras. Si ya se movieron fichas, registrar la incidencia y
+reconciliar, sin repetir automáticamente la acción monetaria.
+
+**Estado** — ABIERTO. No se modificó el funcionamiento.
+
+---
+
+## D-123 · Al navegar, la app puede creer que el preload nuevo ya está listo
+
+**Verificado el 2026-10-09**, sobre `d9b4494`, ejecutando `vigilarPreload` con eventos
+simulados conforme a la firma de Electron 32.3.3.
+
+**Evidencia** — `main/preload-listo.js:41-42` interpreta el cuarto argumento de
+`did-start-navigation` como «mismo documento». Ese argumento es `isMainFrame`; el tercero
+es `isInPlace`. Una navegación de documento principal deja `listo=true`, mientras que una
+de un iframe lo vuelve falso. El mock de `tests/main-modules.test.cjs:541` usa los argumentos
+de un subframe para probar una navegación principal y no detecta la equivocación.
+
+**Impacto** — Puede enviarse una orden antes del saludo del nuevo preload o esperarse un
+saludo innecesario. Es un mecanismo reproducido; no se comprobó su frecuencia en oficinas.
+Además, `esperar` deja su temporizador activo después de resolver (`main/preload-listo.js:55-59`).
+
+**Mejora** — Reiniciar la espera sólo para documento nuevo del frame principal, cubrir las
+combinaciones del evento real y cancelar temporizadores al resolver o cerrar la ventana.
+Respetar el aviso previo acordado para cambios que afecten ingreso o carga/descarga.
+
+**Estado** — ABIERTO. No se modificó el funcionamiento.
+
+---
+
+## D-124 · La regla de anonimizar se incumple en ejemplos, comentarios y pruebas
+
+**Verificado el 2026-10-09**, sobre `d9b4494`. Se compararon los casos que las memorias y
+la documentación identifican expresamente como reales; no se clasificaron nombres por
+su apariencia ni se incluyó la cuenta de prueba exceptuada por Juan.
+
+**Evidencia** — Hay identificadores reales en `renderer/core/historial-operaciones.js:462-463`
+y su copia generada; también en `servidor/lupa-abria-otro-jugador.md:17-22`,
+`servidor/un-solo-lugar-para-la-identidad.md`, `tests/botones-de-la-fila.test.cjs:47` y
+`tests/lupa-no-abre-otro-jugador.test.cjs`. Esos archivos están versionados. Se omiten los
+valores en este registro para no volver a propagarlos.
+
+**Impacto** — Los datos de incidentes se incorporan al código, la documentación y los
+artefactos generados, contrariando la instrucción de no guardar datos reales en archivos
+versionados. La publicación remota de cada ejemplo y su presencia en instaladores concretos
+requieren verificaciones separadas.
+
+**Mejora** — Reemplazar los ejemplos por datos inventados que conserven el caso, regenerar
+las salidas afectadas y revisar también fixtures y documentación antes de publicar.
+
+**Estado** — ABIERTO. Los ejemplos existentes no se modificaron en esta auditoría.
+
+---
+
+## D-125 · El servidor expone operaciones internas y credenciales de sesión mediante RPC públicas · URGENTE
+
+**Verificado el 2026-10-10 en Supabase real**, mediante catálogo, privilegios efectivos y
+cuerpos desplegados. No se invocaron estas operaciones ni se leyeron tokens o datos de jugadores.
+Actualiza la evidencia histórica de D-63 y D-98: hay 440 funciones públicas, 423 ejecutables por
+`anon`; 389 son `SECURITY DEFINER`. Estos conteos no significan que todas carezcan de control.
+
+**Casos comprobados sin autorización propia**:
+
+- `_nodo_sumar_saldo_billetera(bigint,numeric)` permite sumar o restar al saldo registrado de
+  cualquier billetera identificada por ID. Corre como `postgres`; la columna `saldo` existe.
+- `admin_mp_guardar_secretos` permite insertar o reemplazar credenciales de integración MP por
+  ID de billetera. La tabla de destino existe; no valida sesión, secreto ni oficina.
+- `panel_chunior_upsert_billeteras` permite insertar o actualizar billeteras y sus datos por
+  oficina, sin autenticar al solicitante.
+- `panel_v13_get_session_token(bigint)` entrega un token de sesión vigente conociendo su ID.
+  El conteo agregado encontró una sesión activa; no se recuperó su token ni se comprobó su rol.
+- `landing_retiro_registrar_parcial` permite registrar pagos y marcar PAGADA por ID sin sesión,
+  secreto, token ni ámbito. El bloqueo de fila evita una carrera, pero repetir una llamada vuelve
+  a sumar el parcial. Esto altera registros; no demuestra una transferencia bancaria.
+- `landing_leer_chat(text)` no exige token. `landing_estado_solicitud_segura` y
+  `landing_retiro_progreso` reciben parámetros de token/chat pero no los comprueban.
+- Las tres funciones base `admin_od_*_resumen`/`admin_od_operacion_vivo` aceptan sesiones de
+  encargados y una oficina elegida por el llamante; los controles de oficina de los envoltorios
+  v2 pueden evitarse llamando directamente a esas bases.
+- `landing_portal_v16_crear_solicitud` devuelve metadata completa en su rama de reutilización
+  antes de validar el vínculo. Requiere coincidir oficina, usuario, tipo y monto de una solicitud
+  de los últimos 20 segundos; no compara el teléfono en esa rama.
+
+Además, la comparación local mediante huella confirmó que el secreto de datos publicado en
+el frontend sigue coincidiendo con el del servidor. `_panel_data_auth` existe y CRM exige
+secreto, pero ese secreto compartido publicado no identifica al operador ni limita su oficina.
+Siete vistas propiedad de `postgres` permiten SELECT a `anon` sin `security_invoker`.
+
+**Mejora** — Cerrar primero el acceso público a helpers internos y recuperación de tokens;
+autenticar cada entrada operativa y resolver el ámbito en servidor. Revisar las dependencias
+antes de retirar permisos para conservar los flujos legítimos. Rotar el secreto publicado
+junto con la sustitución de su uso por sesiones. No aplicar un REVOKE masivo por un regex.
+
+**Estado** — ABIERTO. Auditoría de lectura; no se alteraron permisos ni producción.
+Evidencia sanitizada: `../AUDITORIA_SERVIDOR_2026-10-10.md` y su carpeta de evidencias.
+
+---
+
+## D-126 · Cotejo descuenta en pantalla, pero la función vigente no descuenta en base
+
+**Verificado el 2026-10-10 en código desplegado y panel `d9b4494`**.
+`panel_cotejo_asignar` inserta la asignación y actualiza la fecha del caso; no modifica
+`monto_disponible` ni estado. Las tablas de cotejo no tienen triggers que hagan ese descuento.
+Sus índices tampoco aportan una clave de idempotencia de la asignación.
+
+`renderer/core/conciliacion.js:625-638` y `:684-687` descuentan en memoria y presuponen
+que esa misma RPC persiste el cambio. No llaman a `panel_cotejo_actualizar` en ese camino.
+Recargar o abrir otro panel puede recuperar el disponible anterior y permitir compensarlo otra vez.
+
+**Mejora** — Persistir asignación, descuento y estado en una transacción con bloqueo del caso,
+validación de importe/ámbito y clave única del movimiento. La pantalla debe usar el resultado
+persistido. Verificar con un caso sintético, recarga y repetición de la misma operación.
+
+El script antiguo `SQL_cotejo_casos.sql` no describe el servidor actual: el secreto propio,
+la falta de `search_path` y el negativo que aumentaba disponible ya no corresponden a esta RPC.
+
+**Estado** — ABIERTO. No se hicieron compensaciones reales ni cambios funcionales.
+
+---
+
+## D-127 · Whaticket conserva falsos éxitos, sondeos que escriben y controles de oficina incompletos
+
+**Verificado el 2026-10-10**. Las seis fuentes locales en `servidor/edge-functions` coinciden
+por SHA256 normalizado con producción. Once ejecuciones aisladas del código desplegado,
+con red y reloj sintéticos, reproducen los problemas; no se invocaron endpoints reales.
+
+- `whaticket-agendar.ts:155-161` sigue creando contactos aunque falle el refresco del espejo;
+  `:262-266` devuelve `ok:true` aunque la oficina resulte fallida.
+- `whaticket-lineas.ts:67-75` conserva éxito cuando falla el guardado; el webhook `:76-100`
+  confirma recepción incluso ante error de inserción, sin señal de pérdida.
+- El candado de agendar acepta un solo teléfono coincidente (`:130-136`), mientras
+  `whaticket-traer.ts:46-61` escribe contactos para la oficina solicitada sin ese candado.
+- `simulacro:true` llama primero al espejo que escribe. `whaticket-sonda-editar.ts:12-49`
+  ejecuta PUT/PATCH/PUT sobre un contacto incluso por GET.
+- Está activa `whaticket-diag-lectura` v2, ausente de ambos repositorios: devuelve muestras
+  crudas de tickets/mensajes y `ok:true` aun cuando todas las rutas remotas rechazan la consulta.
+- Ninguna de las siete funciones fija un plazo por fetch; los presupuestos de agendar no
+  incluyen toda la preparación y no garantizan el plazo total.
+
+Los handlers no validan rol ni oficina del solicitante. `verify_jwt` está activo en seis;
+webhook usa su secreto propio. Los cron de agendar/líneas usan JWT `anon`, y los logs reales
+muestran llamadas con ese rol que llegaron al handler y devolvieron 200. El gateway no
+reemplaza la autorización específica de estas operaciones.
+
+**Mejora** — Autenticar al llamante y su ámbito; retirar o restringir sondas temporales;
+compartir el candado de oficina y exigir una muestra suficiente. Propagar el fallo real,
+registrar las pérdidas del webhook y medir la finalización del trabajo, además del despacho cron.
+
+**Estado** — ABIERTO. Fuentes y configuración productivas sin modificar.
+
+---
+
+## D-128 · El monitor consulta otro circuito y el rescate excluye oficinas con sufijo
+
+**Verificado el 2026-10-10 en base real**.
+Los cuerpos vigentes de `admin_od_operacion_vivo` y dashboard coinciden con
+`servidor/admin-tablero-grandes.sql`; los pendientes salen de `public.solicitudes`
+(`:1025`, `:1168`). Aplicando el mismo predicado de estados del monitor, esa tabla tenía
+0 pendientes y `landing_solicitudes` tenía 693. No se afirma que todos esos registros
+sean trabajo vigente: sí que el indicador consulta una fuente distinta de la bandeja.
+
+`rescate_refrescar()` mantiene el filtro `^P[0-9]+$` de `servidor/crm-reconexion.sql:749`.
+P9B tenía 1.690 solicitudes en siete días y P10C tenía 11; ambas tenían cero candidatos en
+rescate. El filtro las excluye por su código, independientemente de los criterios comerciales.
+
+**Mejora** — Definir un contrato común de fuentes y estados para bandeja, progreso y tablero;
+resolver oficinas desde el catálogo y conservar en el monitor las que no tengan actividad.
+La propuesta central de diagnóstico de D-103 sigue pendiente: sus cuatro RPC no existen
+en el catálogo actual. El cron tiene seis trabajos, frente a los cuatro del README.
+
+Como revalidación de D-12/D-107, entre 430 registros con metadata de parcial se contaron
+59 PAGADA con restante aritmético positivo; 34 contienen un cierre explícito. No equivale
+automáticamente a deuda ni autoriza reabrirlos: hay que conciliar ajuste, cierre y pagos.
+
+**Estado** — ABIERTO. Sólo conteos agregados; no se publicaron datos individuales.

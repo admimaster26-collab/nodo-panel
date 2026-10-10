@@ -2147,6 +2147,32 @@ api._rv2Aprobar = async function(){
       }
       return;
     }
+    // El casino RECHAZÓ el retiro: apareció el modal y NO dijo "Operación correcta"
+    // (bet300 lo manda escrito: "RETIRO RECHAZADO por BET300"). Las fichas NO salieron de la
+    // cuenta del jugador, así que no hay NADA que transferirle.
+    //
+    // Hasta acá se miraba sólo `ok`, que es "la automatización corrió y contestó" — y es true
+    // igual cuando el casino dice que no. Con un rechazo se seguía de largo: se transfería la
+    // plata, se descontaba la billetera, se anotaba el historial en OK y se marcaba PAGADA.
+    //
+    // El criterio es el mismo que ya usan las operaciones manuales y los lotes:
+    // exito === false es rechazo CLARO; null (no se vio el modal) se confía, como allá.
+    const _rechazoCasino = rr && rr.exito === false;
+    if(_rechazoCasino){
+      deps.toast('El casino RECHAZÓ el retiro — no se transfirió nada.','red');
+      deps._trazaPaso('Agentes RECHAZÓ el retiro (no dijo "Operación correcta") · '
+        + ((rr&&rr.resultado)||(rr&&rr.message)||'sin detalle'), 'err');
+      deps._trazaFin('err');
+      try{ deps.alert('⛔ El casino RECHAZÓ el retiro de '+deps.money(total)+'.\n\n'
+        + ((rr&&rr.resultado)||(rr&&rr.message)||'') + '\n\n'
+        + 'Las fichas NO salieron de la cuenta del jugador y NO se transfirió nada.\n'
+        + 'Revisá en Agentes y volvé a intentar.'); }catch(_e){}
+      // No se movió plata: el modal vuelve tal cual para corregir y reintentar, igual que un ok:false.
+      _cerrado = false;
+      deps.withdrawalState.current = st;
+      try{ deps._rv2Render(); }catch(_e){}
+      return;
+    }
     st.saldoPost = (typeof rr?.newBalance?.value==='number' && !rr?.newBalance?.unchanged) ? rr.newBalance.value : null;
     fichasOk=true;
     deps._trazaPaso('Retiro aplicado en Agentes'+(st.saldoPost!=null?(' · saldo '+deps.money(st.saldoPost)):''), 'ok');
@@ -2382,10 +2408,15 @@ const _rv2FinalizarInterno = async function(stCapturado){
   // monto_pagado sí llegaba a 450.000 → los dos registros discrepaban y los 100.000 finales
   // figuraban como no pagos aunque estuvieran abonados.
   const _hayProgreso = (Number(st.yaPagado)||0) > 0;
+  // El TITULAR de la billetera: es el nombre que el jugador ve en su cuenta cuando le llega la plata.
+  // Va ACÁ AFUERA, no adentro del if: el respaldo de más abajo también lo usa, y declarado adentro
+  // no existe allá. Cuando la RPC de progreso fallaba y entraba el respaldo, reventaba con
+  // "_desde is not defined", lo agarraba el catch de la actualización y la solicitud NUNCA se
+  // actualizaba: el jugador ya tenía la plata y el retiro quedaba con el estado viejo. Falla sobre
+  // falla, justo en el camino que ya estaba degradado.
+  const _desde = (st.pagar||[]).map(function(b){ return String(b.titular || b.nombre || '').trim(); })
+    .filter(function(v, i, a){ return v && a.indexOf(v) === i; }).join(' + ');
   if(!completo || _hayProgreso){
-    // El TITULAR de la billetera: es el nombre que el jugador ve en su cuenta cuando le llega la plata.
-    const _desde = (st.pagar||[]).map(function(b){ return String(b.titular || b.nombre || '').trim(); })
-      .filter(function(v, i, a){ return v && a.indexOf(v) === i; }).join(' + ');
     try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal, st.saldoPost, _desde); }
     catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
     // ¿El progreso AVANZÓ de verdad? La base devuelve cuánto quedó pagado. Si contesta bien pero el
