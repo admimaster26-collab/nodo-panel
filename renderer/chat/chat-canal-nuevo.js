@@ -80,7 +80,8 @@
     // sentado que era del jugador: cada respuesta del operador —o del bot— se contaba como
     // mensaje nuevo, el chat volvía a "no leído" y saltaba el cartel "Nuevo mensaje de fulano"
     // con el texto de nuestra propia respuesta. (Juan, 4/10.)
-    const deOperador = U(s.ultimo_de || '') === 'OPERADOR';
+    const ultimoDe = U(s.ultimo_de || 'USUARIO');
+    const deOperador = /OPER|PANEL|ADMIN|BOT|ASISTENTE|SIST/.test(ultimoDe);
     const fechaUltimo = deOperador ? (fechaActiva || fechaUsuario) : fechaUsuario;
     const cerrado = U(s.estado || '') === 'CERRADO';
     // Antes decía `accepted: !cerrado`, o sea: toda conversación abierta nacía ya aceptada.
@@ -100,9 +101,9 @@
       masterId: null,
       accepted: !cerrado && aceptada,
       cerrado: cerrado,
-      thread: ultimo ? [{ origen: deOperador ? 'OPERADOR' : 'USUARIO', usuario: usuario, mensaje: ultimo, fecha: fechaUltimo }] : [],
+      thread: ultimo ? [{ origen: deOperador ? ultimoDe : 'USUARIO', auto:s.ultimo_auto, operador:s.ultimo_operador||'', usuario: usuario, mensaje: ultimo, fecha: fechaUltimo }] : [],
       unread: Number(s.sin_leer) || 0,
-      last: ultimo ? { origen: deOperador ? 'OPERADOR' : 'USUARIO', usuario: usuario, mensaje: ultimo, fecha: fechaUltimo } : null,
+      last: ultimo ? { origen: deOperador ? ultimoDe : 'USUARIO', auto:s.ultimo_auto, operador:s.ultimo_operador||'', usuario: usuario, mensaje: ultimo, fecha: fechaUltimo } : null,
       _canalNuevo: true,
       _chatId: S(s.chat_id || s.id || '')
     };
@@ -119,16 +120,7 @@
       if(filas && !Array.isArray(filas) && Array.isArray(filas.rows)) filas = filas.rows;
       if(!Array.isArray(filas)) return [];
       return filas.map(function(m){
-        const emisor = U(m.tipo_emisor || m.emisor || '');
-        const esOperador = emisor.indexOf('OPER') >= 0 || emisor.indexOf('PANEL') >= 0
-                        || emisor.indexOf('SIST') >= 0 || emisor.indexOf('ADMIN') >= 0;
-        return {
-          origen: esOperador ? 'OPERADOR' : 'USUARIO',
-          usuario: S(m.emisor || ''),
-          mensaje: S(m.mensaje || ''),
-          fecha: S(m.created_at || ''),
-          imagen_url: S(m.imagen_url || '') || undefined
-        };
+        return NodoChatMessage.normalize(m);
       });
     }catch(e){ console.warn('[canal nuevo] no se pudieron leer los mensajes', e); return []; }
   }

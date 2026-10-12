@@ -125,6 +125,7 @@
 
     chatMensajes = _rows(r.data).map(function(m){
       return {
+        ...m,
         MENSAJE: m.mensaje || '',
         IMAGEN_URL: m.imagen_url || '',
         TIPO_EMISOR: m.tipo_emisor || '',
@@ -309,6 +310,7 @@
 
     let _nuevos = _rows(r.data).map(function(m){
       return {
+        ...m,
         ID: m.id || m.ID || '',
         MENSAJE: m.mensaje || m.MENSAJE || '',
         IMAGEN_URL: m.imagen_url || m.IMAGEN_URL || '',
@@ -318,7 +320,7 @@
       };
     });
     // Dedup por contenido+fecha: el mismo mensaje puede venir de 2 fuentes con IDs distintos → no duplicar.
-    (function(){ const seen=new Set(), out=[]; for(const m of _nuevos){ const k=(String(m.MENSAJE||'').trim())+'|'+(m.TIPO_EMISOR||'')+'|'+(m.IMAGEN_URL||'')+'|'+String(m.FECHA||'').slice(0,19); if(seen.has(k)) continue; seen.add(k); out.push(m); } _nuevos=out; })();
+    (function(){ const seen=new Map(), out=[]; for(const m of _nuevos){ const k=NodoChatMessage.key(m); if(seen.has(k)){ const i=seen.get(k); out[i]=NodoChatMessage.merge(out[i],m); continue; } seen.set(k,out.length); out.push(m); } _nuevos=out; })();
     // No borrar el chat si el fetch vino vacío pero ya teníamos mensajes del MISMO chat (evita "vacío" transitorio).
     if(_nuevos.length===0 && window._chatMsgsForId===chatId && Array.isArray(window.chatMensajes) && window.chatMensajes.length>0){
       try{ renderChatMensajes(); }catch(_e){}

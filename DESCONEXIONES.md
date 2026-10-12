@@ -3939,3 +3939,17 @@ Como revalidación de D-12/D-107, entre 430 registros con metadata de parcial se
 automáticamente a deuda ni autoriza reabrirlos: hay que conciliar ajuste, cierre y pagos.
 
 **Estado** — ABIERTO. Sólo conteos agregados; no se publicaron datos individuales.
+
+### 10/10 · Revalidación documental de D-48/D-120: botones del panel de Agentes
+
+Al completar el mapa de caminos del corte `d95036c` se verificó estáticamente otra entrada
+del mismo contrato: `testCargar` y `testRetirar` en
+`renderer/core/agentes-cola-y-sesion.js:472,490`, enlazadas desde la plantilla. Llaman al
+casino real; no son simulaciones. Muestran éxito por `message` sin comprobar explícitamente
+`exito`. Cargar no pasa por el cierre contable completo; Retirar escribe historial y además
+inserta en `solicitudes`, sin anotación Chunior ni ajuste de billetera por ese camino.
+
+Se incorpora como camino R25 al paquete `documentacion-servidor-2026-10-10`, sin ejecutar
+movimientos. No duplica un hallazgo con otro número: amplía los consumidores de D-120 y la
+traza de D-48. No significa que todos esos efectos deban aplicarse sin definir primero el
+contrato de esos botones. El plan exige incluirlos en la revisión de la autoridad financiera.

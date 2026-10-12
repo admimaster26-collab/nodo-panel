@@ -126,3 +126,14 @@ test('sin el dato de quien hablo (servidor viejo) se asume el jugador, como ante
   const t = comoTicket(Object.assign({}, SESION_CONTESTADA, { ultimo_de: undefined }));
   assert.equal(t.thread[0].origen, 'USUARIO');
 });
+
+test('autores BOT y SISTEMA explícitos no se convierten en mensajes del usuario', () => {
+  const comoTicket=armar(['NOEMIACDC']);
+  for(const autor of ['BOT','SISTEMA']){
+    const t=comoTicket({...SESION_CONTESTADA,ultimo_de:autor});
+    assert.equal(t.last.origen,autor);
+    assert.equal(t.last.fecha,SESION_CONTESTADA.updated_at);
+    const Metrics=require('../renderer/chat/metrics.js');
+    assert.equal(Metrics.snapshot([t],{}).total,0);
+  }
+});

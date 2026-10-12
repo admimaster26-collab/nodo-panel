@@ -59,3 +59,6 @@ extract_blq8.js
 
 # Repos clonados para análisis (no versionar)
 _colega_repo_tmp/
+
+# Temporales de la CLI de Supabase: no son del proyecto.
+supabase/.temp/

@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0,viewport-fit=cover">
 <meta name="theme-color" content="#0a0a0c">
+<!-- Preconexión temprana a la plataforma (iframe) y a Supabase → arranca DNS/TLS antes de necesitarlos. -->
 <link rel="preconnect" href="https://bet-300.pw">
 <link rel="dns-prefetch" href="https://bet-300.pw">
 <link rel="preconnect" href="https://pjvvyvfcwjoocjqvdror.supabase.co" crossorigin>
@@ -16,6 +17,13 @@
 <title>BET300 · Portal</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
+/* ════════════════════════════════════════════════════════════════════════
+   BET300 · Cajero V18 — "Oscuro premium pulido"
+   • Panel a PANTALLA COMPLETA (sin gestos, sin deslizar).
+   • BARRA INFERIOR FIJA: las 5 acciones siempre visibles en toda pantalla.
+   • Estilo nuevo: grafito sólido, dorado sobrio, bordes definidos, tipo grande.
+   • Backend INTACTO: mismas RPC, mismas claves de localStorage, mismo polling.
+   ════════════════════════════════════════════════════════════════════════ */
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
   --bg:#08080a; --panel:#0e0e12; --surface:#16161c; --surface-2:#1e1e26;
@@ -36,6 +44,7 @@ button,input,textarea{font-family:var(--font)}
 
 #appFrame{position:fixed;inset:0;width:100vw;height:100vh;border:0;background:var(--bg);z-index:1}
 
+/* ── Launcher (FAB premium) ─────────────────────────────────────────────── */
 .launcher{position:fixed;right:18px;bottom:calc(78px + var(--safe-b));z-index:20;border:1px solid var(--gold-deep);cursor:pointer;
   display:flex;align-items:center;gap:11px;padding:0 18px 0 13px;height:54px;border-radius:14px;
   background:#121216;color:var(--gold-2);font-weight:800;font-size:14.5px;
@@ -48,12 +57,21 @@ button,input,textarea{font-family:var(--font)}
 .launcher.mini .fb-text{display:none}
 .launcher-min{position:fixed;right:13px;bottom:calc(126px + var(--safe-b));z-index:21;width:40px;height:40px;border-radius:999px;border:1px solid var(--gold-deep);background:#1a1a20;color:var(--gold-2);font-size:22px;font-weight:900;line-height:36px;text-align:center;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.5);padding:0}
 .launcher-min:active{transform:scale(.92)}
+/* Dock colapsable: esconde los botones del portal (Pantalla completa + Cajero) detrás del handle
+   para no tapar la vista del juego. El iframe es cross-origin → no se puede autodetectar el juego,
+   así que arranca COLAPSADO y se auto-oculta; un toque en el handle los muestra. */
 #fullscreenBtn,#floatBtn{transition:opacity .22s,transform .22s}
 body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;pointer-events:none;transform:translateY(16px) scale(.9)}
 .launcher-min.has-unread::after{content:"";position:absolute;top:-3px;right:-3px;width:11px;height:11px;border-radius:999px;background:var(--danger);border:2px solid var(--bg)}
+/* Botón "pantalla completa": abre la plataforma en pestaña propia (first-party) para que las
+   imágenes carguen en TODOS los navegadores (Safari/Samsung/Firefox cortan las cookies de
+   terceros dentro del iframe). Bottom-left para no chocar con el launcher del cajero. */
 .fullscreen-btn{position:fixed;left:14px;bottom:calc(78px + var(--safe-b));z-index:20;display:flex;align-items:center;gap:6px;padding:9px 13px;border-radius:999px;border:1px solid var(--gold-deep);background:#1a1a20;color:var(--gold-2);font-size:12px;font-weight:800;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,.5);text-decoration:none}
 .fullscreen-btn:active{transform:scale(.96)}
 .fullscreen-btn .fs-ico{font-size:15px;line-height:1}
+/* Launcher auto-detectado: pantalla de entrada para navegadores que rompen las imágenes del
+   iframe (iPhone/Safari, Samsung Internet, Firefox). Los manda a pantalla completa (first-party)
+   y deja el cajero a un toque, así no ven el iframe con imágenes rotas ("rechazo visual"). */
 .launcher-overlay{position:fixed;inset:0;z-index:40;background:radial-gradient(120% 100% at 50% 0%,#15161d,#0a0a0e 70%);display:none;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:30px 24px;text-align:center}
 .launcher-overlay.show{display:flex}
 .lo-logo{font-size:14px;font-weight:900;letter-spacing:.6px;color:var(--gold-2)}
@@ -64,13 +82,16 @@ body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;point
 .lo-btn.sec{background:var(--surface-2);color:var(--gold-2)}
 .lo-dismiss{margin-top:4px;background:none;border:0;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer}
 
+/* ── Scrim (solo desktop) ───────────────────────────────────────────────── */
 .scrim{position:fixed;inset:0;z-index:25;background:rgba(3,3,6,.6);opacity:0;pointer-events:none;transition:opacity .26s}
 .scrim.show{opacity:1;pointer-events:auto}
 
+/* ── Panel a pantalla completa ──────────────────────────────────────────── */
 .panel{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;background:var(--panel);
   transform:translateY(100%);visibility:hidden;transition:transform .3s cubic-bezier(.22,.9,.28,1),visibility 0s linear .3s}
 .panel.open{transform:none;visibility:visible;transition:transform .32s cubic-bezier(.22,.9,.28,1)}
 
+/* Header */
 .panel-head{flex-shrink:0;display:flex;align-items:center;gap:12px;
   padding:calc(13px + var(--safe-t)) 14px 13px;border-bottom:1px solid var(--line);background:#0c0c10}
 .head-avatar{width:42px;height:42px;border-radius:12px;flex-shrink:0;display:flex;align-items:center;justify-content:center;
@@ -84,6 +105,7 @@ body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;point
 
 #connBanner{background:#2a0d11;color:#ffb3bd;font-size:12px;font-weight:700;padding:9px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,84,104,.25);flex-shrink:0}
 
+/* Cuerpo (pantallas) */
 .panel-body{flex:1;position:relative;overflow:hidden}
 .screen{position:absolute;inset:0;overflow-y:auto;padding:18px;padding-bottom:24px;background:var(--panel)}
 .screen::-webkit-scrollbar{width:8px}.screen::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
@@ -93,6 +115,7 @@ body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;point
 .screen-title{font-size:21px;font-weight:900;letter-spacing:-.4px;margin-bottom:6px}
 .screen-desc{font-size:13px;color:var(--muted);line-height:1.5;margin-bottom:16px}
 
+/* ── BARRA INFERIOR FIJA (siempre visible) ──────────────────────────────── */
 .panel-nav{flex-shrink:0;display:flex;background:#0a0a0d;border-top:1px solid var(--line-2);padding-bottom:var(--safe-b)}
 .nav-item{flex:1;position:relative;display:flex;flex-direction:column;align-items:center;gap:4px;
   padding:11px 2px 9px;border:none;background:none;color:var(--muted-2);font-size:11px;font-weight:800;cursor:pointer;transition:color .15s}
@@ -103,6 +126,7 @@ body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;point
 .nav-item.active::before{content:"";position:absolute;top:0;left:50%;transform:translateX(-50%);width:30px;height:3px;border-radius:0 0 4px 4px;background:var(--gold)}
 .nav-item .badge{position:absolute;top:5px;right:calc(50% - 22px);min-width:18px;height:18px;border-radius:999px;background:var(--danger);color:#fff;font-size:10px;font-weight:900;display:flex;align-items:center;justify-content:center;padding:0 5px;border:2px solid #0a0a0d}
 
+/* ── Inicio: login ──────────────────────────────────────────────────────── */
 .gate-badge{display:inline-flex;align-items:center;gap:8px;background:rgba(233,194,92,.1);border:1px solid rgba(233,194,92,.28);color:var(--gold-2);border-radius:999px;padding:7px 13px;font-size:12px;font-weight:800;margin-bottom:16px}
 .gate-title{font-weight:900;font-size:24px;letter-spacing:-.5px;margin-bottom:10px}
 .gate-txt{font-size:14px;color:#c9c9d2;line-height:1.55;margin-bottom:18px}
@@ -110,6 +134,7 @@ body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;point
 .trust{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;color:#b3b3bf;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 11px}
 .flow-note{font-size:12px;color:var(--muted);line-height:1.5;margin-top:14px}
 
+/* ── Inicio: dashboard ──────────────────────────────────────────────────── */
 .greet{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:16px}
 .greet-hi{font-size:13px;color:var(--muted);font-weight:700}
 .greet-user{font-size:20px;font-weight:900;letter-spacing:-.3px;margin-top:3px;display:flex;align-items:center;gap:8px}
@@ -142,13 +167,21 @@ body.dock-collapsed #fullscreenBtn,body.dock-collapsed #floatBtn{opacity:0;point
 .live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--gold);animation:pulse 1.5s infinite}
 @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(233,194,92,.5)}70%{box-shadow:0 0 0 7px rgba(233,194,92,0)}100%{box-shadow:0 0 0 0 rgba(233,194,92,0)}}
 
+/* ── Formularios ────────────────────────────────────────────────────────── */
 .user-chip{display:inline-flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--line-2);color:var(--gold-2);border-radius:10px;padding:8px 13px;font-size:13px;font-weight:800;margin-bottom:14px}
 .form-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
+/* Aclaración bajo un campo que se presta a confusión. Chica y gris: guía sin gritar. */
+.campo-ayuda{font-size:11.5px;color:#8b8b97;margin:-6px 0 12px;padding-left:2px}
 .campo-ayuda{font-size:12.5px;color:#b8bac7;margin:6px 0 12px;padding-left:2px;line-height:1.45}
+/* El botón de enviar quedaba a 187px por debajo del pliegue: había que descubrir que se
+   scrollea. Pegado al fondo del área que scrollea (no a la ventana), así nunca tapa la barra
+   de abajo. El degradado deja ver que hay contenido pasando por detrás. */
 .acciones-fijas{position:sticky;bottom:-16px;display:flex;flex-direction:column;gap:9px;
   padding:10px 0 16px;margin-top:4px;
   background:linear-gradient(to bottom,transparent,var(--surface) 22%,var(--surface))}
 .acciones-fijas .action-btn{margin-top:0}
+/* "Necesito ayuda" era un botón del mismo peso que el de enviar y ocupaba 65px compitiendo
+   con la acción principal. Como enlace pesa 22px y se entiende igual. */
 .link-btn{background:none;border:0;color:var(--gold-2);font-size:13px;font-weight:800;
   padding:4px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .link-btn:active{opacity:.6}
@@ -156,23 +189,40 @@ label{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.7px;
 input,textarea{width:100%;border:1px solid var(--line-2);background:#0c0c11;color:var(--text);border-radius:var(--r-sm);padding:14px;font-size:16px;margin-bottom:12px;transition:border-color .15s,box-shadow .15s}
 input::placeholder,textarea::placeholder{color:#56565f}
 input:focus,textarea:focus{outline:none;border-color:var(--gold);box-shadow:0 0 0 3px rgba(233,194,92,.14)}
+/* Campo que falta completar. Antes solo salía un cartelito abajo que duraba 2,4 s: la persona
+   no sabía CUÁL faltaba. Ahora se marca el campo y se lo lleva a la vista.
+   La sacudida es corta y una sola vez — con "reducir movimiento" del sistema no corre (línea 43). */
 input.falta{border-color:#e5484d;box-shadow:0 0 0 3px rgba(229,72,77,.16);animation:sacudir .3s ease}
 @keyframes sacudir{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
 textarea{resize:vertical;min-height:76px}
+/* ── Titular pre-rellenado ────────────────────────────────────────────────
+   El campo trae puesto el titular de la vez pasada. Tiene que leerse como
+   "esto ya está listo", NO como un error ni como un placeholder gris que no se
+   sabe si cuenta. Por eso: texto en blanco pleno (es un valor real, no una
+   sugerencia), un fondo verde muy tenue y la marca "✓ Guardado" adentro del
+   campo. Al tocarlo se vacía y todo eso desaparece: queda un campo común. */
+.titular-wrap{position:relative}
 .titular-wrap{position:relative;margin-bottom:8px}
 .titular-wrap input{margin-bottom:0}
 input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.42);
   color:#fff;font-weight:700;padding-right:104px}
+/* Botón real, no un cartelito pasivo. "Volvé a tocar el campo" obliga a adivinar que el campo
+   hace algo al tocarlo — nadie lo descubre, menos alguien grande. Un botón que dice CAMBIAR se
+   entiende sin explicación. 44px de alto: se toca con el pulgar sin errarle. */
 .titular-cambiar{position:absolute;right:8px;top:50%;transform:translateY(-50%);
   min-height:38px;background:rgba(255,255,255,.06);border:1px solid var(--line-2);
   color:var(--gold-2);border-radius:10px;padding:0 14px;font-size:13px;font-weight:800;
   cursor:pointer;font-family:inherit;white-space:nowrap}
 .titular-cambiar:active{transform:translateY(-50%) scale(.94)}
+.titular-aviso{font-size:11.5px;color:#fbbf24;background:rgba(251,191,36,.09);
+  border:1px solid rgba(251,191,36,.28);border-radius:9px;padding:7px 9px;margin:8px 0 0}
 .titular-aviso{font-size:12px;color:#fbbf24;background:rgba(251,191,36,.09);
   border:1px solid rgba(251,191,36,.28);border-radius:9px;padding:8px 10px;margin:8px 0 10px;line-height:1.4}
 .muted-line{color:var(--muted);font-size:13px;padding:8px 0}
 .welcome-txt{font-size:13.5px;color:#c9c9d2;line-height:1.55}
 
+/* Una sola fila que se desliza, en vez de dos que se apilan: ahorra ~44px y con eso el campo
+   del titular sube por encima del pliegue. Se corta el scrollbar porque en el teléfono estorba. */
 .chips{display:flex;flex-wrap:nowrap;gap:8px;margin:-2px 0 12px;overflow-x:auto;
   scrollbar-width:none;-webkit-overflow-scrolling:touch;padding-bottom:2px}
 .chips::-webkit-scrollbar{display:none}
@@ -184,6 +234,8 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .action-btn{width:100%;border:1px solid var(--gold-deep);border-radius:var(--r-sm);padding:16px;font-weight:900;font-size:15.5px;cursor:pointer;margin-top:2px;
   background:var(--gold);color:#1a1500;transition:transform .14s,filter .14s,background .14s}
 .action-btn:hover{filter:brightness(1.05)}
+/* El hundido era de .985: en un celular no se percibe y la gente toca dos veces porque no sabe
+   si registró. .955 con una transición corta se siente sin verse aparatoso. */
 .action-btn{transition:transform .09s ease,filter .15s,opacity .15s}
 .action-btn:active{transform:scale(.955)}
 .action-btn:disabled{opacity:.55;cursor:default;transform:none}
@@ -192,6 +244,7 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .copy-btn:active{transform:scale(.9)}
 .secondary-btn{background:var(--surface);color:var(--text);border:1px solid var(--line-2)}.secondary-btn:hover{background:#20202a;filter:none}
 
+/* ── Transferencia ──────────────────────────────────────────────────────── */
 .transfer-card{background:var(--surface);border:1px solid rgba(233,194,92,.4);border-radius:var(--r);padding:15px;margin-bottom:14px}
 .transfer-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:13px}
 .transfer-title{font-weight:900;color:var(--gold-2);font-size:15.5px}
@@ -201,10 +254,17 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .transfer-field .tf-main{flex:1;min-width:0}
 .transfer-label{font-size:10px;color:#8b8b97;text-transform:uppercase;font-weight:800;letter-spacing:.5px;margin-bottom:4px}
 .transfer-value{font-size:15.5px;font-weight:800;color:#fff;word-break:break-all}
+/* Copiar es LA acción de esta pantalla: la persona viene a buscar el alias y el CBU para
+   llevárselos al banco. El botón era chico y del mismo gris que el fondo. Ahora tiene el borde
+   dorado de la marca, 46px de alto (pulgar, no uña) y no compite con nada más de la tarjeta. */
 .copy-btn{flex-shrink:0;border:1px solid rgba(233,194,92,.45);border-radius:10px;
   background:rgba(233,194,92,.12);color:var(--gold-2);padding:0 16px;min-height:46px;
   font-size:13.5px;font-weight:800;cursor:pointer;transition:.14s}
 .copy-btn:hover{background:#2a2a36}.copy-btn.done{background:var(--green);border-color:var(--green);color:#04210f}.copy-btn:active{transform:scale(.94)}
+/* El titular de NUESTRA cuenta: dato de referencia, no algo para copiar al formulario.
+   Antes era un campo igual a los demás y la gente lo confundía con el titular que se le pide. */
+/* Plegada: quedan el título y el botón para reabrirla. De 237px a ~70px, y el formulario
+   entero sube por encima del pliegue justo cuando la persona vuelve del banco a completarlo. */
 .transfer-card.plegada .transfer-field,
 .transfer-card.plegada .transfer-owner{display:none}
 .transfer-card.plegada .transfer-head{margin-bottom:0}
@@ -215,12 +275,14 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .transfer-owner b{color:#c9c9d4;font-weight:800}
 .transfer-hint{font-size:12.5px;color:#cdb878;line-height:1.5;margin-top:8px;display:flex;gap:7px}
 
+/* Skeleton */
 .sk{position:relative;overflow:hidden;background:rgba(255,255,255,.05);border-radius:10px}
 .sk::after{content:"";position:absolute;inset:0;transform:translateX(-100%);background:linear-gradient(90deg,transparent,rgba(255,255,255,.08),transparent);animation:shimmer 1.3s infinite}
 @keyframes shimmer{100%{transform:translateX(100%)}}
 .sk-card{border:1px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:14px}
 .sk-line{height:14px;margin-bottom:11px}.sk-line.lg{height:36px}.sk-line.w60{width:60%}.sk-line.w40{width:40%}.sk-line.w80{width:80%}
 
+/* ── Estado ─────────────────────────────────────────────────────────────── */
 .estado-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:24px 18px;text-align:center}
 .estado-card.pending{border-color:rgba(233,194,92,.4)}
 .estado-card.ok{border-color:rgba(58,208,127,.45)}
@@ -245,6 +307,7 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .step.done .dot{background:var(--green)}
 .bar{width:28px;height:3px;border-radius:3px;background:rgba(255,255,255,.12)}
 .step.done + .bar{background:var(--green)}
+/* Barra de progreso de retiro parcial (punto 3): pagos por partes de un retiro grande */
 .rp-wrap{margin:12px 0 4px;text-align:left}
 .rp-top{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--muted);margin-bottom:6px}
 .rp-nums{font-weight:800;color:var(--text);font-size:13px}
@@ -254,14 +317,15 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .rp-list{margin-top:11px;display:flex;flex-direction:column;gap:5px}
 .rp-cierre{margin-top:11px;padding:10px 12px;border-radius:10px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.10);font-size:12.5px;line-height:1.5}
 .rp-cierre-nota{margin-top:6px;font-style:italic;color:var(--gold-2)}
+/* Monto ajustado por el operador, con su motivo (D-88). */
 .rp-ajuste{margin-top:11px;padding:10px 12px;border-radius:10px;background:rgba(245,197,24,.07);border:1px solid rgba(245,197,24,.28);font-size:12.5px;line-height:1.5}
 .rp-ajuste-de{color:var(--muted);font-weight:600}
 .rp-ajuste-motivo{margin-top:4px;color:var(--gold-2)}
 .rp-item{display:flex;justify-content:space-between;gap:8px;font-size:12px;background:rgba(255,255,255,.04);border:1px solid var(--line);border-radius:9px;padding:7px 10px}
 .rp-item .rp-m{font-weight:800;color:var(--green);white-space:nowrap}
 .rp-item .rp-f{color:var(--muted)}
-.rp-item .rp-desde{flex:1;min-width:0;color:var(--text);overflow-wrap:anywhere}
 
+/* ── Chat ───────────────────────────────────────────────────────────────── */
 .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;background:var(--panel)}
 .messages::-webkit-scrollbar{width:8px}.messages::-webkit-scrollbar-thumb{background:rgba(255,255,255,.12);border-radius:8px}
 .msg{display:flex;flex-direction:column;margin-bottom:12px;max-width:90%;animation:msgIn .2s ease}
@@ -274,6 +338,7 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .bubble img.chat-img{max-width:100%;border-radius:10px;margin-top:8px;display:block;cursor:pointer;border:1px solid var(--line-2)}
 .status-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:800;background:rgba(233,194,92,.14);color:var(--gold-2);border:1px solid rgba(233,194,92,.3);margin:8px 0 2px}
 
+/* Compose */
 .widget-compose{flex-shrink:0;border-top:1px solid var(--line);background:#0c0c10;padding:11px 12px;display:grid;grid-template-columns:44px 1fr 46px;gap:9px;align-items:end}
 #freeInput{min-height:44px;height:44px;max-height:96px;overflow:auto;margin:0;resize:none;border-radius:12px;font-size:16px;padding:11px 13px}
 .send-btn{height:44px;width:46px;padding:0;border:1px solid var(--gold-deep);border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--gold);color:#1a1500;transition:transform .14s}
@@ -286,9 +351,11 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 #imgPreviewBar span{font-size:11.5px;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 #imgPreviewBar button{border:none;background:none;color:var(--muted);cursor:pointer;font-size:21px;line-height:1;padding:0 2px;flex-shrink:0}
 
+/* Toast */
 .toast{position:fixed;left:50%;bottom:calc(86px + var(--safe-b));transform:translateX(-50%) translateY(10px);z-index:60;background:#16161c;color:#fff;border:1px solid var(--line-2);box-shadow:0 16px 40px rgba(0,0,0,.6);padding:14px 18px;border-radius:12px;font-weight:800;font-size:13px;opacity:0;pointer-events:none;transition:opacity .2s,transform .2s;max-width:320px;text-align:center}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
+/* ── Desktop: panel acotado a la derecha ────────────────────────────────── */
 @media(min-width:760px){
   .panel{left:auto;right:24px;top:auto;bottom:24px;width:420px;height:min(720px,calc(100vh - 48px));
     border:1px solid var(--line-2);border-radius:20px;overflow:hidden;
@@ -296,6 +363,32 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
   .panel.open{transform:none}
   .panel-head{padding-top:15px}
 }
+
+/* Autor?a expl?cita y ayuda de a un paso, tambi?n en pantallas chicas. */
+.msg.operator{align-items:flex-start;margin-right:auto}
+.msg.operator .bubble{background:#16283b;border:1px solid #3b6b8d;border-bottom-left-radius:5px}
+.msg.bot .bubble,.msg.guide .bubble{background:#211d35;border:1px solid #756195;border-bottom-left-radius:5px}
+.msg.guide{align-items:flex-start;margin-right:auto}
+.msg.system{align-items:center;margin:10px auto;max-width:95%}
+.msg.system .bubble{background:#17191c;border:1px dashed #606673;color:#c5cad3;font-size:12px}
+.msg.operator .meta{color:#aacbe3}.msg.bot .meta,.msg.guide .meta{color:#c0aedc}
+.chat-help-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.chat-help-actions button,.guide-options button{background:#1b293a;border:1px solid #687fa0;color:#f3f6ff;border-radius:10px;padding:11px 12px;font:inherit;font-size:13px;cursor:pointer;text-align:left}
+.chat-guide-controls{flex-shrink:0;border-top:1px solid var(--line);padding:9px 12px;background:#101219;max-height:36vh;overflow:auto}
+.guide-options{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.guide-options button:disabled{opacity:.55;cursor:wait}
+.guide-tools{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px}
+.guide-tools button{border:0;background:transparent;color:#c2c8d5;padding:10px 8px;font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+.guide-tools button:disabled{opacity:.5}
+.guide-progress{font-size:11px;color:#b9afce;margin-bottom:8px}
+.guide-form{width:100%;max-width:100%!important;align-self:stretch}
+.guide-form .bubble{width:100%}.guide-form h3{font-size:17px;margin:0 0 8px}
+.guide-form p{line-height:1.5;font-size:13px;margin-bottom:12px}
+.guide-form label{font-size:12px;text-transform:none;letter-spacing:0;margin-top:12px}
+.guide-form select{width:100%;padding:12px;border:1px solid var(--line-2);border-radius:10px;background:#0c0c11;color:var(--text);font-size:15px}
+.guide-form input,.guide-form textarea{margin-bottom:0}.guide-error{color:#ffb5bd;font-size:13px;line-height:1.45;margin:10px 0}
+.guide-form .campo-ayuda{margin-top:6px}.chat-help-actions button:focus-visible,.guide-options button:focus-visible,.guide-tools button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+
 </style>
 </head>
 <body>
@@ -323,7 +416,7 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
     <div class="head-avatar">B300</div>
     <div class="head-info">
       <div class="brand-logo"><span>BET</span>300 · Cajero</div>
-      <div class="head-sub"><span class="dot"></span> En línea · respondemos al instante</div>
+      <div class="head-sub"><span class="dot"></span> Asistente y atención por chat</div>
     </div>
     <button class="icon-btn" onclick="toggleWidget(false)" aria-label="Cerrar">×</button>
   </div>
@@ -337,7 +430,8 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
     <div id="screenClave"  class="screen hidden"></div>
     <div id="screenEstado" class="screen hidden"></div>
     <div id="screenChat"   class="screen hidden">
-      <div id="messages" class="messages"></div>
+      <div id="messages" class="messages" role="log" aria-label="Conversación"></div>
+      <div id="chatGuideControls" class="chat-guide-controls" aria-label="Opciones de ayuda"></div>
     </div>
   </div>
 
@@ -347,7 +441,7 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
     <button class="clip-btn" onclick="$('composeFileInput').click()" title="Adjuntar imagen">📎</button>
     <input id="composeFileInput" type="file" accept="image/*" style="display:none" onchange="queueComposerFile(this)">
     <textarea id="freeInput" rows="1" placeholder="Escribí tu mensaje..."></textarea>
-    <button class="send-btn" onclick="sendFreeMessage()">➤</button>
+    <button id="btnEnviarMensaje" class="send-btn" onclick="sendFreeMessage()" aria-label="Enviar mensaje">➤</button>
   </div>
 
   <nav class="panel-nav" id="panelNav">
@@ -379,15 +473,98 @@ const state={
   chatToken:localStorage.getItem("bet300_chat_token")||"",
   selectedFile:null, billetera:null, chatLibre:false, composerImage:null,
   pendingTipo:localStorage.getItem("bet300_pending_tipo")||"",
+  // Billetera que el portal mostraba cuando la persona mandó la solicitud. Es a la que
+  // transfirió. Si después el operador cambia la activa, sin esto la persona entra al estado,
+  // ve otra billetera y no entiende nada — o peor, cree que transfirió mal.
   pendingBilletera:localStorage.getItem("bet300_pending_billetera")||"",
   seenMsgIds:new Set(),
   portalThreadSeen:new Set(JSON.parse(localStorage.getItem("bet300_portal_thread_seen")||"[]")),
   shownTexts:new Set(),
   solicitudStartedAt:Number(localStorage.getItem("bet300_solicitud_started_at")||0),
   promoActiva:false,
-  minCarga:null, minRetiro:null,
   screen:"home", unread:0, chatGreeted:false
 };
+
+const CLAVES_SOLICITUD = ["bet300_pending_tipo","bet300_pending_billetera",
+                          "bet300_solicitud_id","bet300_solicitud_started_at"];
+const CLAVES_CHAT      = ["bet300_chat_id","bet300_chat_token"];
+const CLAVES_JUGADOR   = ["bet300_usuario","bet300_telefono","bet300_vinculo_estado",
+                          "bet300_nivel_acceso","bet300_motivo_soporte","bet300_portal_thread_seen",
+                          "bet300_validacion_id","bet300_validacion_estado","bet300_bono_usado"];
+let _enviando=false, _toqueMs=null;
+const MONTO_MIN_CARGA=1000, MONTO_MIN_RETIRO=5000, RETIRO_COOLDOWN_MS=24*60*60*1000;
+function _minCarga(){ return Number(state.minCarga)>0 ? Number(state.minCarga) : MONTO_MIN_CARGA; }
+function _minRetiro(){ return Number(state.minRetiro)>0 ? Number(state.minRetiro) : MONTO_MIN_RETIRO; }
+async function cargarMinimos(){
+  try{
+    if(!state.publicCode) return;
+    const r=await rpc("landing_minimos_v1",{p_public_code:state.publicCode});
+    const d=(r&&!r.error) ? (typeof r.data==="string"?JSON.parse(r.data):r.data) : null;
+    if(d && d.ok){
+      if(Number(d.min_carga)>0)  state.minCarga  = Number(d.min_carga);
+      if(Number(d.min_retiro)>0) state.minRetiro = Number(d.min_retiro);
+    }
+  }catch(_e){}
+}
+function _tomarEnvio(idBtn, textoEnviando){
+  if(_enviando) return false;
+  _enviando = true;
+  const b = $(idBtn);
+  if(b){ b.disabled = true; b.textContent = textoEnviando || "Enviando..."; }
+  return true;
+}
+function _soltarEnvio(idBtn, textoNormal){
+  _enviando = false;
+  _restaurarBoton(idBtn, textoNormal);
+}
+function _identificadoresPropios(){
+  const b=state.billetera||{};
+  return [b.alias,b.cbu,b.cvu]
+    .map(_normComparar).filter(function(x){ return x && x.length>=6; });
+}
+function _nombresPropios(){
+  const b=state.billetera||{};
+  return [b.titular,b.nombre_visible,b.nombre]
+    .map(_normComparar).filter(function(x){ return x && x.length>=4; });
+}
+function _borrar(claves){
+  claves.forEach(function(k){ try{ localStorage.removeItem(k); }catch(_e){} });
+}
+function olvidarSolicitud(conChat){
+  _borrar(CLAVES_SOLICITUD);
+  state.pendingTipo=""; state.pendingBilletera=""; state.solicitudId=""; state.solicitudStartedAt=0;
+  if(conChat !== false){
+    _borrar(CLAVES_CHAT);
+    state.chatId=""; state.chatToken=""; state.seenMsgIds=new Set();
+  }
+}
+function olvidarJugador(){
+  olvidarSolicitud(true);
+  _borrar(CLAVES_JUGADOR);
+  Object.assign(state,{usuario:"",telefono:"",nivelAcceso:"",motivoSoporte:"",
+                       portalThreadSeen:new Set(),shownTexts:new Set()});
+}
+function _fijarOficina(code){
+  const nueva = String(code == null ? '' : code).trim();
+  if(!nueva) return;
+  try{
+    const antes = localStorage.getItem("bet300_public_code") || "";
+      if(antes && antes !== nueva){
+        olvidarJugador();
+        state.minCarga=null;state.minRetiro=null;
+      console.log("[BET300] cambio de oficina (" + antes + " → " + nueva + "): se empieza de cero");
+    }
+    localStorage.setItem("bet300_public_code", nueva);
+  }catch(_e){}
+  state.publicCode = nueva;
+}
+function _marcarToque(){ _toqueMs=Date.now(); }
+function _marcaDeTiempo(){
+  const toque = Number.isFinite(_toqueMs) ? _toqueMs : Date.now();
+  _toqueMs=null;
+  return { t_toque:new Date(toque).toISOString(),
+           t_envio:new Date().toISOString() };
+}
 
 let chatPollTimer=null, estadoPollTimer=null, portalThreadTimer=null, estadoFinalNotificado=false, rechazadoStreak=0;
 
@@ -396,6 +573,9 @@ function cap(s){return s.charAt(0).toUpperCase()+s.slice(1)}
 function esc(t){return String(t??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
 function escMsg(t){return esc(t).replace(/\n/g,"<br>")}
 function now(){return new Date().toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}
+// Los campos de monto eran type=number. Chrome deja tipear letras igual: se ven en pantalla
+// pero value queda vacio, asi que la persona ve "prueba" escrito y el portal no lee nada.
+// Con esto no entra otra cosa que digitos.
 function _soloNumero(el){
   if(!el) return;
   const limpio = String(el.value||"").replace(/[^0-9]/g, "");
@@ -414,6 +594,12 @@ function tiempoEspera(){
 }
 function toast(t){const el=$("toast");el.textContent=t;el.classList.add("show");setTimeout(()=>el.classList.remove("show"),2400)}
 
+// Abre la plataforma en una pestaña propia (first-party) → las imágenes cargan en TODOS los
+// navegadores. Dentro del iframe es contenido de terceros y Safari/Samsung/Firefox le cortan la
+// cookie de sesión → imágenes rotas. Top-level = como entrar por el link directo (que sí anda).
+// No podemos poner un "volver" en la página de la plataforma (es cross-origin): el regreso es la
+// flecha "←"/"Listo" de la Custom Tab (PWA) o el cambiador de pestañas. Del lado del portal, al
+// volver queda todo a mano; la primera vez avisamos cómo regresar.
 function abrirPlataformaFullscreen(){
   let w=null;
   try{ w=window.open(PLATFORM_URL,"_blank","noopener"); }catch(_e){}
@@ -423,15 +609,21 @@ function abrirPlataformaFullscreen(){
       setTimeout(function(){ try{ toast('Para volver al portal, tocá la flecha ← / “Listo” de arriba.'); }catch(_e){} },500);
     }
   }catch(_e){}
+  // Si el navegador bloqueó la ventana emergente, caemos a navegación directa (igual first-party).
   if(!w){ try{ location.href=PLATFORM_URL; }catch(_e){} }
 }
 
+// ── Launcher auto-detectado (punto 4) ──────────────────────────────────────
+// Navegadores que bloquean cookies de terceros en el iframe → las imágenes de los juegos NO
+// cargan embebidas (Safari/iOS, Samsung Internet, Firefox). Para esos mostramos un launcher que
+// los lleva a pantalla completa (first-party) y deja el cajero a un toque.
 function _navBloqueaImagenes(){
   try{
     const ua=navigator.userAgent||"";
     const iOS=/iphone|ipad|ipod/i.test(ua) || (/Macintosh/i.test(ua) && (navigator.maxTouchPoints||0)>1);
     const samsung=/SamsungBrowser/i.test(ua);
     const firefox=/Firefox|FxiOS/i.test(ua);
+    // Safari "de verdad" (no Chrome/Edge/Opera/CriOS/FxiOS que también matchean 'Safari')
     const safari=/Safari/i.test(ua) && !/Chrome|CriOS|Chromium|Edg|OPR|SamsungBrowser|FxiOS|Android/i.test(ua);
     return iOS || samsung || firefox || safari;
   }catch(_e){ return false; }
@@ -448,6 +640,7 @@ function launcherJugar(){ cerrarLauncher(); abrirPlataformaFullscreen(); }
 function launcherCajero(){ cerrarLauncher(); try{ toggleWidget(true); }catch(_e){} }
 function haptic(ms){try{navigator.vibrate&&navigator.vibrate(ms||10)}catch(e){}}
 
+// ── Monitor de conexión ────────────────────────────────────────────────────
 let _connFails=0;
 function _showOffline(){const b=$("connBanner");if(b)b.style.display="flex";}
 function _hideOffline(){const b=$("connBanner");if(b)b.style.display="none";_connFails=0;}
@@ -462,15 +655,17 @@ window.addEventListener("online",()=>{
   if(tieneSolicitudPendiente())startEstadoPoll();
 });
 
+// ── Router de pantallas ────────────────────────────────────────────────────
 const SCREENS=["home","carga","retiro","clave","estado","chat"];
 function showScreen(name){
   state.screen=name;
-  if(name!=="carga"){ try{ stopBilleteraRefresco(); }catch(_e){} }
   SCREENS.forEach(s=>{const el=$("screen"+cap(s));if(el)el.classList.toggle("hidden",s!==name);});
   $("composeBox").classList.toggle("hidden",name!=="chat");
   if(name!=="chat")$("imgPreviewBar").classList.add("hidden");
+  // barra inferior: marcar activa ("clave" vive bajo Inicio)
   const navName=(name==="clave")?"home":name;
   document.querySelectorAll(".nav-item").forEach(n=>n.classList.toggle("active",n.dataset.screen===navName));
+  // back solo en la sub-pantalla de clave
   if($("backBtn"))$("backBtn").classList.toggle("hidden",name!=="clave");
   const sc=$("screen"+cap(name));
   if(sc&&name!=="chat"){sc.scrollTop=0;sc.classList.remove("in");void sc.offsetWidth;sc.classList.add("in");}
@@ -484,7 +679,9 @@ function goRetiro(){if(_bloqueoSoporte())return;if(bloquearNuevaSolicitud("RETIR
 function goClave(){if(_bloqueoSoporte())return;showScreen("clave");renderClave();}
 function goEstado(){showScreen("estado");renderEstado();}
 function goChat(){ try{hideOperatorBubble();}catch(_e){} showScreen("chat");renderChat();}
-function escribirSoporteAlta(tipo){
+// Alta de usuario NUEVO: abre el chat y auto-envía un mensaje predeterminado con el apodo y el
+// teléfono que el cliente ingresó → el operador ya sabe que es alta y con qué datos vincular.
+async function escribirSoporteAlta(tipo){
   goChat();
   if(state._altaSoporteEnviado) return; // ya lo mandamos, no duplicar
   const apodo=(state.usuario||"").trim(), tel=(state.telefono||"").trim();
@@ -496,18 +693,30 @@ function escribirSoporteAlta(tipo){
     ? `Hola 👋 Quiero validar mi acceso para operar.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
     : `Hola 👋 Necesito ayuda con mi cuenta.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`;
   state._altaSoporteEnviado=true;
-  try{ addMsg(esc(msg),"user"); state.shownTexts.add("u|"+msg.substring(0,200)); }catch(_e){}
-  setTimeout(()=>{ try{ enviarMensajeSoporte(msg, null); }catch(_e){} }, 250);
+  const result=await enviarMensajeSoporte(msg,null);
+  if(result?.ok){addMsg(esc(msg),"user");state.shownTexts.add("u|"+msg.substring(0,200));}
+  else{
+    state._altaSoporteEnviado=false;
+    addMsg(esc(result?.error||"No se pudo enviar. Reintentá desde el chat."),"system");
+    const input=$("freeInput");if(input&&!input.value)input.value=msg;
+  }
 }
 
+// ── No leídos ──────────────────────────────────────────────────────────────
 function updateUnreadUI(){
   const els=[$("floatUnread"),$("homeUnread"),$("navUnread")];
   els.forEach(el=>{if(el){el.textContent=state.unread>99?"99+":state.unread;el.classList.toggle("hidden",!state.unread);}});
+  // Si el dock está colapsado, el badge del cajero no se ve → mostramos un punto en el handle.
   const m=$("floatMin"); if(m) m.classList.toggle("has-unread", state.unread>0);
 }
 function bumpUnread(){state.unread++;updateUnreadUI();}
 function clearUnread(){state.unread=0;updateUnreadUI();}
 
+// ── Dock colapsable (botones del portal sobre el iframe) ────────────────────
+// El iframe de la plataforma es cross-origin: NO se puede saber si el usuario está en el lobby o
+// dentro de un juego. En vez de autodetectar, escondemos los botones del portal (Pantalla completa
+// + Cajero) detrás de un handle chico; arranca COLAPSADO y se auto-oculta a los ~4s para no tapar
+// el juego. Un toque en el handle los muestra.
 let _dockTimer=null;
 function armDockAutohide(){
   clearTimeout(_dockTimer);
@@ -521,12 +730,16 @@ function collapseDock(){
 function expandDock(){
   document.body.classList.remove("dock-collapsed");
   const m=$("floatMin"); if(m){ m.textContent="–"; m.title="Ocultar botones"; }
+  // Sin auto-ocultar: queda expandido hasta que el usuario lo minimice.
 }
 function toggleDock(e){
   if(e){ try{ e.stopPropagation(); e.preventDefault(); }catch(_e){} }
   if(document.body.classList.contains("dock-collapsed")) expandDock(); else collapseDock();
 }
+// Arranca colapsado por defecto y re-arma el auto-ocultar si el usuario toca los botones expandidos.
+// (Nombre viejo por compatibilidad con la llamada del init.)
 function restoreLauncherMini(){
+  // Arranca EXPANDIDO (cajero visible) y NO se auto-minimiza: solo el usuario lo minimiza con el handle.
   document.body.classList.remove("dock-collapsed");
   const m=$("floatMin"); if(m){ m.textContent="–"; m.title="Ocultar botones"; }
 }
@@ -547,29 +760,66 @@ function toggleWidget(open){
   }
 }
 
+// ── Chat (mensajes) ────────────────────────────────────────────────────────
 function scrollChat(){const m=$("messages");if(m)m.scrollTop=m.scrollHeight;}
 function scrollBottom(){scrollChat();}
-function addMsg(text,who="bot",imgUrl=null){
-  const wrap=document.createElement("div");
-  wrap.className="msg "+(who==="user"?"user":"bot");
-  const imgHtml=imgUrl?`<img class="chat-img" src="${esc(imgUrl)}" onclick="window.open('${esc(imgUrl)}','_blank')" onerror="this.style.display='none'" alt="imagen">`:""
-  let cuerpo=String(text);
-  if(who!=="user"){ const card=parseTransferCard(text); if(card) cuerpo=renderTransferCardHtml(card); }   // tarjeta solo en bot/sistema
-  wrap.innerHTML='<div class="bubble">'+cuerpo+imgHtml+'</div><div class="meta">'+(who==="user"?"Vos":"BET300")+" · "+now()+'</div>';
-  $("messages").appendChild(wrap);scrollChat();
+function chatMessageRole(m){
+  m=m||{};
+  let meta=m.metadata||m.meta||{};
+  if(typeof meta==="string"){try{meta=JSON.parse(meta);}catch(_e){meta={};}}
+  const role=String(m.tipo_emisor||m.emisor_tipo||m.TIPO_EMISOR||m.origen||"").toUpperCase();
+  const name=String(m.operador||m.emisor||m.EMISOR||"").toUpperCase().trim();
+  // El rol usuario tiene prioridad: su nombre o su texto nunca habilita tarjetas de operador.
+  if(/^(USUARIO|USER|CLIENTE|JUGADOR)$/.test(role))return "user";
+  if(m.auto===true||meta?.auto===true||/BOT|AUTO/.test(role))return "bot";
+  if(/SISTEMA|SYSTEM/.test(role))return "system";
+  if(/^(NODO|BOT|AUTOMATICO|AUTOMÁTICO)(?:\b|_)/.test(name))return "bot";
+  if(/OPER|ADMIN|PANEL/.test(role)||/^(OPERADOR|ADMIN|PANEL)$/.test(name))return "operator";
+  return "user";
 }
-function incomingOperatorMsg(texto,imgUrl){
+function chatHelpMessage(text,who){
+  const actions=[];
+  let body=String(text||"");
+  if(who==="operator"||who==="bot")body=body.replace(/⟦AYUDA:(inicio|revisar_envio)⟧/g,function(_all,action){if(!actions.includes(action))actions.push(action);return "";});
+  return {text:body.trim(),actions};
+}
+function addMsg(text,who="bot",imgUrl=null,meta=null){
+  const wrap=document.createElement("div");
+  who=["user","operator","bot","guide","system"].includes(who)?who:"system";
+  wrap.className="msg "+who;
+  if(meta?.local)wrap.classList.add("guide-local");
+  const imgHtml=imgUrl?`<img class="chat-img" src="${esc(imgUrl)}" onclick="window.open('${esc(imgUrl)}','_blank')" onerror="this.style.display='none'" alt="imagen">`:""
+  const help=chatHelpMessage(text,who);
+  let cuerpo=help.text;
+  if(who!=="user"){ const card=parseTransferCard(text); if(card) cuerpo=renderTransferCardHtml(card); }   // tarjeta solo en bot/sistema
+  const actions=help.actions.map(action=>'<button type="button" onclick="guiaAbrirTarjeta(\''+action+'\')">'+(action==="inicio"?"Abrir ayuda paso a paso":"Revisar una transferencia enviada")+'</button>').join("");
+  const labels={user:"Vos",operator:"Operador",bot:"Bot automático",guide:"Guía automática · opciones",system:"Sistema"};
+  const stamp=meta?.fecha||meta?.created_at;
+  const time=stamp?(_fechaCorta(stamp)||now()):now();
+  wrap.innerHTML='<div class="bubble">'+cuerpo+imgHtml+(actions?'<div class="chat-help-actions">'+actions+'</div>':"")+'</div><div class="meta">'+labels[who]+" · "+esc(time)+'</div>';
+  $("messages").appendChild(wrap);scrollChat();
+  return wrap;
+}
+function incomingOperatorMsg(texto,imgUrl,m=null){
   texto=String(texto==null?"":texto);
+  // ── Marca oculta de validación: el operador validó la cuenta desde el panel y manda
+  //    ⟦INGRESAR:usuario⟧ dentro del mensaje. No mostramos la marca cruda: mostramos el
+  //    texto (sin la marca) + un botón "Ingresar" para que entre directo desde el chat.
   let _ingresarUser=null, _ingresarTel="";
   const _mIng=texto.match(/⟦INGRESAR:([^⟧]*)⟧/);
   if(_mIng){ const _p=String(_mIng[1]||"").split("|"); _ingresarUser=(_p[0]||"").trim(); _ingresarTel=(_p[1]||"").trim(); texto=texto.replace(/⟦INGRESAR:[^⟧]*⟧/g,"").trim(); }
+  // Dedup central por contenido: el mismo mensaje del operador puede llegar por pollPortalThread
+  // Y por pollOperatorMessages (dos fuentes, con claves distintas). Así no se duplica.
   const k=(String(texto||"").trim().slice(0,160))+"|"+(String(imgUrl||"").slice(0,120));
   if(k!=="|"){ if(!state._opMsgSeen) state._opMsgSeen=new Set(); if(state._opMsgSeen.has(k)){ if(_ingresarUser) mostrarBotonIngresar(_ingresarUser,_ingresarTel); return; } state._opMsgSeen.add(k); }
-  if(texto||imgUrl) addMsg(escMsg(texto),"bot",imgUrl||null);
+  const who=m?chatMessageRole(m):"operator";
+  if(texto||imgUrl) addMsg(escMsg(texto),who,imgUrl||null,m);
   const fueraDelChat = state.screen!=="chat" || !$("widget")?.classList.contains("open");
   if(fueraDelChat){ bumpUnread(); try{ showOperatorBubble(texto,imgUrl); }catch(_e){} }
   if(_ingresarUser) mostrarBotonIngresar(_ingresarUser,_ingresarTel);
 }
+// Botón "Ingresar" dentro del chat: aparece cuando el operador validó la cuenta (por la marca
+// ⟦INGRESAR⟧ o por el auto-chequeo del cotejo). Al tocarlo, revalida y entra directo al home.
 function mostrarBotonIngresar(usuario,telefono){
   usuario=String(usuario||"").trim() || (state.usuario||"");
   telefono=String(telefono||"").trim();
@@ -598,6 +848,8 @@ function mostrarBotonIngresar(usuario,telefono){
 async function confirmarIngresoValidado(usuario,telefono){
   usuario=String(usuario||"").trim();
   telefono=String(telefono||"").trim();
+  // La marca ⟦INGRESAR:usuario|telefono⟧ trae los datos CORREGIDOS por el operador. Los adoptamos
+  // ANTES de revalidar: si el operador cambió el tel/usuario, el cotejo ahora corre con lo bueno.
   if(usuario){ state.usuario=usuario; try{localStorage.setItem("bet300_usuario",usuario);}catch(_e){} }
   if(telefono){ state.telefono=telefono; try{localStorage.setItem("bet300_telefono",telefono);}catch(_e){} }
   const btn=$("btnIngresarValidado"); if(btn){ btn.disabled=true; btn.textContent="Ingresando..."; }
@@ -605,10 +857,14 @@ async function confirmarIngresoValidado(usuario,telefono){
     const r=await rpc("landing_portal_resolver_vinculo",{p_pc_codigo:state.pcCodigo,p_usuario:state.usuario,p_telefono:state.telefono});
     const d=normalize(r.data)||r.data||{};
     const verdict=d.verdict||"";
+    // Conflicto DURO (los datos figuran con OTRA cuenta) → no forzamos: puede ser otra persona.
     if(verdict==="CONFLICTO_TELEFONO"||verdict==="CONFLICTO_USUARIO"||verdict==="BLOQUEADO"){
       toast("⚠️ "+(d.mensaje||"Escribinos por chat.")); if(btn){btn.disabled=false;btn.textContent="Reintentar ingreso";}
       return;
     }
+    // El operador YA validó desde el panel (por eso llegó ⟦INGRESAR⟧, por un canal autenticado):
+    // si el cotejo da ACCESO, perfecto; si todavía no propagó, igual confiamos en esa validación y
+    // lo dejamos entrar. Así el botón funciona aunque el cotejo automático tarde en reflejar el cambio.
     state.nivelAcceso="OK"; try{localStorage.setItem("bet300_nivel_acceso","OK");}catch(_e){}
     state.motivoSoporte=""; try{localStorage.removeItem("bet300_motivo_soporte");}catch(_e){}
     try{ toggleWidget(false); }catch(_e){}
@@ -617,43 +873,29 @@ async function confirmarIngresoValidado(usuario,telefono){
   }catch(_e){ toast("No pudimos ingresar ahora. Probá de nuevo."); if(btn){btn.disabled=false;btn.textContent="Ingresar ›";} }
 }
 function renderChat(){
-  if(!state.chatGreeted&&!$("messages").children.length){
-    state.chatGreeted=true;
-    addMsg("Hola 👋 Escribinos tu consulta o mandá tu comprobante. Un operador te responde por acá.","bot");
-  }
+  guiaMostrar();
+  // Hidratar el historial YA (no esperar el próximo tick del poll ~3.5s). Así al abrir el chat
+  // el usuario ve la conversación previa y, si el operador ya validó, el botón "Ingresar".
   if(state.usuario){ try{ pollPortalThread(); }catch(_e){} }
-  setTimeout(()=>$("freeInput")?.focus(),80);
   setTimeout(()=>subscribePush(),1200);
 }
 
 async function rpc(fn,params){if(!sb)return{data:null,error:{message:"Supabase no configurado"}};const{data,error}=await sb.rpc(fn,params||{});return{data,error}}
 function normalize(data){if(!data)return null;if(Array.isArray(data))return data[0]||null;if(data.data)return Array.isArray(data.data)?data.data[0]:data.data;return data}
 
-// ── La hora del dedo ────────────────────────────────────────────────────────────────────────
-// Para saber cuánto tarda de verdad un mensaje hay que anotar CUÁNDO el jugador apretó el botón
-// y compararlo con cuándo quedó escrito en la base. Mirando el código no se puede saber: las
-// velocidades cambian y nadie puede decir si dos minutos son normales o son una falla (Juan, 29/9).
+// Navegador + SO + si es PWA → se manda en la metadata de la solicitud para que el operador lo vea.
+// ── IP pública de quien manda la solicitud ────────────────────────────────
+// No la sabe el navegador: hay que preguntársela a un servicio de afuera. Se pide UNA vez por
+// sesión y se cachea; si falla o tarda, la solicitud sale igual sin IP — esto nunca puede ser
+// motivo de que una carga no se envíe.
 //
-// El reloj del teléfono miente seguido, así que NO se manda una hora corregida: se mandan las dos
-// horas crudas del teléfono y del otro lado se arma la cuenta. Probé corregirlas midiendo el
-// desfasaje contra el servidor y no se puede: el navegador no deja leer la cabecera Date de una
-// respuesta de otro dominio (CORS), así que esa medición siempre daba vacío (verificado, 29/9).
+// Para qué sirve: no da la dirección exacta, pero dice de qué tipo de conexión entra la gente
+// y, sobre todo, permite ver VARIAS CUENTAS DESDE LA MISMA CASA — que es otra forma de agarrar
+// a los que cazan bonos con cuentas distintas.
 //
-// Con estas dos horas alcanza, porque el tramo que importa no depende del teléfono:
-//   t_toque → t_envio    lo mide el propio teléfono contra sí mismo: exacto aunque esté en hora.
-//   t_envio → fecha      red + lo que el reloj esté desfasado. No se pueden separar, y se dice.
-//   fecha → panel        las dos horas son de servidor/PC: es el tramo que delata al panel.
-let _toqueMs=null;
-function _marcarToque(){ _toqueMs=Date.now(); }
-// Lo que se agrega a cada solicitud para poder medirla después. El toque se anota al APRETAR, no
-// acá: entre una cosa y la otra hay validaciones y consultas, que es parte de lo que se mide.
-function _marcaDeTiempo(){
-  const toque = Number.isFinite(_toqueMs) ? _toqueMs : Date.now();
-  _toqueMs=null;
-  return { t_toque:new Date(toque).toISOString(),
-           t_envio:new Date().toISOString() };
-}
-
+// Ojo con leer de más: en una red móvil o en un barrio con CGNAT muchos vecinos comparten la
+// misma IP pública. Coincidir NO prueba que sean la misma persona; es una señal para mirar,
+// no una condena.
 let _ipCache=null, _ipPedida=false;
 async function _ipPublica(){
   if(_ipCache!==null) return _ipCache;
@@ -690,9 +932,8 @@ function _infoNavegador(){
   }catch(_e){ return (navigator.userAgent||"").slice(0,120); }
 }
 
-// La primera lectura salia recien a los 5 s: el operador contestaba al toque y el jugador se
-// quedaba mirando la nada. Las otras dos colas ya arrancaban con una lectura adelantada; esta no.
-function startChatPoll(){stopChatPoll();if(!state.chatId)return;chatPollTimer=setInterval(pollOperatorMessages,5000);setTimeout(pollOperatorMessages,700);}
+// ── Chat poll ─────────────────────────────────────────────────────────────
+function startChatPoll(){stopChatPoll();if(!state.chatId)return;chatPollTimer=setInterval(pollOperatorMessages,5000);}
 function stopChatPoll(){if(chatPollTimer){clearInterval(chatPollTimer);chatPollTimer=null;}}
 async function pollOperatorMessages(){
   if(!state.chatId||!$("widget")?.classList.contains("open"))return;
@@ -703,13 +944,14 @@ async function pollOperatorMessages(){
     const msgKey=String(m.id||m.created_at||JSON.stringify(m));
     if(state.seenMsgIds.has(msgKey))return;
     state.seenMsgIds.add(msgKey);
-    const emisor=String(m.tipo_emisor||m.emisor||"").toUpperCase();
-    const isOp=emisor.includes("OPER")||emisor.includes("ADMIN")||emisor.includes("PANEL")||emisor.includes("SIST")||emisor.includes("BOT")||emisor.includes("AUTO");
+    const who=chatMessageRole(m);
+    const isOp=who!=="user";
     const texto=m.mensaje||m.texto||"";
-    if(isOp&&(texto||m.imagen_url)){const tk=(texto||m.imagen_url||"").substring(0,200);if(state.shownTexts.has(tk))return;state.shownTexts.add(tk);incomingOperatorMsg(texto,m.imagen_url||null);if(texto)notificarLocal("BET300 · Operador",texto.substring(0,100),"/","bet300-op");}
+    if(isOp&&(texto||m.imagen_url)){const tk=(texto||m.imagen_url||"").substring(0,200);if(state.shownTexts.has(tk))return;state.shownTexts.add(tk);incomingOperatorMsg(texto,m.imagen_url||null,m);if(texto)notificarLocal("BET300 · "+(who==="operator"?"Operador":who==="bot"?"Bot automático":"Sistema"),chatHelpMessage(texto,who).text.substring(0,100),"/","bet300-op");}
   });
 }
 
+// ── Portal metadata thread poll (respuestas desde panel/NODO) ─────────────
 function savePortalThreadSeen(){
   try{localStorage.setItem("bet300_portal_thread_seen",JSON.stringify([...state.portalThreadSeen].slice(-400)));}catch(e){}
 }
@@ -722,6 +964,7 @@ function startPortalThreadPoll(){
 function stopPortalThreadPoll(){
   if(portalThreadTimer){clearInterval(portalThreadTimer);portalThreadTimer=null;}
 }
+// Re-chequeo silencioso del cotejo: si dio ACCESO, ofrece el botón "Ingresar" en el chat.
 async function autoChequeoValidacion(){
   if(state._autoRevalBusy) return; state._autoRevalBusy=true;
   try{
@@ -734,34 +977,44 @@ async function autoChequeoValidacion(){
 function threadKey(m){
   return String((m?.origen||"")+"|"+(m?.solicitud_id||"")+"|"+(m?.fecha||"")+"|"+(m?.mensaje||""));
 }
+// Render de UN mensaje del thread (historial o nuevo), del operador o del propio usuario.
+// notificar=true SOLO para mensajes que no vimos en una sesión previa → recién ahí bumpeamos
+// unread / burbuja / notificación (y solo si el chat no está enfocado). Así el historial completo
+// se pinta al abrir el chat sin spamear notificaciones.
 function renderThreadMsg(m, notificar){
-  const origen=String(m.origen||"").toUpperCase();
+  const who=chatMessageRole(m);
   const rawTexto=m.mensaje||"";
   const imgUrl=m.imagen_url||m.imagen||null;
   if(!rawTexto&&!imgUrl)return;
-  if(origen==="OPERADOR"){
+  if(who!=="user"){
+    // Marca oculta de validación ⟦INGRESAR:usuario⟧ → botón "Ingresar" (se saca del texto visible).
     let ing=null, ingTel="", texto=rawTexto;
     const mm=rawTexto.match(/⟦INGRESAR:([^⟧]*)⟧/);
     if(mm){ const _p=String(mm[1]||"").split("|"); ing=(_p[0]||"").trim(); ingTel=(_p[1]||"").trim(); texto=rawTexto.replace(/⟦INGRESAR:[^⟧]*⟧/g,"").trim(); }
+    // Dedup por contenido, compartido con pollOperatorMessages (misma clave, texto crudo).
     const tk=rawTexto?rawTexto.substring(0,200):((m.fecha||"")+"|img|"+(imgUrl||"").substring(0,80));
     if(!state.shownTexts.has(tk)){
       state.shownTexts.add(tk);
-      if(texto||imgUrl) addMsg(escMsg(texto),"bot",imgUrl||null);
+      if(texto||imgUrl) addMsg(escMsg(texto),who,imgUrl||null,m);
       if(notificar){
         const fuera=state.screen!=="chat"||!$("widget")?.classList.contains("open");
-        if(fuera){ bumpUnread(); try{ showOperatorBubble(texto,imgUrl); }catch(_e){} if(texto){ try{ notificarLocal("BET300 · Operador",texto.substring(0,100),"/","bet300-op"); }catch(_e){} } }
+        if(fuera){ bumpUnread(); try{ showOperatorBubble(texto,imgUrl); }catch(_e){} if(texto){ try{ notificarLocal("BET300 · "+(who==="operator"?"Operador":who==="bot"?"Bot automático":"Sistema"),chatHelpMessage(texto,who).text.substring(0,100),"/","bet300-op"); }catch(_e){} } }
       }
     }
     if(ing) mostrarBotonIngresar(ing,ingTel);
   } else {
+    // Mensaje del propio usuario (historial). Dedup por contenido contra lo ya mostrado en vivo.
     const uk=rawTexto?("u|"+rawTexto.substring(0,200)):("uimg|"+(imgUrl||"").substring(0,80));
     if(state.shownTexts.has(uk))return;
     state.shownTexts.add(uk);
-    addMsg(rawTexto?escMsg(rawTexto):"","user",imgUrl||null);
+    addMsg(rawTexto?escMsg(rawTexto):"","user",imgUrl||null,m);
   }
 }
 async function pollPortalThread(){
   if(!state.usuario||!$("widget")?.classList.contains("open"))return;
+  // Respaldo: si el operador validó desde el panel pero la marca ⟦INGRESAR⟧ no llegó/no se vio
+  // (p.ej. tras recargar la página), re-chequeamos el cotejo cada ~10s SOLO mientras el usuario
+  // todavía no entró. Al detectar ACCESO, mostramos el botón "Ingresar" igual.
   if((state.nivelAcceso||"")!=="OK" && state.telefono){
     state._revalTick=(state._revalTick||0)+1;
     if(state._revalTick===1 || state._revalTick%3===0){ autoChequeoValidacion(); }
@@ -773,6 +1026,9 @@ async function pollPortalThread(){
   const thread=Array.isArray(d.chat_thread)?d.chat_thread:[];
   if(!thread.length)return;
 
+  // _threadRendered = set de SESIÓN (lo que ya está en el DOM ahora). Al recargar arranca vacío,
+  // así que el historial completo se vuelve a pintar. portalThreadSeen (persistido) solo decide si
+  // el mensaje es "nuevo" (para notificar) o parte del historial ya visto.
   if(!state._threadRendered) state._threadRendered=new Set();
   thread.forEach(m=>{
     const key=threadKey(m);
@@ -787,6 +1043,7 @@ async function pollPortalThread(){
 
 function setComposeEnabled(enabled){state.chatLibre=!!enabled;}
 
+// ── Inicio (login / dashboard) ─────────────────────────────────────────────
 function renderHome(){
   const home=$("screenHome");
   if(!home)return;
@@ -876,6 +1133,9 @@ function _gateError(msg){
   if(e){ e.textContent=msg; e.style.display="block"; }
   else toast(msg);
 }
+// Gate de 3 caminos: "login" (ya tengo usuario) · "registro" (soy nuevo, alta) ·
+// "ayuda" (tengo usuario pero no puedo entrar). Cada uno cambia el texto/label/botón y manda
+// al operador una señal DISTINTA (así no se mezclan altas nuevas con problemas de acceso).
 function setGateModo(modo){
   state._gateModo = modo || "login";
   const txt=$("gateTxt"), lbl=$("lblUsuarioInicial"), inp=$("usuarioInicial"), btn=$("gateBtn"),
@@ -905,12 +1165,16 @@ function setGateModo(modo){
   }
   setTimeout(()=>$("usuarioInicial")?.focus(),50);
 }
+// Despacha el botón principal según el modo del gate.
 function onGateSubmit(){
   const m=state._gateModo||"login";
   if(m==="registro") return pedirRegistro();
   if(m==="ayuda")    return pedirAyudaAcceso();
   return guardarUsuarioInicial();
 }
+// Canal de soporte/alta SIN validación: para usuarios nuevos (no están en la base) o
+// que recién quieren registrarse (un pariente les pasó el link). Entran al chat directo
+// y el operador los registra/vincula desde el panel. NO pelea con el cotejo.
 function _persistSoporte(){
   try{
     localStorage.setItem("bet300_usuario",state.usuario);
@@ -919,6 +1183,10 @@ function _persistSoporte(){
     localStorage.setItem("bet300_motivo_soporte",state.motivoSoporte);
   }catch(_e){}
 }
+// REGISTRO: usuario NUEVO (publicidad / derivado). Pide nombre/apodo + tel y manda al operador
+// un ticket CLARO de alta nueva. No pelea con el cotejo (no tiene usuario aún).
+// OJO: el bono de bienvenida NO es de "nuevos" — es para la PRIMERA carga de CUALQUIERA, y lo
+// maneja la tarjeta de bono en Inicio (renderBonoBienvenidaCard). Este flujo NO lo menciona.
 function pedirRegistro(){
   const nombre=String($("usuarioInicial")?.value||"").trim();
   const telefono=String($("telefonoInicial")?.value||"").trim();
@@ -931,6 +1199,8 @@ function pedirRegistro(){
   renderHome();
   escribirSoporteAlta("registro"); // abre el chat Y auto-envía el pedido de alta nueva
 }
+// AYUDA DE ACCESO: el que YA tiene usuario pero no puede entrar (datos mal / no validado).
+// Ticket distinto para que el operador no lo confunda con un alta nueva.
 function pedirAyudaAcceso(){
   const usuario=String($("usuarioInicial")?.value||"").trim();
   const telefono=String($("telefonoInicial")?.value||"").trim();
@@ -943,6 +1213,10 @@ function pedirAyudaAcceso(){
   renderHome();
   escribirSoporteAlta("ayuda"); // abre el chat Y auto-envía el pedido de ayuda de acceso
 }
+// Normaliza el usuario de plataforma antes de mandarlo a validar: saca espacios/acentos, baja a
+// minúsculas y, si vino un email (autorelleno del navegador), se queda con lo de antes del @.
+// NO bloquea ni pelea con el cliente: si igual quedó mal, el operador lo corrige con la marca
+// ⟦INGRESAR:usuario⟧ (autologueo, sin que la persona vuelva a cargar sus datos).
 function normalizarUsuarioPlataforma(raw){
   let u=String(raw||"").trim();
   if(!u) return "";
@@ -971,6 +1245,7 @@ async function guardarUsuarioInicial(){
   if(btn){btn.disabled=false;btn.textContent="Ingresar al portal";}
 
   const verdict=d.verdict||"";
+  // Datos vacíos / teléfono inválido → corregilo acá mismo, en el gate.
   if(verdict==="SIN_USUARIO"||verdict==="TEL_INVALIDO"){
     return _gateError(d.mensaje||"Revisá tu usuario y teléfono.");
   }
@@ -981,6 +1256,7 @@ async function guardarUsuarioInicial(){
   localStorage.setItem("bet300_telefono",telefono);
   if(d.estado)localStorage.setItem("bet300_vinculo_estado",d.estado);
 
+  // ✅ Cotejo OK → validado desde el inicio, entra directo a operar.
   if(verdict==="ACCESO"){
     state.nivelAcceso="OK"; localStorage.setItem("bet300_nivel_acceso","OK");
     state.motivoSoporte=""; localStorage.removeItem("bet300_motivo_soporte");
@@ -991,6 +1267,11 @@ async function guardarUsuarioInicial(){
     return;
   }
 
+  // ⚠️ Cualquier otro caso (no validó al toque, dato mal escrito, usuario aún sin activar, conflicto o
+  // error de cotejo): NO lo dejamos en un 🟡 sin salida ni obligamos a "Cambiar usuario" + reloguear.
+  // Lo mandamos al MISMO canal de validación con operador (ticket con usuario+tel + chat) para que lo
+  // valide/CORRIJA y le habilite el botón "Ingresar" (autologueo con el usuario correcto, sin re-login).
+  // En paralelo corre el auto-chequeo del cotejo: si da ACCESO solo, aparece el botón "Ingresar" igual.
   const conflicto=(verdict==="CONFLICTO_TELEFONO"||verdict==="CONFLICTO_USUARIO"||verdict==="BLOQUEADO");
   state.nivelAcceso="SOPORTE";
   state.motivoSoporte = conflicto
@@ -1005,6 +1286,8 @@ async function guardarUsuarioInicial(){
   escribirSoporteAlta("validar");                 // ticket claro para el operador + abre el chat
 }
 
+// Modal CENTRADO (position:fixed) — antes se insertaba al final del home y quedaba fuera de pantalla
+// sin scroll: nadie lo encontraba. Ahora aparece al medio, por encima de todo.
 function cambiarUsuario(){
   const existing=document.getElementById("cambioConfirm");
   if(existing){existing.remove();return}
@@ -1024,6 +1307,7 @@ function cambiarUsuario(){
 }
 
 function _confirmarCambioUsuario(){
+  if(typeof guiaOlvidar==="function")guiaOlvidar();
   try{ document.getElementById("cambioConfirm")?.remove(); }catch(_e){}
   stopChatPoll();stopEstadoPoll();stopPortalThreadPoll();stopHistPoll();
   // Antes acá había una lista a mano que dejaba atrás bet300_validacion_id y bet300_bono_usado: el
@@ -1037,6 +1321,7 @@ function _confirmarCambioUsuario(){
   goHome();
 }
 
+// ── Pendiente ─────────────────────────────────────────────────────────────
 function tieneSolicitudPendiente(){return !!(state.solicitudId||state.pendingTipo);}
 function bloquearNuevaSolicitud(tipo){
   if(!tieneSolicitudPendiente())return false;
@@ -1057,68 +1342,14 @@ function setPendiente(tipo,solicitudId,billetera){
   if(state.solicitudId)localStorage.setItem("bet300_solicitud_id",state.solicitudId);
   localStorage.setItem("bet300_solicitud_started_at",String(state.solicitudStartedAt));
 }
-// ── Qué se borra y cuándo, en UN solo lugar ─────────────────────────────────────────────────────
-// Había cinco listas de claves escritas a mano y NINGUNA coincidía: cambiar de usuario dejaba la
-// validación y el bono del anterior; cerrar una solicitud dejaba la billetera pendiente. El resto
-// aparece después como algo que no se explica — por ejemplo, la billetera pendiente que sobrevive
-// hace que _avisoBilleteraSolicitud() compare contra una solicitud que ya no existe y avise de un
-// descuadre inventado. Agregar una clave y olvidarla en cuatro de las cinco listas es el error que
-// se repite solo, así que los grupos viven acá (mapeo del portal, 30/9).
-const CLAVES_SOLICITUD = ["bet300_pending_tipo","bet300_pending_billetera",
-                          "bet300_solicitud_id","bet300_solicitud_started_at"];
-const CLAVES_CHAT      = ["bet300_chat_id","bet300_chat_token"];
-// Lo del JUGADOR, no del aparato: al cambiar de usuario tiene que irse todo esto. La oficina
-// (public_code) y lo del dispositivo (app_instalada, fs_hint) son del teléfono y se quedan.
-const CLAVES_JUGADOR   = ["bet300_usuario","bet300_telefono","bet300_vinculo_estado",
-                          "bet300_nivel_acceso","bet300_motivo_soporte","bet300_portal_thread_seen",
-                          "bet300_validacion_id","bet300_validacion_estado","bet300_bono_usado"];
-function _borrar(claves){
-  claves.forEach(function(k){ try{ localStorage.removeItem(k); }catch(_e){} });
-}
-// conChat en false = la solicitud se cierra pero la conversación sigue abierta. Es lo que hace
-// falta cuando se rechaza: el jugador tiene que poder preguntar por qué.
-function olvidarSolicitud(conChat){
-  _borrar(CLAVES_SOLICITUD);
-  state.pendingTipo=""; state.pendingBilletera=""; state.solicitudId=""; state.solicitudStartedAt=0;
-  if(conChat !== false){
-    _borrar(CLAVES_CHAT);
-    state.chatId=""; state.chatToken=""; state.seenMsgIds=new Set();
-  }
-}
-function olvidarJugador(){
-  olvidarSolicitud(true);
-  _borrar(CLAVES_JUGADOR);
-  Object.assign(state,{usuario:"",telefono:"",nivelAcceso:"",motivoSoporte:"",
-                       portalThreadSeen:new Set(),shownTexts:new Set()});
-}
-
-// Cambiar de oficina = empezar de cero. Es el ÚNICO lugar donde se fija la oficina.
-//
-// Lo que guarda el portal vive por SITIO, no por oficina. Siete oficinas no tienen dominio propio
-// (P8, P9, P9B, P10, P10B, P10C, P11): entran por ?r= en el mismo dominio, así que comparten
-// almacenamiento. Si alguien entraba por el enlace de una y después por el de otra, se le
-// arrastraba la validación de la primera: veía las billeteras de la ÚLTIMA, transfería, y recién
-// al enviar la solicitud le avisaba que no estaba validado. Peor imposible — se entera después de
-// mandar la plata (Juan, 3/10).
-//
-// Lo del aparato (que la app está instalada, la ayuda ya vista) se queda: no cambia porque cambie
-// la oficina.
-function _fijarOficina(code){
-  const nueva = String(code == null ? '' : code).trim();
-  if(!nueva) return;
-  try{
-    const antes = localStorage.getItem("bet300_public_code") || "";
-    if(antes && antes !== nueva){
-      olvidarJugador();
-      console.log("[BET300] cambio de oficina (" + antes + " → " + nueva + "): se empieza de cero");
-    }
-    localStorage.setItem("bet300_public_code", nueva);
-  }catch(_e){}
-  state.publicCode = nueva;
-}
-
+// Se sacó el paso de confirmación: "¿Marcar como resuelta? Hacelo solo si la solicitud ya fue
+// procesada" le pedía a la persona un criterio que no tiene — no sabe si se procesó, por eso
+// está mirando la pantalla de estado. Y el botón que hoy dice "Cancelar solicitud" hace lo que
+// dice: no hay nada que confirmar dos veces.
 function limpiarPendienteManual(){ _confirmarLimpiarPendiente(); }
 
+// El servidor dice que no hay solicitud abierta y el teléfono creía que sí: se limpia la marca
+// vieja, sin cancelar nada (no hay nada que cancelar) y sin molestar con un cartel.
 function limpiarPendienteSilencioso(){
   try{ stopEstadoPoll(); }catch(_e){}
   olvidarSolicitud(false);
@@ -1157,6 +1388,7 @@ async function _confirmarLimpiarPendiente(){
   goHome();
 }
 
+// ── Estado poll ───────────────────────────────────────────────────────────
 function estadoNormalizado(v){return String(v||"").trim().toUpperCase();}
 function esEstadoFinalAprobado(v){
   const e=estadoNormalizado(v);
@@ -1166,6 +1398,9 @@ function esEstadoFinalRechazado(v){
   const e=estadoNormalizado(v);
   return ["RECHAZADA","CANCELADA","ERROR"].includes(e);
 }
+// Sólo un id NUMÉRICO sirve: la RPC de estado recibe un bigint. Antes se devolvía el string crudo
+// (p. ej. "pendiente-local-1757…") y los dos consumidores terminaban preguntando por la solicitud
+// 0 cada 6 segundos — un poll eterno contra una solicitud que no existe.
 function solicitudIdValido(){
   const raw=String(state.solicitudId||"").trim();
   return /^\d+$/.test(raw) ? Number(raw) : null;
@@ -1178,18 +1413,24 @@ function startEstadoPoll(){
   setTimeout(()=>consultarEstadoSolicitud(false),800);
 }
 
+// El historial se pintaba una sola vez, al entrar. Una carga hecha en el mostrador aparecía
+// recién cuando la persona salía y volvía a entrar a la pantalla — o sea, nunca, porque no
+// tiene motivo para hacerlo. Mientras esté mirando el Estado se relee cada 15 s.
 let histPollTimer=null;
 function stopHistPoll(){ if(histPollTimer){ clearInterval(histPollTimer); histPollTimer=null; } }
 function startHistPoll(){
   stopHistPoll();
   if(!state.usuario || !state.telefono) return;
   histPollTimer=setInterval(function(){
+    // Si la pestaña está en segundo plano no se consulta: no sirve de nada y gasta datos.
     try{ if(document.hidden) return; }catch(_e){}
     try{ pintarHistorialUsuario(); }catch(_e){}
   }, 15000);
 }
 function setEstadoLive(txt){const e=$("estadoLive");if(e)e.innerHTML='<span class="live-dot"></span>'+esc(txt);}
 
+// ── Estado (pantalla) ──────────────────────────────────────────────────────
+// ── Historial del usuario (últimos 7 días) ───────────────────────────────────
 async function cargarHistorialUsuario(){
   if(!state.usuario||!state.telefono) return [];
   const res=await rpc("landing_historial_usuario",{p_usuario:state.usuario,p_telefono:state.telefono,p_public_code:state.publicCode||""});
@@ -1197,31 +1438,34 @@ async function cargarHistorialUsuario(){
   return res.data;
 }
 function _fechaCorta(iso){
+  // 24 h y con año corto: "06/08 09:01" — exacto y sin el "a. m." con espacios de es-AR.
   try{
     const d=new Date(iso); if(isNaN(d.getTime())) return "";
     const p=n=>String(n).padStart(2,"0");
     return p(d.getDate())+"/"+p(d.getMonth()+1)+" "+p(d.getHours())+":"+p(d.getMinutes());
   }catch(_e){ return ""; }
 }
-const PORTAL_VER="v18.3 · 14/09";
-function _estadoBadge(e, canceladaPor, r){
+function _estadoBadge(e, canceladaPor){
   const u=String(e||"").toUpperCase();
+  // Una que cancelaste vos NO es un rechazo nuestro. Iban las dos en rojo y como "Rechazada",
+  // así que cancelar tu propia carga se leía como si te la hubiéramos rechazado.
   if(u==="CANCELADA"){
     const propia = String(canceladaPor||"").toUpperCase()==="JUGADOR";
     return '<span style="font-size:11px;font-weight:800;color:#8b95a5">'
       + (propia ? "Cancelada por vos" : "Cancelada") + '</span>';
-  }
-  if(r && String(r.tipo||"").toUpperCase()==="RETIRO"){
-    const _c = _jsonDe(r.cierre);
-    if(_c && Number(_c.faltante)>0.5) return '<span style="font-size:11px;font-weight:800;color:#a78bfa">Cerrado</span>';
-    if(Number(r.pagado)>0 && !["OK","APROBADA","ACREDITADA","PAGADA","COMPLETADA","RECHAZADA","ERROR","ERROR_OPERATIVO"].includes(u))
-      return '<span style="font-size:11px;font-weight:800;color:#a78bfa">Te lo estamos pagando</span>';
   }
   const ok=["OK","APROBADA","ACREDITADA","PAGADA","COMPLETADA"].includes(u);
   const rech=["RECHAZADA","ERROR","ERROR_OPERATIVO"].includes(u);
   const col=ok?"#22c55e":rech?"#ef4444":"#f5c518", txt=ok?"Confirmada":rech?"Rechazada":"En revisión";
   return '<span style="font-size:11px;font-weight:800;color:'+col+'">'+txt+'</span>';
 }
+// ── Motivo del rechazo anterior, antes de volver a mandar ──────────────────
+// Si la operación anterior se rechazó DENTRO DEL MISMO TURNO, se lo mostramos arriba del
+// formulario. Sin esto la persona vuelve a mandar exactamente lo mismo y la vuelve a comer el
+// mismo rechazo — y el operador la vuelve a rechazar. Pasado el turno no se muestra: ya es otra
+// jornada, el motivo perdió contexto y sólo asusta.
+// Los turnos son bloques de 8 h (00-08 / 08-16 / 16-24), que es como se etiquetan TM/TT/TN.
+// Si en la operación se usan otros límites, se cambia SOLO esta constante.
 const TURNO_HORAS=8;
 function _turnoDe(d){ return Math.floor(d.getHours()/TURNO_HORAS); }
 function _mismoTurno(iso){
@@ -1247,6 +1491,8 @@ async function pintarRechazoPrevio(slotId,tipo){
     +'<div style="font-size:11.5px;color:#8b8b97;margin-top:7px">'+esc(_fechaCorta(r.fecha))+' · '+_money(Number(r.monto)||0)+' · revisá esto antes de volver a enviar.</div>'
     +'</div>';
 }
+// El contenedor se re-crea solo: las tarjetas de estado final (aprobada/rechazada) sobrescriben
+// el innerHTML de #screenEstado y se llevaban puesto el historial.
 function _histBox(){
   let box=$("histUsuario");
   if(!box){
@@ -1254,34 +1500,6 @@ function _histBox(){
     box=document.createElement("div"); box.id="histUsuario"; s.appendChild(box);
   }
   return box;
-}
-function _jsonDe(v){ if(typeof v==="string"){ try{ return JSON.parse(v); }catch(_e){ return null; } } return (v && typeof v==="object") ? v : null; }
-function _detalleRetiroHistorial(r){
-  const pedido=Number(r.monto)||0, aPagar=Number(r.monto_a_pagar!=null?r.monto_a_pagar:pedido)||0, pagado=Number(r.pagado)||0;
-  let pagos=_jsonDe(r.pagos); if(!Array.isArray(pagos)) pagos=[];
-  const cierre=_jsonDe(r.cierre);
-  const ajustado = aPagar>0 && Math.abs(aPagar-pedido)>0.5;
-  if(!ajustado && !pagos.length && !cierre) return "";
-  let h='<div style="width:100%;font-size:11.5px;color:#c9d3e0;margin-top:4px;line-height:1.55;background:rgba(255,255,255,.03);border:1px solid #23262f;border-radius:9px;padding:7px 9px">';
-  if(ajustado){
-    h+='<div>Pediste <b>'+_money(pedido)+'</b> · te pagamos <b style="color:#e9c25c">'+_money(aPagar)+'</b></div>';
-    if(r.motivo_ajuste) h+='<div style="color:#e9c25c">📝 '+esc(r.motivo_ajuste)+'</div>';
-  }
-  if(pagos.length){
-    h+='<div style="margin-top:4px;color:#8b95a5">Transferencias · cobraste '+_money(pagado)+(aPagar>0?' de '+_money(aPagar):'')+'</div>';
-    pagos.slice().reverse().forEach(function(p){
-      h+='<div style="display:flex;justify-content:space-between;gap:8px">'
-        +'<span><b style="color:#22c55e">+'+_money(Number(p.monto)||0)+'</b>'+(p.desde?' · te transfirió '+esc(p.desde):'')+'</span>'
-        +'<span style="color:#8b95a5;white-space:nowrap">'+esc(_fechaCorta(p.fecha))+'</span></div>';
-    });
-  }
-  if(cierre && (cierre.etiqueta || cierre.nota)){
-    h+='<div style="margin-top:5px;padding-top:5px;border-top:1px solid #23262f;color:#c4b5fd">🔒 Se cerró'
-      +(cierre.etiqueta?': <b>'+esc(cierre.etiqueta)+'</b>':'')
-      +(Number(cierre.faltante)>0.5?' · quedaron sin pagar '+_money(Number(cierre.faltante)):'')+'</div>'
-      +(cierre.nota?'<div style="color:#c9d3e0;font-style:italic">"'+esc(cierre.nota)+'"</div>':'');
-  }
-  return h+'</div>';
 }
 async function pintarHistorialUsuario(){
   const box=_histBox(); if(!box) return;
@@ -1292,7 +1510,11 @@ async function pintarHistorialUsuario(){
     const esRetiro=String(r.tipo||"").toUpperCase()==="RETIRO";
     const est=String(r.estado||"").toUpperCase();
     const rech=["RECHAZADA","ERROR","ERROR_OPERATIVO"].includes(est);
+    // A qué billetera transfirió y con qué titular. Estaba en la base desde siempre y el
+    // historial no lo mostraba: sin eso, cinco cargas de $5.000 son cinco filas idénticas.
     const bil=String(r.billetera||"").trim(), tit=String(r.titular||"").trim();
+    // Una carga hecha en el mostrador no la pidió la persona por acá: si aparece sin aclarar
+    // nada, parece una solicitud suya que no recuerda haber mandado.
     const enMostrador = String(r.origen||"").toUpperCase()==="MOSTRADOR";
     const detalle = (bil||tit)
       ? '<div style="width:100%;font-size:11px;color:#8b95a5;margin-top:2px;line-height:1.5">'
@@ -1307,20 +1529,26 @@ async function pintarHistorialUsuario(){
       + '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:18px">'+(esRetiro?"🏧":"💳")+'</span>'
       +   '<div><div style="font-weight:800;font-size:14px;color:#e8edf4">'+(esRetiro?"Retiro":"Carga")+'</div>'
       +   '<div style="font-size:11px;color:#8b95a5">'+esc(_fechaCorta(r.fecha))+'</div></div></div>'
-      + '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#e9c25c">'+_money((esRetiro && r.monto_a_pagar!=null ? Number(r.monto_a_pagar) : Number(r.monto))||0)+'</div>'+_estadoBadge(r.estado, r.cancelada_por, r)+'</div>'+detalle
-      + (esRetiro ? _detalleRetiroHistorial(r) : '')
+      + '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#e9c25c">'+_money(Number(r.monto)||0)+'</div>'+_estadoBadge(r.estado, r.cancelada_por)+'</div>'+detalle
       + (rech && r.motivo ? '<div style="width:100%;font-size:11.5px;color:#fca5a5;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:6px 8px;margin-top:2px">🚫 '+esc(r.motivo)+'</div>' : '')
       + '</div>';
   }).join("");
-  box.innerHTML='<div style="font-size:12px;font-weight:800;color:#8b95a5;text-transform:uppercase;letter-spacing:.4px;margin:16px 2px 4px">Últimos 7 días <span style="font-weight:600;letter-spacing:0;color:#4b5563">'+PORTAL_VER+'</span></div>'+filas;
+  box.innerHTML='<div style="font-size:12px;font-weight:800;color:#8b95a5;text-transform:uppercase;letter-spacing:.4px;margin:16px 2px 4px">Últimos 7 días</div>'+filas;
 }
 
+// La billetera de la solicitud, y el aviso cuando la que figura ahora en el portal es otra.
+// El caso real: la persona deja el portal abierto, nosotros cambiamos la billetera activa, y
+// ella manda la solicitud con la anterior. Del lado del panel eso ya se avisa; acá lo tiene
+// que ver ella, que es la que sabe adónde transfirió de verdad.
 function _avisoBilleteraSolicitud(){
-  if(String(state.pendingTipo||"").toUpperCase()==="RETIRO") return "";
   const dela = String(state.pendingBilletera||"").trim();
   if(!dela) return "";
   const b = state.billetera||{};
+  // Se compara con el mismo criterio con el que se guardó: titular primero. Si se comparara el
+  // nombre interno contra un titular, TODO parecería distinto y avisaría siempre.
   const activaTxt = String(b.titular || b.nombre_visible || b.nombre || "").trim();
+  // Comparación floja: alcanza con que el nombre esté adentro, porque una guarda el alias y la
+  // otra puede no traerlo.
   const norm = (v)=>String(v||"").toLowerCase().replace(/[^a-z0-9]/g,"");
   const nd = norm(dela), na = norm(activaTxt);
   const cambio = !!(nd && na && nd.indexOf(na)===-1 && na.indexOf(nd)===-1);
@@ -1382,6 +1610,9 @@ function renderEstado(){
   }
   pintarHistorialUsuario();
   startHistPoll();
+  // El teléfono puede estar desactualizado en los dos sentidos: creer que no hay nada cuando
+  // el operador reabrió una, o creer que hay una que ya se resolvió. Se le pregunta al servidor
+  // y se repinta si cambió algo.
   (async function(){
     const antes = String(state.solicitudId||"") + "|" + String(state.pendingTipo||"") + "|" + String(state.reabierta||"");
     try{ await _sincronizarSolicitudActiva(); }catch(_e){ return; }
@@ -1395,8 +1626,7 @@ function limpiarPendienteAprobado(obs){
   estadoFinalNotificado=true;
   stopEstadoPoll();stopChatPoll();
   const tipoFinal=state.pendingTipo||"CARGA";
-  olvidarSolicitud(true);
-  state.shownTexts=new Set();
+  olvidarSolicitud(true); state.shownTexts=new Set();
   const esRetiro=tipoFinal==="RETIRO";
   if(!esRetiro){ try{ localStorage.setItem("bet300_bono_usado","1"); }catch(_e){} } // 1ª carga acreditada → el bono de ingreso ya se usó → la tarjeta del bono desaparece
   const titulo=esRetiro?"¡Retiro procesado!":"¡Carga acreditada!";
@@ -1416,6 +1646,8 @@ function limpiarPendienteAprobado(obs){
   if($("widget")?.classList.contains("open"))showScreen("estado");
   const notifTitulo=esRetiro?"BET300 · ¡Retiro procesado!":"BET300 · ¡Carga acreditada!";
   const notifCuerpo=obs||(esRetiro?"Tu retiro fue transferido. Revisá tu cuenta.":"¡Tus fichas ya están disponibles! Revisá tu cuenta.");
+  // El tag del retiro es el MISMO que usa el push del panel ("bet300-retiro"): así el SO colapsa
+  // las dos en una sola notificación en vez de mostrar "Retiro procesado" + "Pago de tu retiro".
   notificarLocal(notifTitulo,notifCuerpo,"/",esRetiro?"bet300-retiro":"bet300-acreditada");
 }
 function esConfirmacionDemasiadoTemprana(){
@@ -1436,6 +1668,9 @@ async function consultarEstadoSolicitud(mostrarMensaje=true){
   const d=normalize(res.data)||res.data||{};
   if(d.ok===false){setEstadoLive("⏳ En verificación");return "PENDIENTE";}
   const estado=estadoNormalizado(d.estado||d.status||d.estado_solicitud);
+  // Motivo del rechazo: la RPC landing_estado_solicitud_segura lo devuelve en `mensaje` cuando el
+  // estado es final-rechazado (lo carga el operador al rechazar y queda en landing_solicitudes.metadata).
+  // Ignoramos el "OK" que la RPC devuelve en los casos normales (no es un motivo).
   const _motivoMsg=(d.mensaje && String(d.mensaje).trim().toUpperCase()!=="OK") ? String(d.mensaje).trim() : "";
   const obs=String(d.obs||d.observacion||d.motivo||d.razon||_motivoMsg||"").trim();
   if(esEstadoFinalAprobado(estado)){
@@ -1449,8 +1684,8 @@ async function consultarEstadoSolicitud(mostrarMensaje=true){
     stopEstadoPoll();
     rechazadoStreak=0;
     const eraRetiro = String(state.pendingTipo||"").toUpperCase()==="RETIRO";
-    // Sin el chat: si se la rechazaron, el jugador tiene que poder preguntar por qué.
     olvidarSolicitud(false);
+    // Retiro rechazado/cancelado por el operador → no se efectuó → liberar el cooldown de 24h.
     if(eraRetiro){ try{localStorage.removeItem(_retiroKey());}catch(_e){} }
     const s=$("screenEstado");
     if(s)s.innerHTML=`<div class="screen-title">Estado</div>
@@ -1468,6 +1703,8 @@ async function consultarEstadoSolicitud(mostrarMensaje=true){
   rechazadoStreak=0;
   const _esRetiroPend = String(state.pendingTipo||"").toUpperCase()==="RETIRO";
   if(_esRetiroPend) cargarProgresoRetiro().catch(()=>{});
+  // EN_PROCESO: SOLO para RETIRO es "pago por partes". Para una CARGA es "acreditando" — antes se
+  // pegaba la pantalla de retiro en proceso sobre una carga y confundía (bug reportado).
   if(estado==="EN_PROCESO"){
     try{ const s=$("screenEstado"); const h=s&&s.querySelector(".estado-h"); const sub=s&&s.querySelector(".estado-sub"); const tx=s&&s.querySelector(".estado-tx");
       if(_esRetiroPend){
@@ -1485,6 +1722,8 @@ async function consultarEstadoSolicitud(mostrarMensaje=true){
   return estado||"PENDIENTE";
 }
 
+// Retiros parciales (punto 3): trae total/pagado/pagos y pinta la barra + la lista en el estado.
+// Muestra un toast in-app cuando sube lo pagado; el aviso de fondo lo dispara el panel por push.
 async function cargarProgresoRetiro(){
   const sid=solicitudIdValido(); if(!sid) return;
   const box=$("retiroProgreso"); if(!box) return;
@@ -1494,12 +1733,17 @@ async function cargarProgresoRetiro(){
   if(!prog || prog.ok===false) return;
   const total=Number(prog.total||0), pagado=Number(prog.pagado||0);
   let pct=Number(prog.pct||0); if(pct<0)pct=0; if(pct>100)pct=100;
+  // Monto ajustado por el operador, con su motivo (D-88). Se muestra aunque todavía no haya pagos:
+  // es justo cuando el jugador ve un número distinto del que pidió y necesita saber por qué.
   let aj=prog.ajuste; if(typeof aj==="string"){ try{aj=JSON.parse(aj);}catch(_e){aj=null;} }
   const ajusteHtml=(aj && (aj.motivo || aj.corregido))
     ? `<div class="rp-ajuste"><b>📝 Ajustamos el monto a ${_money(Number(aj.corregido||total))}</b>${aj.declarado?` <span class="rp-ajuste-de">(pediste ${_money(Number(aj.declarado))})</span>`:""}${aj.motivo?`<div class="rp-ajuste-motivo">${esc(aj.motivo)}</div>`:""}</div>`
     : "";
   if(!(total>0) || (!(pagado>0) && !ajusteHtml)){ box.innerHTML=""; return; }   // sin parciales ni ajuste → sin barra
 
+  // Cierre a mano: el operador terminó la operación aunque quedara plata sin pagar. Sin esto
+  // el portal seguía mostrando "faltan $25.000" para siempre, sin decir que ya había cerrado
+  // ni por qué. La nota es obligatoria del lado del panel, así que siempre hay algo que leer.
   let cierre=prog.cierre; if(typeof cierre==="string"){ try{cierre=JSON.parse(cierre);}catch(_e){cierre=null;} }
   if(cierre && (cierre.nota || cierre.etiqueta)){
     try{ const s2=$("screenEstado"); const h=s2&&s2.querySelector(".estado-h"); if(h)h.textContent="Retiro cerrado";
@@ -1521,13 +1765,15 @@ async function cargarProgresoRetiro(){
     if(pagado>last){ localStorage.setItem(k,String(pagado));
       if(last>0) toast("💸 Pago parcial: +"+_money(pagado-last)+" · van "+_money(pagado)+" de "+_money(total)); }
   }catch(_e){}
+  // "Te lo estamos pagando por partes" sólo si ya hubo un pago: con el monto ajustado y sin pagos
+  // todavía, el cartel mentía.
   if(pagado>0){ try{ const s=$("screenEstado"); const h=s&&s.querySelector(".estado-h"); if(h)h.textContent="Retiro en proceso";
        const sub=s&&s.querySelector(".estado-sub"); if(sub)sub.textContent="Te lo estamos pagando por partes"; }catch(_e){} }
   let pagos=prog.pagos; if(typeof pagos==="string"){ try{pagos=JSON.parse(pagos);}catch(_e){pagos=[];} } if(!Array.isArray(pagos)) pagos=[];
   const lista=pagos.slice().reverse().map(p=>{
     const m=_money(Number(p.monto||0));
     let f=""; try{ f=new Date(p.fecha).toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}); }catch(_e){}
-    return `<div class="rp-item"><span class="rp-m">+${m}</span>${p.desde?`<span class="rp-desde">te transfirió <b>${esc(p.desde)}</b></span>`:""}<span class="rp-f">${esc(f)}</span></div>`;
+    return `<div class="rp-item"><span class="rp-m">+${m}</span><span class="rp-f">${esc(f)}</span></div>`;
   }).join("");
   box.innerHTML=`<div class="rp-wrap">
     <div class="rp-top"><span>Pagado</span><span class="rp-nums">${_money(pagado)} / ${_money(total)}</span></div>
@@ -1542,6 +1788,7 @@ async function verEstado(){
   else { await consultarEstadoSolicitud(true); try{ pintarHistorialUsuario(); }catch(_e){} }
 }
 
+// ── Validación usuario (agentes, en background) ────────────────────────────
 async function iniciarValidacionUsuarioBackground(usuario){
   const u=String(usuario||"").trim();
   if(!u)return;
@@ -1566,26 +1813,32 @@ async function iniciarValidacionUsuarioBackground(usuario){
   }catch(e){}
 }
 
+// ╔══════════════════════════════════════════════════════════════════════════╗
+// ║  MODO PRUEBAS · BORRAR ANTES DEL DEPLOY A LOS DOMINIOS DE PRODUCCIÓN      ║
+// ╚══════════════════════════════════════════════════════════════════════════╝
+// Con ?prueba=p1 el portal apunta a la oficina P1 y NO se muda al dominio propio.
+// Sin esto, cualquier copia subida a otro enlace resuelve la ruta, ve que el host de la
+// agencia es otro y hace location.replace() al portal de producción: nunca llegás a probar
+// el tuyo. Ver el bloque "Si llegaron por el dominio genérico" acá abajo.
+// Se activa SOLO con el parámetro en la URL: sin él, el portal se comporta igual que siempre.
 const RUTAS_PRUEBA = { p1:"rt-a8f31", p2:"rt-k6d92", p3:"rt-m4q77", p4:"rt-z9p42",
-                       p5:"rt-x2v61", p6:"rt-r5023", p7:"rt-m2z3r", p8:"rt-xvv80",
-                       p9:"rt-4cm1i", p9b:"rt-85917", p10:"rt-qvodz", p10b:"rt-der2",
-                       p10c:"rt-der3", p11:"rt-p11" };
+                       p5:"rt-x2v61", p6:"rt-r5023", p7:"rt-m2z3r" };
 const MODO_PRUEBA = (function(){
   try{
-    // El host manda, y se pregunta PRIMERO. Antes el ?prueba= se leia antes que nada, asi que
-    // andaba en cualquier lado: en el dominio de una agencia, ...?prueba=p8 le cambiaba la oficina
-    // al jugador -- le mostraba la billetera de OTRA -- y le pintaba el cartel naranja encima.
-    // En produccion esto ahora devuelve null y no queda nada del modo prueba corriendo (29/9).
-    const h = String(location.hostname||"").toLowerCase();
-    const esCopiaDePrueba = h.endsWith(".github.io") || h==="localhost" || h==="127.0.0.1" || h==="";
-    if(!esCopiaDePrueba) return null;
     const v = (new URLSearchParams(location.search).get("prueba")||"").trim().toLowerCase();
     if(v && RUTAS_PRUEBA[v]) return { oficina:v.toUpperCase(), ruta:RUTAS_PRUEBA[v] };
-    return { oficina:"P1", ruta:RUTAS_PRUEBA.p1 };
+    // En una copia de pruebas (GitHub Pages / archivo local) va derecho a P1 sin pedir nada.
+    // El chequeo es por HOST y no puede activarse en produccion: los dominios reales terminan
+    // en portal-bet-300.com, que nunca matchea con esto.
+    const h = String(location.hostname||"").toLowerCase();
+    const esCopiaDePrueba = h.endsWith(".github.io") || h==="localhost" || h==="127.0.0.1" || h==="";
+    if(esCopiaDePrueba) return { oficina:"P1", ruta:RUTAS_PRUEBA.p1 };
+    return null;
   }catch(_e){ return null; }
 })();
 if(MODO_PRUEBA){
   _fijarOficina(MODO_PRUEBA.ruta);
+  // Un cartel bien visible: que nadie confunda esta copia con la que usan los clientes.
   document.addEventListener("DOMContentLoaded", function(){
     const d=document.createElement("div");
     d.textContent="⚠ PRUEBAS · "+MODO_PRUEBA.oficina;
@@ -1593,7 +1846,9 @@ if(MODO_PRUEBA){
     document.body.appendChild(d);
   });
 }
+// ── fin del modo pruebas ─────────────────────────────────────────────────
 
+// ── Ruta e inicialización ─────────────────────────────────────────────────
 async function initRoute(){
   if(MODO_PRUEBA){
     state.publicCode = MODO_PRUEBA.ruta;
@@ -1645,6 +1900,14 @@ async function initRoute(){
   console.log("[BET300 V18] canal",state.pcCodigo,"ruta",state.publicCode);
 }
 
+// ── Enlace de acceso (?t=) ─────────────────────────────────────────────────
+// El operador verifica a la persona en el CRM y recién ahí le manda por WhatsApp un enlace
+// que la deja adentro YA VALIDADA y en la pantalla que corresponde (cargar o retirar), sin
+// pedirle usuario ni teléfono. No se reparten sueltos: cada uno vale para un solo uso y vence.
+//
+// Si vuelven a tocar el mismo enlace más tarde (pasa: la gente reabre el mensaje de WhatsApp)
+// el canje falla con YA_USADO, pero la sesión quedó guardada en el teléfono → entran igual y
+// NO les mostramos ningún error. El aviso sale solo si además no tienen sesión.
 async function canjearEnlaceAcceso(){
   const t=(new URLSearchParams(location.search).get("t")||"").trim();
   if(!t) return null;
@@ -1682,6 +1945,7 @@ async function canjearEnlaceAcceso(){
   return { destino:String(d.destino||"").toUpperCase() };
 }
 
+// Promo de bienvenida: solo se muestra si la agente la tiene activada (landing_rutas_publicas.promo_activa).
 async function cargarPromoActiva(){
   state.promoActiva=false;
   if(!state.pcCodigo)return;
@@ -1692,6 +1956,8 @@ async function cargarPromoActiva(){
   }catch(_e){}
 }
 
+// ── Image upload (comprobantes + chat) ───────────────────────────────────
+// ── Producción: compresión de imágenes ──────────────────────────────────────
 async function comprimirImagenPortal(file, opts={}){
   const TIPOS=["image/jpeg","image/png","image/webp"];
   if(!file || !TIPOS.includes(String(file.type||"").toLowerCase())) return null;
@@ -1714,10 +1980,18 @@ async function comprimirImagenPortal(file, opts={}){
     return await new Promise(res=>canvas.toBlob(res,"image/jpeg",calidad));
   }catch(_e){ return null; }
 }
+// ── Producción: firma de billetera (antiparpadeo) ──
 function billeteraSignature(b){
   b=b||{};
   return [b.id||b.billetera_id||"", b.alias||"", b.cbu||b.cvu||"", b.titular||"", b.nombre_visible||b.nombre||"", b.banco||""].join("|");
 }
+// ── Producción: guard de operación (anti-bypass desde consola) ──
+// El portal sabía si había una solicitud abierta SÓLO por su propio localStorage. Si esa marca
+// se perdía —la canceló, limpió datos, entró desde otro teléfono, o el operador RESCATÓ una
+// rechazada y la volvió a abrir— mostraba "No tenés solicitudes activas" y lo dejaba mandar
+// otra encima. Medido: 12.067 solicitudes en 30 días llegan a menos de 15 min de la anterior
+// del mismo jugador (13,9 %, 1.809 jugadores). Cada una es trabajo duplicado para el operador.
+// El servidor es el único que sabe la verdad, así que se le pregunta a él.
 async function _solicitudActivaEnServidor(){
   if(!state.usuario || !state.telefono) return null;
   try{
@@ -1730,9 +2004,11 @@ async function _solicitudActivaEnServidor(){
   }catch(_e){ return null; }
 }
 
+// Deja el portal en el estado que dice el servidor. Devuelve true si hay una abierta.
 async function _sincronizarSolicitudActiva(){
   const d = await _solicitudActivaEnServidor();
   if(!d){
+    // El servidor dice que no hay nada abierto: si el teléfono creía que sí, estaba viejo.
     if(tieneSolicitudPendiente()){ try{ limpiarPendienteSilencioso(); }catch(_e){} }
     return false;
   }
@@ -1749,6 +2025,8 @@ function _puedeOperar(){
   return true;
 }
 
+// Igual que _puedeOperar pero preguntando también al servidor. Se usa justo antes de crear:
+// es el único momento en que vale la pena esperar una consulta más.
 async function _puedeOperarConServidor(){
   if(!_puedeOperar()) return false;
   const hay = await _sincronizarSolicitudActiva();
@@ -1759,6 +2037,7 @@ async function _puedeOperarConServidor(){
   }
   return true;
 }
+// ── Producción: tarjeta de transferencia en el chat ──
 function parseTransferCard(text){
   const t=String(text||"");
   const m=t.match(/::TRANSFER_CARD::\s*(\{[\s\S]*\})/);
@@ -1776,6 +2055,18 @@ function parseTransferCard(text){
   if(alias||cbu||cvu||cbucvu) return {nombre_visible:nombre,titular,alias,cbu:cbu||cbucvu,cvu,banco:banco||tipo};
   return null;
 }
+// Tarjeta de datos para transferir.
+//
+// Medido en un teléfono de 375x812: la pantalla de Cargar necesitaba 988px de alto sobre 682
+// visibles. El campo del titular y el botón de enviar quedaban DEBAJO del pliegue — la persona
+// entraba y no veía cómo terminar. Esta tarjeta sola ocupaba 340px, la mitad.
+//
+// Qué se sacó y por qué:
+//  · "Copiar todo" (51px): duplicaba lo que ya hacen los botones de cada campo.
+//  · El titular NUESTRO pasó de campo grande a línea al pie. Estaba a 60px del input que pide
+//    el titular DE ELLOS, y 58 personas en 14 días copiaron el nuestro. La cercanía inducía
+//    el error; ahora se lee como dato de la cuenta, no como algo para completar.
+//  · Alias y CBU quedan iguales: son lo único que la persona necesita copiar.
 function renderTransferCardHtml(d){
   d=d||{};
   const cbu=d.cbu||d.cvu||"";
@@ -1787,6 +2078,7 @@ function renderTransferCardHtml(d){
     + (pie?('<div class="transfer-owner">'+pie+'</div>'):'')
     + '</div>';
 }
+// ── Producción: burbuja flotante de mensaje del operador ──
 function showOperatorBubble(texto, imgUrl){
   let el=document.getElementById("opBubble");
   if(!el){
@@ -1800,6 +2092,9 @@ function showOperatorBubble(texto, imgUrl){
   el.style.display="block";
 }
 function hideOperatorBubble(){ const el=document.getElementById("opBubble"); if(el) el.style.display="none"; }
+// ── Bono de bienvenida (SOLO preparación visual; NO acredita nada — lo valida el operador) ──
+// Estado client-side: si la app está instalada (standalone) y si las notificaciones están aceptadas.
+// Persistencia/estado real por usuario+tel+agente → backend pendiente: landing_estado_bono_bienvenida (TODO).
 function bonoBienvenidaEstado(){
   let app=false, push=false;
   try{ app=(window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone===true; }catch(_e){}
@@ -1807,10 +2102,13 @@ function bonoBienvenidaEstado(){
   try{ push=(typeof Notification!=="undefined" && Notification.permission==="granted"); }catch(_e){}
   return {app, push};
 }
+// Bono ADITIVO: base 20% · +10% notificaciones · +20% app → 50% máximo (20/30/40/50).
 function bonoPctFromEstado(e){ let p=20; if(e.push)p+=10; if(e.app)p+=20; return p; }
 function renderBonoBienvenidaCard(){
   if(!state.promoActiva) return ""; // solo agentes con la promo activada (alta o activación posterior)
   const e=bonoBienvenidaEstado();
+  // Si el usuario YA usó su bono de ingreso (primera carga acreditada), ocultamos la tarjeta del
+  // bono (%) y dejamos SOLO los botones de instalar app / activar notificaciones (valor continuo).
   let bonoUsado=false; try{ bonoUsado = localStorage.getItem("bet300_bono_usado")==="1"; }catch(_e){}
   if(bonoUsado){
     const bI = !e.app  ? `<button class="action-btn" style="margin-top:8px" onclick="instalarAppPromo()">📱 Instalar la app</button>` : "";
@@ -1841,6 +2139,7 @@ function renderBonoBienvenidaCard(){
     ${cierre}
   </div>`;
 }
+// Instalar la PWA desde el botón del bono (reusa el prompt nativo capturado; fallback a instrucciones).
 async function instalarAppPromo(){
   if(window._deferredInstallPrompt){
     try{
@@ -1859,6 +2158,7 @@ async function instalarAppPromo(){
   }
   setTimeout(()=>{ try{ renderHome(); }catch(_e){} }, 400);
 }
+// Activar notificaciones desde el botón del bono (pide permiso + registra push).
 async function activarNotisPromo(){
   try{
     if(typeof Notification==="undefined"){ toast("Tu navegador no soporta notificaciones."); return; }
@@ -1877,6 +2177,7 @@ async function subirImagen(file){
   const mime=String(file.type||"").toLowerCase();
   if(!TIPOS_OK.includes(mime)){ toast("Solo se aceptan imágenes JPG, PNG o WEBP."); return null; }
   if(file.size>5*1024*1024){ toast("El archivo supera 5 MB"); return null; }
+  // Comprimir; si falla, usar el original (ya validado: tipo permitido y < 5MB).
   let blob = await comprimirImagenPortal(file,{maxLado:1280,calidad:0.72});
   let contentType="image/jpeg";
   if(!blob){ blob=file; contentType=mime; }
@@ -1892,6 +2193,7 @@ async function subirImagen(file){
   }catch(e){console.error("[img upload exception]",e);return null;}
 }
 
+// ── Composer image (adjunto en chat) ─────────────────────────────────────
 function queueComposerFile(input){
   const file=input?.files?.[0];
   if(!file)return;
@@ -1911,6 +2213,7 @@ function clearComposerImage(){
   if(inp)inp.value="";
 }
 
+// ── Billetera ─────────────────────────────────────────────────────────────
 function inferirTipoBilletera(b){
   const raw=[b?.banco,b?.tipo,b?.nombre_visible,b?.nombre,b?.alias,b?.cbu,b?.cvu].map(x=>String(x||"").toUpperCase()).join(" ");
   const alias=String(b?.alias||"").toLowerCase();
@@ -1942,60 +2245,50 @@ function billeteraPayloadPlano(){
   return {billetera_id:b.id||b.billetera_id||null,billetera_nombre:b.nombre_visible||b.nombre||"",billetera_titular:b.titular||"",billetera_alias:b.alias||"",billetera_cbu:b.cbu||b.cvu||"",billetera_banco:inferirTipoBilletera(b)};
 }
 
+// ── Cargar (pantalla) ──────────────────────────────────────────────────────
 const MONTOS_RAPIDOS=[2000,5000,10000,20000,50000];
-const MONTO_MIN_CARGA=1000, MONTO_MIN_RETIRO=5000, RETIRO_COOLDOWN_MS=24*60*60*1000;
-// Cada oficina puede tener su propio minimo (landing_rutas_publicas.min_carga/min_retiro).
-// P8 tiene la carga minima en $2.000: con el numero fijo de arriba le entraban cargas de $1.000
-// y el operador las tenia que rechazar a mano, una por una.
-function _minCarga(){ return Number(state.minCarga)>0 ? Number(state.minCarga) : MONTO_MIN_CARGA; }
-function _minRetiro(){ return Number(state.minRetiro)>0 ? Number(state.minRetiro) : MONTO_MIN_RETIRO; }
-// Si la consulta falla o la oficina no tiene nada puesto, quedan los numeros de arriba: el
-// portal nunca se queda sin minimo.
-async function cargarMinimos(){
-  try{
-    if(!state.publicCode) return;
-    const r=await rpc("landing_minimos_v1",{p_public_code:state.publicCode});
-    const d=(r&&!r.error) ? (typeof r.data==="string"?JSON.parse(r.data):r.data) : null;
-    if(d && d.ok){
-      if(Number(d.min_carga)>0)  state.minCarga  = Number(d.min_carga);
-      if(Number(d.min_retiro)>0) state.minRetiro = Number(d.min_retiro);
-    }
-  }catch(_e){}
-}
+// Mínimos y regla de 1 retiro por día (24h) desde el portal.
 const _money=v=>"$"+Number(v).toLocaleString("es-AR");
 function _fmtRestante(ms){const h=Math.floor(ms/3600000),m=Math.round((ms%3600000)/60000);return h>0?(h+"h"+(m>0?" "+m+"m":"")):((m>0?m:1)+"m");}
+// Cooldown de retiro keyeado por usuario (no bloquea a otro usuario en el mismo dispositivo).
 function _retiroKey(){return "bet300_ultimo_retiro_at_"+String(state.usuario||"").toLowerCase();}
 function retiroCooldownRestanteMs(){const last=Number(localStorage.getItem(_retiroKey())||0);if(!last)return 0;const r=RETIRO_COOLDOWN_MS-(Date.now()-last);return r>0?r:0;}
+// ══════════════════════════════════════════════════════════════════════════
+// TITULAR · criterios de entrada
+// El titular es el dato que más se ensucia y el que más rechazos genera. Tres
+// familias de basura, en orden de frecuencia:
+//   1. Caracteres que no son un nombre: números, puntos, comas, guiones, el CBU
+//      pegado, emojis. Se sacan MIENTRAS ESCRIBE, no al enviar: así no llega
+//      nunca a mandarlo y no hay que rechazarlo después.
+//   2. NUESTROS propios datos. La cuenta a la que transfieren está 60px más
+//      arriba en la misma pantalla; se copia el titular/alias/CBU de ahí y se
+//      pega acá. Eso se corta antes de enviar.
+//   3. El propio usuario de plataforma como titular ("mi usuario es juanok12,
+//      pongo juanok12"). No es un nombre real y el cotejo nunca cierra.
+// ══════════════════════════════════════════════════════════════════════════
 const TITULAR_MIN_LETRAS=3;
 
+// Deja SOLO letras (con acentos y ñ) y espacios simples. Todo lo demás se cae:
+// dígitos, punto, coma, guion, barra, símbolos. Un nombre no lleva nada de eso.
 function _soloLetras(v){
   return String(v||"")
     .replace(/[^\p{L}\s]/gu,"")   // fuera todo lo que no sea letra o espacio
     .replace(/\s{2,}/g," ")       // espacios repetidos → uno
     .replace(/^\s+/,"");          // sin espacio al principio (el del final se deja: está tipeando)
 }
+// Normaliza para COMPARAR (no para mostrar): minúsculas, sin acentos, sin nada
+// que no sea letra o número. Así "JUAN.PEREZ" y "juan perez" son lo mismo.
 function _normComparar(v){
   return String(v||"").toLowerCase().normalize("NFD")
     .replace(/[̀-ͯ]/g,"").replace(/[^a-z0-9]/g,"");
 }
-// Nuestros datos, separados en dos grupos, porque NO se comparan igual (Juan, 3/10).
-//
-// Un alias o un CBU son identificadores: si el jugador los escribió, se equivocó de campo, y
-// alcanza con que aparezcan en cualquier parte para saberlo.
-//
-// Un NOMBRE no. Nuestras billeteras se llaman GIORDANO, PERNA PP, MATRELO... y había gente real
-// quedando trabada porque se apellida así. Buscar el nombre "adentro de" lo que escribió deja
-// afuera a cualquiera que comparta un apellido con nosotros, sin forma de salir.
-function _identificadoresPropios(){
+// Los datos de NUESTRA billetera, normalizados, para detectar que los copiaron.
+function _datosPropiosNormalizados(){
   const b=state.billetera||{};
-  return [b.alias,b.cbu,b.cvu]
-    .map(_normComparar).filter(function(x){ return x && x.length>=6; });
-}
-function _nombresPropios(){
-  const b=state.billetera||{};
-  return [b.titular,b.nombre_visible,b.nombre]
+  return [b.titular,b.alias,b.cbu,b.cvu,b.nombre_visible,b.nombre]
     .map(_normComparar).filter(function(x){ return x && x.length>=4; });
 }
+// Devuelve "" si está bien, o el motivo por el que no se puede enviar.
 function validarTitular(valor){
   const v=String(valor||"").trim();
   const letras=v.replace(/[^\p{L}]/gu,"");
@@ -2036,10 +2329,16 @@ function validarTitular(valor){
   }
   return "";
 }
-// Segundo freno sobre lo mismo, y era el más suelto de los dos: comparaba con TRES letras y
-// buscaba para los dos lados. Con billeteras llamadas GIORDANO o PERNA PP, cualquiera que se
-// apellide parecido quedaba sin poder cargar. Ahora usa el mismo criterio que validarTitular:
-// un identificador nuestro adentro es un error; un nombre parecido no.
+// Sanea el campo mientras escribe y avisa en el momento si copió algo que no va.
+// Titulares bloqueados. El operador los marca desde el panel y hasta ahora eso quedaba en el
+// localStorage DE ESA PC: el portal no se enteraba nunca y le seguía ofreciendo al jugador el
+// mismo titular que le acababan de bloquear. Ahora se consulta a la base.
+// Se pregunta ANTES de crear la solicitud: rechazarla después es hacerle perder el viaje y
+// sumar un rechazo más a la pila.
+// El titular tiene que ser el de la cuenta DESDE LA QUE transfirió, no el de la nuestra.
+// Copiar el nombre de nuestra billetera es el error más común y termina en un rechazo por
+// DATO_PROPIO: el jugador pierde el viaje y el operador pierde el tiempo. Los datos de la
+// billetera los tenemos acá mismo, así que se corta antes de mandar.
 function _titularEsNuestro(titular){
   const t = _normComparar(titular);
   if(t.length < 3) return false;
@@ -2086,6 +2385,17 @@ function _titularAviso(el,msg){
   _titularAvisoTimer=setTimeout(function(){ if(box) box.style.display="none"; },4000);
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// TITULAR · pre-rellenado del anterior
+// Casi siempre transfieren desde la MISMA cuenta, así que volver a tipear el
+// nombre entero en un teléfono es trabajo al pedo — y es donde más se equivocan.
+// Se pre-rellena con el último titular que usaron EN ESTE TELÉFONO.
+//
+// El punto delicado es que se entienda que YA ESTÁ PUESTO y que no parezca un
+// error. Por eso: el campo se ve distinto (fondo tenue y una marca "Guardado"),
+// arriba dice de dónde salió, y al tocarlo se vacía para escribir otro — con un
+// "volver a poner" al lado, que es lo que evita el susto de "borré todo".
+// ══════════════════════════════════════════════════════════════════════════
 const _TITULAR_PREV_KEY="bet300_ultimo_titular";
 function _titularPrevio(){
   try{ return String(localStorage.getItem(_TITULAR_PREV_KEY)||"").trim(); }catch(_e){ return ""; }
@@ -2093,6 +2403,8 @@ function _titularPrevio(){
 function _guardarTitularPrevio(v){
   try{ if(String(v||"").trim()) localStorage.setItem(_TITULAR_PREV_KEY,String(v).trim()); }catch(_e){}
 }
+// Primer toque sobre un campo pre-rellenado: se vacía para escribir otro nombre.
+// No es destructivo — queda el botón para devolverlo tal cual estaba.
 function titularLimpiarParaOtro(){
   const el=$("cargaTitular"); if(!el) return;
   const previo=el.value;
@@ -2101,6 +2413,7 @@ function titularLimpiarParaOtro(){
   const btn=$("titularCambiar"); if(btn) btn.style.display="none";
   const pie=$("titularPie");
   if(pie){
+    pie.innerHTML='Escribí el titular de la cuenta desde la que transferiste. '
     pie.innerHTML='<div style="margin-bottom:6px">Escribí el titular de la cuenta desde la que transferiste.</div>'
       +'<button class="link-btn" onclick="titularRestaurarPrevio()">↩ Volver a «'+esc(previo)+'»</button>';
   }
@@ -2153,8 +2466,8 @@ function renderCarga(){
       </div>
     </div>`;
   cargarBilleteraEnSlot();
-  startBilleteraRefresco();
   pintarRechazoPrevio("rechazoPrevio","CARGA");
+  // Pre-rellenar con el titular de la vez pasada (si hay).
   const _prev=_titularPrevio(), _elT=$("cargaTitular");
   if(_prev && _elT){
     _elT.value=_prev; _elT.classList.add("prellenado"); _elT.dataset.previo=_prev;
@@ -2170,6 +2483,7 @@ function syncChips(){
 async function cargarBilleteraEnSlot(){
   const slot=$("billeteraSlot");
   if(!slot)return;
+  // No mostrar datos de transferencia si la sesión no está validada (usuario sin alta no debe verlos).
   if(String(state.nivelAcceso||"").toUpperCase()==="SOPORTE" || !state.usuario){
     slot.innerHTML=`<div class="muted-line">Validá tu usuario y teléfono para ver los datos de transferencia.</div>`;
     state.lastBilleteraSignature="";return;
@@ -2177,14 +2491,16 @@ async function cargarBilleteraEnSlot(){
   const b=await obtenerBilletera();
   if(!b){slot.innerHTML=`<div class="muted-line">Sin billetera disponible por ahora. Consultá por soporte.</div>`;state.lastBilleteraSignature="";return;}
   const sig=billeteraSignature(b);
-  const yaPintada=!!slot.querySelector(".transfer-card");
-  if(sig && sig===state.lastBilleteraSignature && yaPintada) return; // misma billetera y ya está pintada → no re-render (antiparpadeo)
-  // Cambiar los numeros por abajo sin decir nada es peor que no cambiarlos: los puede haber
-  // copiado hace dos segundos. Si ya habia una cuenta pintada y ahora es otra, se avisa.
-  const huboCambio = yaPintada && !!state.lastBilleteraSignature && sig !== state.lastBilleteraSignature;
+  if(sig && sig===state.lastBilleteraSignature && slot.querySelector(".transfer-card")) return; // misma billetera y ya está pintada → no re-render (antiparpadeo)
   state.lastBilleteraSignature=sig;
   const alias=b?.alias||"",cbu=b?.cbu||b?.cvu||"",titular=b?.titular||"",tipo=inferirTipoBilletera(b);
   const canShare=!!navigator.share;
+  // Medido en 375x812: esta tarjeta ocupaba 340px de los 682 visibles y empujaba el campo del
+  // titular y el botón de enviar por debajo del pliegue. Dos cambios:
+  //  · "Copiar todo" se va cuando el teléfono NO tiene compartir nativo: duplicaba los botones
+  //    de cada campo. "Compartir" sí queda, porque hace algo distinto.
+  //  · El titular de NUESTRA cuenta baja de campo grande a línea al pie. Estaba a 60px del input
+  //    que pide el titular DE ELLOS y 58 personas en 14 días copiaron el nuestro.
   const pie=[titular?`a nombre de <b>${esc(titular)}</b>`:"", tipo?esc(tipo):""].filter(Boolean).join(" · ");
   slot.innerHTML=`<div class="transfer-card">
     <div class="transfer-head">
@@ -2195,31 +2511,6 @@ async function cargarBilleteraEnSlot(){
     ${cbu?`<div class="transfer-field"><div class="tf-main"><div class="transfer-label">CBU / CVU</div><div class="transfer-value">${esc(cbu)}</div></div><button class="copy-btn" data-lbl="Copiar" onclick="copyText('${esc(cbu)}',this)">Copiar</button></div>`:""}
     ${pie?`<div class="transfer-owner">${pie}</div>`:""}
   </div>`;
-  if(huboCambio) avisarBilleteraCambio();
-}
-
-// La billetera se pedia UNA sola vez, al dibujar Cargar. El jugador abre Cargar, se va a la app
-// del banco, vuelve a los tres minutos y copia el CBU que quedo en pantalla -- si la oficina
-// cambio de cuenta mientras tanto, transfiere a la vieja y esa plata hay que salir a buscarla.
-// Se vuelve a preguntar cada 45 s con la pantalla abierta y cada vez que el jugador vuelve.
-let billeteraRefrescoTimer=null;
-function stopBilleteraRefresco(){ if(billeteraRefrescoTimer){ clearInterval(billeteraRefrescoTimer); billeteraRefrescoTimer=null; } }
-function startBilleteraRefresco(){
-  stopBilleteraRefresco();
-  billeteraRefrescoTimer=setInterval(function(){
-    try{ if(document.hidden) return; }catch(_e){}
-    if(state.screen!=="carga") return;
-    try{ cargarBilleteraEnSlot(); }catch(_e){}
-  }, 45000);
-}
-function avisarBilleteraCambio(){
-  const slot=$("billeteraSlot"); if(!slot) return;
-  const prev=document.getElementById("billeteraCambio"); if(prev) prev.remove();
-  const d=document.createElement("div");
-  d.id="billeteraCambio"; d.className="titular-aviso";
-  d.textContent="⚠ Cambió la cuenta para transferir. Los datos de arriba son los nuevos.";
-  slot.appendChild(d);
-  try{ toast("Cambió la cuenta para transferir — fijate los datos de nuevo."); }catch(_e){}
 }
 function _billeteraTexto(){
   const b=state.billetera||{};
@@ -2234,6 +2525,10 @@ async function compartirBilletera(){
   try{await navigator.share({title:"BET300 · Transferir",text:_billeteraTexto()});}catch(e){}
 }
 
+// Marca los campos vacíos, lleva el primero a la vista y lo enfoca.
+// Antes un formulario incompleto solo mostraba un cartel abajo que duraba 2,4 s: la persona
+// veía "completá los datos" sin saber CUÁL faltaba, y en Cargar el campo podía estar fuera
+// de pantalla. Devuelve true si falta algo.
 function marcarFaltantes(ids){
   document.querySelectorAll("input.falta").forEach(e=>e.classList.remove("falta"));
   const faltan = ids.filter(id => !(($(id)?.value)||"").trim());
@@ -2241,6 +2536,7 @@ function marcarFaltantes(ids){
   faltan.forEach(id=>{
     const e=$(id); if(!e) return;
     e.classList.add("falta");
+    // se limpia sola apenas empieza a escribir: la marca no debe quedar pegada
     e.addEventListener("input", ()=>e.classList.remove("falta"), {once:true});
   });
   const primero=$(faltan[0]);
@@ -2289,44 +2585,15 @@ async function enviarSolicitudCargaDirecta(){
   }
 }
 
+// Devuelve un botón de envío a su estado normal. Antes el botón se deshabilitaba acá y
+// enviarSolicitudCarga tenía SEIS salidas tempranas que nunca lo volvían a habilitar: bastaba
+// escribir un titular de dos letras para que quedara en "Enviando..." para siempre, y la única
+// salida era cambiar de pantalla y volver. Si la solicitud SÍ se creó no se toca nada: la
+// pantalla ya cambió a Estado y este botón dejó de existir.
 function _restaurarBoton(id,texto){
   const b=$(id); if(!b) return;
   if(tieneSolicitudPendiente()) return;
   b.disabled=false; b.textContent=texto;
-}
-
-// ── Un envío a la vez ───────────────────────────────────────────────────────────────────────
-// 7/10 · El mismo jugador mandaba la misma carga 5 y 8 veces seguidas. Se veía como un jugador
-// insistente; no lo era. Lo dicen las horas que el propio portal manda en cada solicitud:
-//
-//   rodrigocuarteto, 8 cargas de $3.000:
-//     la 1ª  → toque 01:09:04.520 · envío 01:09:10.824   (6,3 s esperando)
-//     las 7  → toque = envío, entre .826 y .848           (22 ms entre todas)
-//
-// Toque = envío significa que NO hubo un toque nuevo: el reloj del toque ya se había consumido.
-// O sea, los 8 envíos salieron de la MISMA pantalla, con el botón todavía apretable.
-//
-// Por qué quedaba apretable: el botón se apagaba DESPUÉS de las consultas al servidor
-// (_titularBloqueado, _puedeOperarConServidor, _ipPublica). Entre el toque y el envío pasan
-// 0,85 s de promedio, pero el peor medido fue de 39 segundos. El jugador ve que no pasa nada y
-// vuelve a tocar. Y otra vez.
-//
-// Desde el 3/10 —el día del portal nuevo— esto pasó de 0 por día a 73.
-//
-// Ahora el botón se apaga ANTES de cualquier consulta, y además hay un cerrojo: si ya hay un
-// envío en vuelo, el segundo toque no hace nada. El cerrojo se suelta SIEMPRE (finally), así que
-// una validación que corta temprano deja el botón como estaba.
-let _enviando = false;
-function _tomarEnvio(idBtn, textoEnviando){
-  if(_enviando) return false;
-  _enviando = true;
-  const b = $(idBtn);
-  if(b){ b.disabled = true; b.textContent = textoEnviando || "Enviando..."; }
-  return true;
-}
-function _soltarEnvio(idBtn, textoNormal){
-  _enviando = false;
-  _restaurarBoton(idBtn, textoNormal);
 }
 
 async function copyText(t,btn){
@@ -2335,6 +2602,10 @@ async function copyText(t,btn){
   haptic(8);
   btn.classList.add("done"); btn.textContent="✓ Copiado";
   setTimeout(()=>{btn.classList.remove("done");btn.textContent=btn.dataset.lbl||"Copiar";},1600);
+  // NO se pliega la tarjeta al copiar. Antes sí, para dejar lugar al formulario, pero es apurar
+  // a la persona justo en el peor momento: copia el alias, la tarjeta se cierra, y cuando va a
+  // buscar el CBU ya no está. Copiar el alias y copiar el CBU son DOS pasos, y hay que darle
+  // tiempo a los dos. Si quiere ganar lugar, la pliega a mano con "Ocultar datos".
 }
 function plegarBilletera(card, plegar){
   if(!card) return;
@@ -2365,6 +2636,7 @@ async function enviarSolicitudCarga(usuario,monto,titular){
   const payload={usuario,monto:Number(monto),titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),ip:_ip||"",tipo:"CARGA",...bp,..._marcaDeTiempo()};
   const destino=bp.billetera_nombre?`${bp.billetera_nombre}${bp.billetera_alias?" · "+bp.billetera_alias:""}`:null;
   let res=await rpc("landing_portal_v16_crear_solicitud",{p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"CARGA",p_monto:Number(monto),p_titular:titular,p_destino:destino,p_mensaje:"Solicitud de CARGA: $"+monto+" · Titular: "+titular,p_metadata:payload});
+  // Rechazo por validación de vínculo → NO usar fallback (sería un bypass). Mandamos a soporte.
   if(res.error && /VINCULO_NO_VALIDO|NO_AUTORIZADO|NO_REGISTRADO|CONFLICTO|BLOQUEADO/i.test(res.error.message||"")){
     toast("⚠️ Tu usuario no está habilitado para operar. Validá tus datos o escribinos por soporte."); goChat(); return;
   }
@@ -2377,6 +2649,11 @@ async function enviarSolicitudCarga(usuario,monto,titular){
   const chatToken=data?.chat_token||data?.chatToken||"";
   if(chatId){state.chatId=String(chatId);localStorage.setItem("bet300_chat_id",state.chatId);}
   if(chatToken){state.chatToken=String(chatToken);localStorage.setItem("bet300_chat_token",state.chatToken);}
+  // Sin nº de solicitud REAL no se marca nada como pendiente. Los dos fallbacks de arriba pueden
+  // terminar creando sólo un chat (landing_crear_chat_v2_blindado no crea solicitud), y antes se
+  // guardaba igual el pendiente con id vacío: el portal quedaba trabado —"Ya tenés una solicitud
+  // en revisión" bloqueaba toda carga y todo retiro nuevo— sin nada que consultar para destrabarlo.
+  // La única salida era "Marcar como resuelta en este dispositivo", que casi nadie encuentra.
   if(!/^\d+$/.test(String(solicitudId||""))){
     toast("Lo tomamos por el chat · un operador lo confirma");
     haptic([20,30,20]);
@@ -2387,6 +2664,8 @@ async function enviarSolicitudCarga(usuario,monto,titular){
     setTimeout(()=>subscribePush(),1200);
     return;
   }
+  // Se guarda el TITULAR de la cuenta, que es lo que la persona vio y reconoce. "SALVATIERRA X"
+  // es como le decimos nosotros adentro y no le dice nada a nadie.
   setPendiente("CARGA",String(solicitudId),(bp&&bp.billetera_titular)||destino||"");
 
   _guardarTitularPrevio(titular);   // la próxima vez viene pre-rellenado
@@ -2398,6 +2677,7 @@ async function enviarSolicitudCarga(usuario,monto,titular){
   setTimeout(()=>subscribePush(),1200);
 }
 
+// ── Retiro (pantalla) ──────────────────────────────────────────────────────
 function renderRetiro(){
   const s=$("screenRetiro");
   s.innerHTML=`<div class="screen-title">Solicitar retiro</div>
@@ -2421,10 +2701,14 @@ function renderRetiro(){
 
 }
 
+// Traer el CBU y el titular del último retiro y dejarlos puestos. Antes había que tipear los
+// dos de memoria cada vez, o irlos a buscar a otra app con el portal abierto. Los campos
+// quedan EDITABLES y se avisa de dónde salieron: si cobra en otra cuenta, los cambia y listo.
 async function _rellenarDatosRetiro(){
   const cajaAviso = $("retiroDatosPrevios");
   const elD = $("retiroDestino"), elT = $("retiroTitular");
   if(!elD || !elT) return;
+  // Si la persona ya empezó a escribir, no se le pisa nada.
   if(String(elD.value||"").trim() || String(elT.value||"").trim()) return;
   let d = null;
   try{
@@ -2524,6 +2808,7 @@ async function enviarSolicitudRetiro(){
   }
 }
 
+// ── Reset de clave (pantalla) — tipo CAMBIO_CLAVE ──────────────────────────
 function renderClave(){
   const s=$("screenClave");
   s.innerHTML=`<div class="screen-title">Reiniciar clave</div>
@@ -2538,8 +2823,6 @@ function renderClave(){
 }
 
 async function enviarSolicitudClave(){
-  if(!_tomarEnvio("btnEnviarClave")) return;
-  try{
   if(state.nivelAcceso==="SOPORTE"){ toast("Validá tus datos para operar. Escribinos por soporte."); try{goChat();}catch(_e){} return; }
   if(!state.pcCodigo){ toast("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte."); return; }
   const claveRaw=($("claveNueva")?.value||"").trim();
@@ -2560,24 +2843,16 @@ async function enviarSolicitudClave(){
   addMsg('Solicitud de cambio de clave enviada 🔑<br><span class="status-pill">En proceso</span><br>Un operador la procesará en breve. Te avisamos por este mismo chat.',"bot");
   startChatPoll();startPortalThreadPoll();
   setTimeout(()=>subscribePush(),1200);
-  } finally {
-    _soltarEnvio("btnEnviarClave","Solicitar reseteo de clave");
-  }
 }
 
-// Una consulta va al CANAL DE CHAT. No crea una solicitud.
-//
-// Hasta ahora cada consulta se guardaba como SOLICITUD, y de ahi salia todo: la bandeja llena de
-// chats (256 de 300 filas en P4), 3.925 consultas abiertas en la red con la mas vieja del 21 de
-// julio, y la bandeja de 427 kB que le cortaba la conexion a la oficina mas cargada.
-//
-// El canal que corresponde -- chat_sesiones / chat_mensajes -- existia entero y permitido, y NODO
-// ya lo lee. Esto es lo que faltaba: que el portal escriba ahi (Juan, 3/10).
-//
-// Las CARGAS y los RETIROS siguen yendo a solicitudes, que es donde van.
+// ── Mensajería libre (chat) ────────────────────────────────────────────────
 async function enviarMensajeSoporte(txt,imagenUrl=null){
   const mensaje=String(txt||"").trim();
-  if(!mensaje&&!imagenUrl)return;
+  if(!mensaje&&!imagenUrl)return {ok:false,error:"El mensaje está vacío."};
+  if(state._sendingSupport)return {ok:false,error:"Esperá a que termine el envío anterior."};
+  state._sendingSupport=true;
+  const context=[state.publicCode,state.pcCodigo,state.usuario].join("|");
+  try{
 
   // 1) Si todavia no hay conversacion, se abre UNA. landing_chat_abrir_v3 no reutiliza la del
   //    jugador: abre una limpia, sin el historial de meses que traia la anterior.
@@ -2588,6 +2863,7 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
         p_public_code: state.publicCode, p_solicitud_id: null
       });
       const c = (ch && !ch.error) ? (normalize(ch.data) || ch.data || {}) : {};
+      if(context!==[state.publicCode,state.pcCodigo,state.usuario].join("|"))return {ok:false,error:"Cambiaste de cuenta. Volvé a abrir el chat de esa cuenta."};
       if(c && c.ok && c.chat_id){
         state.chatId=String(c.chat_id);
         state.chatToken=String(c.chat_token||"");
@@ -2595,6 +2871,7 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
           localStorage.setItem("bet300_chat_id",state.chatId);
           localStorage.setItem("bet300_chat_token",state.chatToken);
         }catch(_e){}
+        if(typeof guiaAdoptarConversacion==="function")guiaAdoptarConversacion();
       }else{
         console.warn("[BET300] no se pudo abrir la conversacion:", (c&&c.motivo)||(ch&&ch.error));
       }
@@ -2612,6 +2889,7 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
 
   // 3) Si el canal no respondio, el reclamo NO se pierde: se manda como siempre. Es la red de
   //    seguridad mientras el camino nuevo se termina de probar; el dia que sobre, se saca.
+  if(res?.error&&/NO_AUTORIZADO|NO_REGISTRADO|BLOQUEADO|CONFLICTO|no autorizado/i.test(res.error.message||""))return {ok:false,error:"No pudimos validar la conversación. Revisá tus datos de acceso."};
   if(!res || res.error){
     console.warn("[BET300] el canal de chat no respondio, va por el camino viejo:", res && res.error);
     const bp=billeteraPayloadPlano();
@@ -2623,28 +2901,240 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
     });
   }
 
-  if(!res||res.error){addMsg("No pudimos enviar el mensaje. Intentá en unos segundos.","bot");return;}
+  const confirmado=res&&!res.error&&(normalize(res.data)||res.data||{});
+  if(context!==[state.publicCode,state.pcCodigo,state.usuario].join("|"))return {ok:false,error:"Cambiaste de cuenta. Revisá el chat de la cuenta desde la que enviaste."};
+  if(!confirmado||confirmado.ok!==true)return {ok:false,error:"No pudimos confirmar el envío. Conservamos el mensaje para que puedas reintentar."};
   startChatPoll();
   startPortalThreadPoll();
+  return {ok:true};
+  }catch(_e){return {ok:false,error:"No pudimos conectar. Conservamos el mensaje para que puedas reintentar."};}
+  finally{state._sendingSupport=false;}
 }
+
 async function sendFreeMessage(){
-  _marcarToque();
   const input=$("freeInput"),txt=input.value.trim();
   const hasImg=!!state.composerImage;
   if(!txt&&!hasImg)return;
   if(!state.usuario){toast("Primero indicá tu usuario");goHome();return;}
-  input.value="";
-  if(txt){ addMsg(esc(txt),"user"); state.shownTexts.add("u|"+txt.substring(0,200)); }
+  if(state._freeSending||state._sendingSupport)return;
+  state._freeSending=true;
+  const button=$("btnEnviarMensaje");if(button)button.disabled=true;
+  const file=state.composerImage;
+  try{
   let imgUrl=null;
   if(hasImg){
-    const file=state.composerImage;
-    clearComposerImage();
     imgUrl=await subirImagen(file);
-    if(imgUrl){ addMsg("📎 Imagen adjunta","user",imgUrl); state.shownTexts.add("uimg|"+imgUrl.substring(0,80)); }
+    if(!imgUrl){addMsg("La imagen no se pudo adjuntar. Tu mensaje sigue listo para reintentar.","system");return;}
   }
-  await enviarMensajeSoporte(txt||"",imgUrl);
+  const result=await enviarMensajeSoporte(txt||"",imgUrl);
+  if(!result?.ok){addMsg(esc(result?.error||"No se pudo enviar. Reintentá."),"system");return;}
+  if(input.value.trim()===txt)input.value="";
+  if(state.composerImage===file)clearComposerImage();
+  addMsg(txt?esc(txt):"📎 Imagen adjunta","user",imgUrl);
+  if(txt)state.shownTexts.add("u|"+txt.substring(0,200));
+  if(imgUrl)state.shownTexts.add("uimg|"+imgUrl.substring(0,80));
+  }catch(_e){addMsg("No se pudo enviar. Tu mensaje sigue listo para reintentar.","system");}
+  finally{state._freeSending=false;if(button)button.disabled=false;}
 }
 
+// ── Ayuda conversacional local ────────────────────────────────────────────
+// Las opciones orientan. Sólo «Hablar con una persona» y el formulario envían
+// un mensaje de soporte; ninguna elección crea una carga ni mueve dinero.
+const GUIA_VERSION=1;
+const GUIA_PASOS={
+  inicio:{text:"Hola. Elegí qué necesitás y vamos de a un paso. También podés escribir o pedir una persona en cualquier momento.",options:[["acceso","No puedo ingresar"],["estado","Ver una solicitud"],["revisar_envio","Ya envié una transferencia"],["carga","Cómo cargar"],["problema","Otro problema"]]},
+  acceso:{text:"Revisá que hayas ingresado el usuario de la plataforma y tu teléfono. Si un operador está validando tu cuenta, la respuesta y el botón Ingresar llegan a este chat.",options:[["ir_inicio","Revisar mis datos"],["persona","Necesito ayuda para ingresar"]]},
+  estado:{text:"En Estado podés ver tu solicitud y el motivo si fue rechazada. Si ya transferiste, no vuelvas a transferir mientras lo revisamos.",options:[["ver_estado","Consultar mi solicitud"],["revisar_envio","No encuentro mi envío"]]},
+  revisar_envio:{text:"Si ya enviaste una transferencia, no la repitas. Podemos revisar qué pasó con algunos datos del envío. Esto es una consulta de soporte: no crea otra carga.",options:[["formulario","Completar datos del envío"],["ver_estado","Primero ver el estado"]]},
+  carga:{text:"1. Copiá los datos vigentes en Cargar. 2. Transferí una sola vez desde tu banco. 3. Volvé y anotá el monto y el nombre del titular de la cuenta desde la que enviaste. El nombre de nuestra cuenta es sólo el destino.",options:[["ir_carga","Abrir Cargar"],["revisar_envio","Ya transferí y tengo un problema"]]},
+  problema:{text:"Podés elegir una de estas ayudas, escribir lo que pasó o pedir atención de una persona. No mandes contraseñas, códigos de acceso ni datos completos de tarjetas.",options:[["acceso","Problema de acceso"],["revisar_envio","Problema con una transferencia"]]},
+  formulario:{text:"Completá abajo los datos de la transferencia que ya hiciste. Se envían al chat para que una persona pueda revisarlos.",options:[["estado","Ver ayuda de estado"],["persona","Prefiero hablar con una persona"]]},
+  persona:{text:"Voy a enviar tu recorrido a una persona para que tenga contexto. Podés seguir escribiendo por este mismo chat.",options:[["persona","Reintentar pedido de atención"],["inicio","Volver a las opciones"]]},
+  enviado:{text:"Tu consulta llegó al chat de atención. Una persona podrá revisar los datos y responderte acá. Si necesitás agregar algo, escribilo abajo.",options:[["ver_estado","Ver estado"],["inicio","Volver a las opciones"]]},
+  ir_inicio:{text:"Abrimos Inicio para revisar tus datos. Tu recorrido queda guardado si volvés al chat.",options:[["acceso","Volver a ayuda de acceso"],["persona","Pedir una persona"]]},
+  ver_estado:{text:"Abrimos Estado. Si el envío no aparece o los datos no coinciden, volvé al chat y elegí Revisar envío.",options:[["revisar_envio","Revisar envío"],["inicio","Otras opciones"]]},
+  ir_carga:{text:"Abrimos el formulario habitual de Cargar. Sólo enviá la solicitud cuando hayas transferido y revisado tus datos.",options:[["revisar_envio","Ya transferí y necesito ayuda"],["inicio","Otras opciones"]]}
+};
+let guiaActual=null,guiaBusy=false,guiaPintada="";
+function guiaIdentidad(){return [state.publicCode||"sin-ruta",state.pcCodigo||"sin-oficina",String(state.usuario||"sin-usuario").toLowerCase()].join("|");}
+function guiaClave(){return "bet300_guia_v1:"+encodeURIComponent(guiaIdentidad()+"|"+(state.chatId||"sin-chat"));}
+function guiaGuardar(){
+  if(!guiaActual)return;
+  guiaActual.updatedAt=Date.now();
+  try{sessionStorage.setItem(guiaActual.key,JSON.stringify({version:GUIA_VERSION,updatedAt:guiaActual.updatedAt,step:guiaActual.step,path:guiaActual.path.slice(-40),history:guiaActual.history.slice(-40)}));}catch(_e){}
+}
+function guiaCargar(){
+  const key=guiaClave();
+  if(guiaActual?.key===key)return guiaActual;
+  let saved=null;
+  try{saved=JSON.parse(sessionStorage.getItem(key)||"null");}catch(_e){}
+  const valid=saved?.version===GUIA_VERSION&&Number.isFinite(saved.updatedAt)&&Date.now()-saved.updatedAt<12*60*60*1000&&Object.hasOwn(GUIA_PASOS,saved.step)&&Array.isArray(saved.history);
+  const history=valid?saved.history.filter(x=>x&&Object.hasOwn(GUIA_PASOS,x.step)&&typeof x.label==="string"&&x.label.length<=100&&typeof x.at==="string").slice(-40):[];
+  const path=valid&&Array.isArray(saved.path)?saved.path.filter(x=>Object.hasOwn(GUIA_PASOS,x)).slice(-40):["inicio"];
+  guiaActual={key,identity:guiaIdentidad(),step:valid?saved.step:"inicio",path:path.length?path:["inicio"],history,updatedAt:Date.now()};
+  guiaPintada="";
+  return guiaActual;
+}
+function guiaAdoptarConversacion(){
+  if(!guiaActual||guiaActual.identity!==guiaIdentidad())return;
+  const oldKey=guiaActual.key;
+  guiaActual.key=guiaClave();
+  guiaPintada=guiaActual.key;
+  guiaGuardar();
+  if(oldKey!==guiaActual.key){try{sessionStorage.removeItem(oldKey);}catch(_e){}}
+}
+function guiaOlvidar(){
+  if(guiaActual){try{sessionStorage.removeItem(guiaActual.key);}catch(_e){}}
+  guiaActual=null;guiaPintada="";
+  document.querySelectorAll(".guide-local").forEach(el=>el.remove());
+  const controls=$("chatGuideControls");if(controls)controls.innerHTML="";
+}
+function guiaBurbuja(text,who,at){return addMsg(escMsg(text),who,null,{local:true,fecha:at||new Date().toISOString()});}
+function guiaMostrar(){
+  const guide=guiaCargar();
+  if(guiaPintada!==guide.key){
+    document.querySelectorAll(".guide-local").forEach(el=>el.remove());
+    guiaBurbuja(GUIA_PASOS.inicio.text,"guide");
+    guide.history.forEach(entry=>{
+      guiaBurbuja(entry.label,"user",entry.at);
+      guiaBurbuja(GUIA_PASOS[entry.step].text,"guide",entry.at);
+    });
+    if(guide.step==="enviado")guiaBurbuja(GUIA_PASOS.enviado.text,"guide");
+    guiaPintada=guide.key;
+  }
+  guiaControles();
+  if(guide.step==="formulario")guiaFormulario();
+}
+function guiaControles(){
+  const box=$("chatGuideControls");if(!box)return;
+  const guide=guiaCargar(),step=GUIA_PASOS[guide.step]||GUIA_PASOS.inicio;
+  const form=$("guiaRevisionEnvio");if(form)form.classList[guide.step==="formulario"?"remove":"add"]("hidden");
+  box.innerHTML='<div class="guide-progress">Guía automática · '+(guide.step==="inicio"?"Elegí una opción":"Una cosa a la vez")+'</div>'
+    +'<div class="guide-options">'+step.options.map(pair=>'<button type="button" '+(guiaBusy?'disabled ':'')+'onclick="guiaElegir(\''+pair[0]+'\')">'+esc(pair[1])+'</button>').join("")+'</div>'
+    +'<div class="guide-tools"><button type="button" onclick="guiaVolver()" '+(guiaBusy||guide.path.length<2?'disabled':'')+'>Volver</button><button type="button" onclick="guiaElegir(\'inicio\')" '+(guiaBusy?'disabled':'')+'>Inicio de ayuda</button><button type="button" onclick="guiaElegir(\'persona\')" '+(guiaBusy?'disabled':'')+'>Hablar con una persona</button><button type="button" onclick="guiaEscribir()">Escribir</button></div>';
+}
+function guiaEscribir(){const input=$("freeInput");if(input){input.focus();try{input.scrollIntoView({block:"nearest"});}catch(_e){}}}
+function guiaRegistrar(step,label,back=false){
+  const guide=guiaCargar();
+  const at=new Date().toISOString();
+  guide.step=step;guide.history.push({step,label,at});guide.history=guide.history.slice(-40);
+  if(!back){guide.path.push(step);guide.path=guide.path.slice(-40);}
+  guiaGuardar();
+  guiaBurbuja(label,"user",at);
+  guiaBurbuja(GUIA_PASOS[step].text,"guide",at);
+  guiaControles();
+}
+async function guiaElegir(action){
+  if(guiaBusy||!Object.hasOwn(GUIA_PASOS,action)||action==="enviado")return;
+  const guide=guiaCargar();
+  const labels={inicio:"Inicio de ayuda",persona:"Hablar con una persona"};
+  const option=GUIA_PASOS[guide.step].options.find(x=>x[0]===action);
+  if(!option&&!Object.hasOwn(labels,action))return;
+  guiaRegistrar(action,option?option[1]:labels[action]);
+  if(action==="formulario")guiaFormulario();
+  else if(action==="persona")await guiaPedirPersona();
+  else if(action==="ir_inicio")goHome();
+  else if(action==="ver_estado")goEstado();
+  else if(action==="ir_carga")goCarga();
+}
+function guiaVolver(){
+  if(guiaBusy)return;
+  const guide=guiaCargar();
+  if(guide.path.length<2)return;
+  // Se vuelve al paso anterior y se conserva el recorrido para el operador.
+  guide.path.pop();
+  guiaRegistrar(guide.path[guide.path.length-1]||"inicio","Volver al paso anterior",true);
+  if(guide.step==="formulario")guiaFormulario();
+}
+function guiaAbrirTarjeta(action){
+  if(guiaBusy||!["inicio","revisar_envio"].includes(action))return;
+  goChat();
+  guiaRegistrar(action,action==="inicio"?"Abrir ayuda paso a paso":"Revisar una transferencia enviada");
+}
+function guiaResumen(){
+  const guide=guiaCargar();
+  const labels=guide.history.slice(-8).map(x=>x.label);
+  while(labels.join(" → ").length>360)labels.shift();
+  return "Resumen de ayuda guiada\nNecesito atención de una persona.\nRecorrido: "+(labels.length?labels.join(" → "):"Inicio de ayuda")
+    +(/^\d{1,18}$/.test(String(state.solicitudId||""))?"\nSolicitud que figura en mi portal: "+state.solicitudId:"");
+}
+async function guiaPedirPersona(){
+  if(guiaBusy)return;
+  if(!state.usuario){guiaBurbuja("Para enviar el pedido, primero indicá tu usuario y teléfono en Inicio. Tu recorrido queda guardado en esta pestaña.","guide");return;}
+  guiaBusy=true;guiaControles();
+  const guide=guiaActual;
+  try{
+    const mensaje=guiaResumen();
+    const result=await enviarMensajeSoporte(mensaje);
+    if(guide!==guiaActual||guide.identity!==guiaIdentidad())return;
+    if(!result?.ok){guiaBurbuja(result?.error||"No pudimos enviar el pedido. Tocá Reintentar pedido de atención.","system");return;}
+    state.shownTexts.add("u|"+mensaje.substring(0,200));
+    addMsg(escMsg(mensaje),"user");
+    guiaActual.step="enviado";guiaGuardar();
+    guiaBurbuja(GUIA_PASOS.enviado.text,"guide");
+  }catch(_e){guiaBurbuja("No pudimos enviar el pedido. Podés reintentar sin perder el recorrido.","system");}
+  finally{guiaBusy=false;guiaControles();}
+}
+function guiaFormulario(){
+  const existing=$("guiaRevisionEnvio");
+  if(existing){existing.classList.remove("hidden");try{existing.scrollIntoView({block:"start",behavior:"smooth"});}catch(_e){}return;}
+  const wrap=document.createElement("div");wrap.id="guiaRevisionEnvio";wrap.className="msg guide guide-form guide-local";
+  wrap.innerHTML='<form class="bubble" novalidate onsubmit="event.preventDefault();guiaEnviarRevision()">'
+    +'<h3>Revisar un envío ya realizado</h3><p>Estos datos se envían al chat de atención. <b>No es una carga nueva.</b> No vuelvas a transferir para completar esta consulta.</p>'
+    +'<label for="guiaMotivo">¿Qué pasó?</label><select id="guiaMotivo"><option value="sin_acreditar">Transferí y no veo la acreditación</option><option value="no_envia">No pude enviar el formulario de carga</option><option value="datos_error">Anoté mal los datos de mi envío</option><option value="otro_destino">Transferí a una cuenta diferente</option></select>'
+    +'<label for="guiaMonto">Monto que ya transferiste</label><input id="guiaMonto" inputmode="decimal" placeholder="Ej: 5000" autocomplete="off" maxlength="12">'
+    +'<label for="guiaCuando">Fecha y hora aproximada (opcional)</label><input id="guiaCuando" type="datetime-local">'
+    +'<label for="guiaDetalle">Algo que necesitemos saber (opcional)</label><textarea id="guiaDetalle" rows="2" maxlength="400" placeholder="Ej: el monto que anoté no coincide con el comprobante"></textarea>'
+    +'<div class="campo-ayuda">No incluyas contraseñas, códigos de acceso ni datos completos de tarjetas.</div>'
+    +'<label for="guiaComprobante">Comprobante (opcional)</label><input id="guiaComprobante" type="file" accept="image/jpeg,image/png,image/webp"><div class="campo-ayuda">JPG, PNG o WEBP · hasta 5 MB.</div>'
+    +'<div id="guiaError" class="guide-error" role="alert"></div>'
+    +'<button type="submit" id="guiaEnviar" class="action-btn">Enviar consulta al chat</button></form><div class="meta">Guía automática · revisión con una persona</div>';
+  $("messages").appendChild(wrap);
+  try{wrap.scrollIntoView({block:"start",behavior:"smooth"});}catch(_e){}
+}
+function guiaValidarRevision(datos){
+  const motivos={sin_acreditar:"Transferí y no veo la acreditación",no_envia:"No pude enviar el formulario de carga",datos_error:"Anoté mal los datos de mi envío",otro_destino:"Transferí a una cuenta diferente"};
+  if(!Object.hasOwn(motivos,datos.motivo))return {error:"Elegí qué pasó con tu envío.",field:"guiaMotivo"};
+  const raw=String(datos.monto||"").trim();
+  const monto=Number(raw.replace(",","."));
+  if(!/^\d{1,9}(?:[.,]\d{1,2})?$/.test(raw)||!Number.isFinite(monto)||monto<=0)return {error:"Anotá el monto que ya transferiste, mayor a cero, sin separador de miles.",field:"guiaMonto"};
+  const cuando=String(datos.cuando||"");
+  if(cuando&&(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(cuando)||!Number.isFinite(Date.parse(cuando))||Date.parse(cuando)>Date.now()+5*60*1000))return {error:"Revisá la fecha: el envío ya debe haberse realizado.",field:"guiaCuando"};
+  if(String(datos.detalle||"").length>400)return {error:"La aclaración puede tener hasta 400 caracteres.",field:"guiaDetalle"};
+  if(datos.file&&(!["image/jpeg","image/png","image/webp"].includes(datos.file.type)||datos.file.size>5*1024*1024))return {error:"Adjuntá una imagen JPG, PNG o WEBP de hasta 5 MB.",field:"guiaComprobante"};
+  return {monto,motivo:motivos[datos.motivo],cuando,detalle:String(datos.detalle||"").trim()};
+}
+async function guiaEnviarRevision(){
+  if(guiaBusy)return;
+  const error=$("guiaError"),button=$("guiaEnviar");
+  if(!button||button.disabled)return;
+  if(!state.usuario){if(error)error.textContent="Para enviar la consulta, primero indicá tu usuario y teléfono en Inicio.";return;}
+  const file=$("guiaComprobante")?.files?.[0]||null;
+  const data=guiaValidarRevision({motivo:$("guiaMotivo")?.value,monto:$("guiaMonto")?.value,cuando:$("guiaCuando")?.value,detalle:$("guiaDetalle")?.value,file});
+  if(data.error){if(error)error.textContent=data.error;$(data.field)?.focus();return;}
+  guiaBusy=true;button.disabled=true;button.textContent="Enviando consulta...";if(error)error.textContent="";guiaControles();
+  const guide=guiaActual;
+  try{
+    const imagen=file?await subirImagen(file):null;
+    if(guide!==guiaActual||guide.identity!==guiaIdentidad())return;
+    if(file&&!imagen){if(error)error.textContent="No pudimos subir el comprobante. Tus datos siguen acá para reintentar.";return;}
+    const mensaje=guiaResumen()+"\nConsulta sobre una transferencia YA REALIZADA. No es una carga nueva."
+      +"\nProblema: "+data.motivo+"\nMonto transferido informado: $"+data.monto
+      +(data.cuando?"\nFecha y hora aproximada informada: "+data.cuando.replace("T"," "):"")
+      +(data.detalle?"\nAclaración: "+data.detalle:"")+(imagen?"\nAdjunto comprobante.":"");
+    const result=await enviarMensajeSoporte(mensaje,imagen);
+    if(guide!==guiaActual||guide.identity!==guiaIdentidad())return;
+    if(!result?.ok){if(error)error.textContent=result?.error||"No se pudo enviar. Tus datos siguen acá para reintentar.";return;}
+    state.shownTexts.add("u|"+mensaje.substring(0,200));
+    addMsg(escMsg(mensaje),"user",imagen);
+    $("guiaRevisionEnvio")?.remove();
+    guiaActual.step="enviado";guiaGuardar();
+    guiaBurbuja(GUIA_PASOS.enviado.text,"guide");
+  }catch(_e){if(error)error.textContent="No se pudo enviar. Tus datos siguen acá para reintentar.";}
+  finally{guiaBusy=false;button.disabled=false;button.textContent="Enviar consulta al chat";guiaControles();}
+}
+
+// ── Push PWA ──────────────────────────────────────────────────────────────
 const VAPID_PUB_KEY="BAH2MtolgsjjO31mPNwMi0WIl-T4LEDocaGSc1F3RUE0F7ZOF-1eJ1gXSuisalnR6tu0ZYcISWtnRdH-S5MFYBw";
 function _vapidKey(b64){
   const pad="=".repeat((4-b64.length%4)%4);
@@ -2663,6 +3153,10 @@ async function subscribePush(){
       if(perm!=="granted")return;
       sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:_vapidKey(VAPID_PUB_KEY)});
     }
+    // DEDUP: subscribePush() se llama desde 8 lugares (incluido renderChat, o sea cada vez que se
+    // abre el chat) y antes POSTEABA SIEMPRE, aunque la suscripción ya estuviera guardada y no
+    // hubiera cambiado nada → millones de invocaciones de función en Vercel al pedo.
+    // Ahora solo se guarda si cambió el usuario/teléfono/endpoint, o si pasaron 24 h.
     const _firma = [state.usuario||"", state.telefono||"", sub.endpoint||""].join("|");
     const _KEY = "bet300_push_saved";
     try{
@@ -2686,6 +3180,13 @@ async function notificarLocal(title,body,url,tag){
   }catch(e){}
 }
 
+// ── Page Visibility ────────────────────────────────────────────────────────
+// El listener vive más abajo, junto a _reanudarPollsVisibles(). Acá había un SEGUNDO listener
+// duplicado que hacía lo mismo: los dos se disparaban en cada cambio de pestaña y arrancaban los
+// polls dos veces seguidas. No llegaba a crear timers de más (cada start hace su stop antes),
+// pero duplicaba las consultas del arranque contra Supabase.
+
+// ── Aviso de solicitud muy vieja (más de 24h) ─────────────────────────────
 function chequearPendienteViejo(){
   if(!tieneSolicitudPendiente())return;
   const started=Number(state.solicitudStartedAt||localStorage.getItem("bet300_solicitud_started_at")||0);
@@ -2695,12 +3196,14 @@ function chequearPendienteViejo(){
   setTimeout(()=>toast(`Tu solicitud lleva +${Math.round(hs)}h. Si ya fue procesada, marcala como resuelta en Estado.`),3000);
 }
 
+// ── Teclado: Enter para enviar / Esc para cerrar ──────────────────────────
 document.addEventListener("keydown",e=>{
   if(e.key==="Escape"&&$("widget")?.classList.contains("open")){toggleWidget(false);return;}
   if(e.target.id!=="freeInput")return;
   if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendFreeMessage();}
 });
 
+// ── Paste de imagen en el chat (Ctrl+V) ──────────────────────────────────
 document.addEventListener("paste",e=>{
   if(state.screen!=="chat")return;
   const items=[...(e.clipboardData?.items||[])];
@@ -2718,6 +3221,8 @@ document.addEventListener("paste",e=>{
   bar.classList.remove("hidden");
 });
 
+// ── Init ──────────────────────────────────────────────────────────────────
+// ── Promo primer ingreso: marcar "app instalada" si corre como PWA instalada ──
 function marcarAppInstalada(){
   try{
     const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
@@ -2726,6 +3231,7 @@ function marcarAppInstalada(){
     }
   }catch(_e){}
 }
+// Capturamos el prompt de instalación para dispararlo desde el botón del bono.
 window._deferredInstallPrompt=null;
 window.addEventListener('beforeinstallprompt', function(ev){ ev.preventDefault(); window._deferredInstallPrompt=ev; });
 window.addEventListener('appinstalled', function(){
@@ -2735,6 +3241,8 @@ window.addEventListener('appinstalled', function(){
   try{ if(state.screen==="home") renderHome(); }catch(_e){}
 });
 
+// Banner "hay versión nueva · Actualizar" para la PWA instalada. Aparece solo cuando el SW nuevo
+// quedó en espera (o sea, ya había una versión corriendo). No molesta a quien recién instala.
 function mostrarActualizarPWA(reg){
   if(document.getElementById("swUpdateBanner"))return;
   const b=document.createElement("div");
@@ -2749,10 +3257,9 @@ function mostrarActualizarPWA(reg){
     catch(_e){ window.location.reload(); }
   };
 }
+// Rendimiento: cuando la app pasa a segundo plano (oculta), pausamos TODOS los polls para no
+// pegarle a Supabase al pedo; al volver, reanudamos según el estado (widget abierto / pendiente).
 function _reanudarPollsVisibles(){
-  // Volver a la pestaña es JUSTO el momento en que el jugador va a copiar el CBU: recien vuelve
-  // del banco. Es cuando mas hay que estar seguro de que la cuenta sigue siendo esa.
-  if(state.screen==="carga"){ try{ cargarBilleteraEnSlot(); }catch(_e){} }
   const abierto = $("widget")?.classList.contains("open");
   if(abierto){
     if(state.chatId) startChatPoll();
@@ -2767,28 +3274,46 @@ document.addEventListener("visibilitychange",()=>{
 window.addEventListener("load",async()=>{
   if("serviceWorker" in navigator){
     navigator.serviceWorker.register("/sw.js").then(reg=>{
+      // ¿ya hay una versión nueva esperando de antes?
       if(reg.waiting && navigator.serviceWorker.controller) mostrarActualizarPWA(reg);
+      // detectar cuando se instala una versión nueva mientras la app está abierta
       reg.addEventListener("updatefound",()=>{
         const nw=reg.installing; if(!nw)return;
         nw.addEventListener("statechange",()=>{
           if(nw.state==="installed" && navigator.serviceWorker.controller) mostrarActualizarPWA(reg);
         });
       });
+      // chequear si hay update cada 1h y cada vez que vuelven a la app
       setInterval(()=>{ reg.update().catch(()=>{}); }, 60*60*1000);
       document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") reg.update().catch(()=>{}); });
     }).catch(e=>console.warn("[SW]",e));
+    // recargar SOLO cuando el usuario aceptó actualizar (no en la primera instalación)
     navigator.serviceWorker.addEventListener("controllerchange",()=>{ if(window._swWillReload) window.location.reload(); });
   }
+  // El iframe ya trae src en el HTML (carga desde el parseo, lo antes posible). Solo lo seteamos
+  // acá si quedó vacío → así NO recargamos la plataforma (antes se cargaba 2 veces = doble espera).
   try{ const _af=$("appFrame"); if(_af && (!_af.getAttribute("src") || _af.getAttribute("src")==="about:blank")) _af.src=PLATFORM_URL; }catch(_e){}
   restoreLauncherMini();
   await initRoute();
-  try{ await cargarMinimos(); }catch(_e){}
   try{ _ipPublica(); }catch(_e){}
+  // Va DESPUÉS de initRoute: el enlace sabe de qué agente es el usuario, y esa oficina manda
+  // sobre la que se dedujo por host/ruta (puede abrirlo desde cualquier lado, incluso sin ?r=).
   const acceso = await canjearEnlaceAcceso();
+  await cargarMinimos();
   await cargarPromoActiva();
   setTimeout(marcarAppInstalada, 2500);
   renderHome();
   showScreen("home");
+  // mostrarLauncherSiHaceFalta(); // RETIRADO 2026-07-27: el launcher iPhone confundía a usuarios que veían el iframe bien
+  // Botón directo: el operador eligió si el enlace abre en Cargar o en Retirar.
+  //
+  // OJO con el orden: el panel arranca CERRADO (corrido 812px hacia abajo) y la plataforma ocupa
+  // toda la pantalla. Cambiar de pantalla adentro de un panel cerrado no se ve — la persona
+  // entraba por el enlace y veía el casino, teniendo que buscar el botón "Cajero". Primero se
+  // abre el panel, después se elige la pantalla; toggleWidget deja "home" si no se corrige.
+  //
+  // goCarga/goRetiro mantienen sus frenos (solicitud pendiente, límite diario de retiro): si no
+  // corresponde, desvían solos y el panel queda abierto en Inicio, que igual es lo que se busca.
   if(acceso && (acceso.destino==="CARGAR" || acceso.destino==="RETIRAR")){
     try{ toggleWidget(true); }catch(_e){}
     try{ if(acceso.destino==="CARGAR") goCarga(); else goRetiro(); }catch(_e){}

@@ -97,6 +97,7 @@ const api = {};
     }
 
     deps.V154P.chatMensajes = deps.normArr(r.data).map(m => ({
+      ...m,
       MENSAJE: m.mensaje || "",
       IMAGEN_URL: m.imagen_url || "",
       TIPO_EMISOR: m.tipo_emisor || m.emisor_tipo || "",

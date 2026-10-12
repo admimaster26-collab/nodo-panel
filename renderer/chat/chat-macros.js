@@ -14,6 +14,16 @@
 
   const MACROS_BASE = [
     {
+      id:"ayuda_inicio",
+      label:"🧭 Opciones de ayuda",
+      text:"Elegí el tema de tu consulta en estas opciones. Si necesitás una persona, también podés pedir un operador.\n⟦AYUDA:inicio⟧"
+    },
+    {
+      id:"ayuda_envio",
+      label:"📎 Revisar transferencia",
+      text:"Si ya hiciste una transferencia, completá estos datos para que podamos encontrarla. Este formulario es para revisar ese envío; no hace una nueva carga.\n⟦AYUDA:revisar_envio⟧"
+    },
+    {
       id:"saludo",
       label:"👋 Saludo",
       text:"Hola 👋 ¿Cómo estás? Ya estamos revisando tu consulta."
@@ -60,12 +70,13 @@
     }
   ];
 
-  function inputChat(){
+  function inputChat(inputId){
+    if(inputId)return document.getElementById(inputId);
     return document.getElementById("chatInput") || document.getElementById("v15ChatInput");
   }
 
-  function insertText(text){
-    const input=inputChat();
+  function insertText(text,inputId){
+    const input=inputChat(inputId);
     if(!input){alert("No encontré el campo de respuesta.");return}
     const current=S(input.value);
     input.value = current ? (current.trimEnd()+"\n"+text) : text;
@@ -120,13 +131,13 @@
     return msg;
   }
 
-  function macroRapida(id){
+  function macroRapida(id,inputId){
     if(id==="billetera"){
-      insertText(getWalletPortalText());
+      insertText(getWalletPortalText(),inputId);
       return;
     }
     const m = MACROS_BASE.find(x=>x.id===id);
-    if(m) insertText(m.text);
+    if(m) insertText(m.text,inputId);
   }
 
   function renderMacrosPanel(){
@@ -148,6 +159,17 @@
   }
 
   function ensureMacroButton(){
+    const quickbar=document.getElementById("v15Quickbar");
+    if(quickbar&&!document.getElementById("nodoAyudaInicioCompacta")){
+      [["ayuda_inicio","Opciones de ayuda"],["ayuda_envio","Revisar transferencia"]].forEach(function(item,index){
+        const help=document.createElement("button");
+        help.id=index?"nodoAyudaEnvioCompacta":"nodoAyudaInicioCompacta";
+        help.className="mini-btn gray"; help.type="button";
+        help.textContent=item[1]; help.title="Preparar un mensaje para revisar y enviar";
+        help.onclick=function(){macroRapida(item[0],"v15ChatInput");};
+        quickbar.appendChild(help);
+      });
+    }
     const row = document.querySelector("#viewChat .chat-row");
     if(!row || document.getElementById("nodoMacroBtnSafe"))return;
 
@@ -215,7 +237,7 @@
     const panel=document.getElementById("macrosPanel");
     if(panel)panel.classList.toggle("hidden");
   };
-  window.v15InsertarMacro = function(text){insertText(text)};
+  window.v15InsertarMacro = function(text){insertText(text,"v15ChatInput")};
   window.insertarMacroChat = function(text){insertText(text)};
 
   // Atajos opcionales: Ctrl+M abre macros.

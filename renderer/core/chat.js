@@ -62,6 +62,7 @@ async function cargarChatActual(silencioso=false){
   if(error)return;
 
   chatMensajes=(data||[]).map(m=>({
+    ...m,
     MENSAJE:m.mensaje||"",
     IMAGEN_URL:m.imagen_url||"",
     TIPO_EMISOR:m.tipo_emisor,
@@ -103,15 +104,14 @@ function renderChatMensajes(){
   if(!chatMensajes.length){setBox("chatBody",`<div class="alert-box">Sin mensajes todavía.</div>`);return}
   let html="";
   chatMensajes.forEach(m=>{
-    const tipo=normalizar(m.TIPO_EMISOR);
-    const esUser=tipo==="USUARIO";
-    const msgHtml = escapeHtml(m.MENSAJE||"").replace(/\n/g,"<br>");
-    html+=`<div class="chat-msg ${esUser?"user":"op"}">
+    const msgHtml = escapeHtml(NodoChatMessage.visibleText(m)).replace(/\n/g,"<br>");
+    html+=`<div class="chat-msg ${NodoChatMessage.className(m)}">
       <div class="chat-bubble" style="white-space:pre-wrap">
+        <div class="wq2-author">${escapeHtml(NodoChatMessage.author(m,chat.USUARIO))}</div>
         ${msgHtml}
         ${m.IMAGEN_URL?`<img src="${normalizarImagenUrl(m.IMAGEN_URL)}" alt="Imagen">`:""}
       </div>
-      <div class="chat-meta">${esUser?(chat.USUARIO||"Usuario"):(m.EMISOR||"Operador")} · ${formatFecha(m.FECHA)}</div>
+      <div class="chat-meta">${formatFecha(m.FECHA)}</div>
     </div>`;
   });
   const box=document.getElementById("chatBody");

@@ -84,29 +84,22 @@
   }
 
   function normalizeThreadRow(m){
-    const row={
-      origen:U(m?.origen||m?.tipo||"USUARIO"),
-      usuario:S(m?.usuario||""),
-      operador:S(m?.operador||""),
-      mensaje:S(m?.mensaje||""),
-      fecha:m?.fecha||m?.created_at||new Date().toISOString(),
-      solicitud_id:m?.solicitud_id||m?.solicitudId||null
-    };
-    const img=m?.imagen_url||m?.imagen||"";
-    if(img)row.imagen_url=img;
-    return row;
+    return NodoChatMessage.normalize(m);
   }
   function uniqThread(arr){
-    const seen=new Set();
+    const seen=new Map();
     const out=[];
     (arr||[]).forEach(raw=>{
       const m=normalizeThreadRow(raw);
-      // Dedup por origen+fecha+mensaje (SIN solicitud_id): la copia local de un mensaje enviado no
-      // tiene solicitud_id y la del servidor sí; incluirlo hacía que el mismo mensaje se viera dos
-      // veces al mezclar local+servidor. Origen+fecha(ISO ms)+texto ya identifica un mensaje único.
-      const k=[m.origen,m.fecha||"",m.mensaje||""].join("|");
-      if(seen.has(k))return;
-      seen.add(k);out.push(m);
+      // La copia local y la del servidor comparten autor, fecha, texto e imagen. No usamos
+      // solicitud_id porque la copia local puede no tenerlo; combinamos sus datos sin perderlo.
+      const k=NodoChatMessage.key(m);
+      if(seen.has(k)){
+        const index=seen.get(k);
+        out[index]=NodoChatMessage.merge(out[index],m);
+        return;
+      }
+      seen.set(k,out.length);out.push(m);
     });
     out.sort((a,b)=>toDate(a.fecha)-toDate(b.fecha));
     return out;
@@ -294,6 +287,11 @@
       .wq2-bubble{max-width:70%;border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;box-shadow:0 1px 1px #0006;word-break:break-word}
       .wq2-row.user .wq2-bubble{background:#1f2937;color:#e5e7eb}
       .wq2-row.op .wq2-bubble{background:#14532d;color:#dcfce7}
+      .wq2-row.bot{justify-content:flex-end}
+      .wq2-row.bot .wq2-bubble{background:#25204a;color:#eee7ff;border:1px solid #6558a4}
+      .wq2-row.system{justify-content:center}
+      .wq2-row.system .wq2-bubble{background:#17212d;color:#b7c3d2;border:1px dashed #657387}
+      .wq2-author{font-size:11px;font-weight:700;margin-bottom:5px;letter-spacing:.02em}
       .wq2-time{font-size:10px;color:#9ca3af;margin-top:4px;text-align:right}
     `;
     document.head.appendChild(st);
@@ -399,10 +397,10 @@
 
   function renderChatConversationStep5(){
     ensureCss();
-    const body=document.getElementById("chatBody")||document.getElementById("v15ChatBody");
-    if(!body)return;
+    const bodies=[document.getElementById("chatBody"),document.getElementById("v15ChatBody")].filter(Boolean);
+    if(!bodies.length)return;
     // Smart scroll: solo bajar automático si ya estaba cerca del final
-    const _wasAtBottom=(body.scrollHeight-body.scrollTop-body.clientHeight)<100;
+    const atBottom=bodies.map(box=>(box.scrollHeight-box.scrollTop-box.clientHeight)<100);
     const ticket=window.__nodoChatCurrentTicket;
     const titulo=document.getElementById("chatTitulo");
     const sub=document.getElementById("chatSubtitulo");
@@ -410,13 +408,21 @@
     if(!ticket){
       if(titulo)titulo.textContent="Seleccioná un chat";
       if(sub)sub.textContent="Sin conversación abierta";
-      body.innerHTML=`<div class="alert-box">Seleccioná un chat para responder.</div>`;
+      bodies.forEach(box=>box.innerHTML=`<div class="alert-box">Seleccioná un chat para responder.</div>`);
+      const compactTitle=document.getElementById("v15ChatTitulo");
+      if(compactTitle)compactTitle.textContent="Seleccioná un chat";
+      try{ if(typeof window.actualizarPreviewSolicitudChat==='function') window.actualizarPreviewSolicitudChat(null); }catch(_e){}
       return;
     }
     // refrescar ticket con últimos datos
     const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(ticket.usuario))||ticket;
     window.__nodoChatCurrentTicket=fresh;
+    try{ if(typeof window.actualizarPreviewSolicitudChat==='function') window.actualizarPreviewSolicitudChat(fresh.usuario); }catch(_e){}
     if(titulo)titulo.textContent=fresh.usuario;
+    const compactTitle=document.getElementById("v15ChatTitulo");
+    const compactSub=document.getElementById("v15ChatSubtitulo");
+    if(compactTitle)compactTitle.textContent=fresh.usuario;
+    if(compactSub)compactSub.textContent="Conversación con usuario, asistente y operador";
     if(sub)sub.innerHTML=`Sol. ${E(fresh.masterId||fresh.solicitudId||"")} · Consulta portal <button onclick="vincularDesdeConsulta()" style="margin-left:8px;background:#1e3a5f;color:#7cc4ff;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">🔗 Validar y vincular</button> <button onclick="cerrarConsultaWq2()" style="margin-left:6px;background:#7f1d1d;color:#fca5a5;border:0;border-radius:8px;padding:3px 9px;font-size:10px;font-weight:700;cursor:pointer">✕ Cerrar consulta</button>`;
     // COTEJO PREVIO: apenas se abre la consulta verificamos usuario y teléfono DECLARADOS contra la
     // base, ANTES de apretar "Validar y vincular" (panel insertado debajo del subtítulo).
@@ -442,12 +448,12 @@
     const usedCm=new Set();
     if(cmArr.length){
       msgs.forEach(m=>{
-        if(m.imagen_url||U(m.origen)==="OPERADOR")return;
+        if(m.imagen_url||NodoChatMessage.role(m)!=="USUARIO")return;
         const mts=toDate(m.fecha).getTime();
         let best=null,bestDiff=5*60*1000;
         cmArr.forEach((c,i)=>{
           if(usedCm.has(i)||!c.IMAGEN_URL)return;
-          if(String(c.TIPO_EMISOR||c.EMISOR||"").match(/OPER|ADMIN|PANEL|SIST/i))return;
+          if(NodoChatMessage.role(c)!=="USUARIO")return;
           const diff=Math.abs(toDate(c.FECHA).getTime()-mts);
           if(diff<bestDiff){bestDiff=diff;best=i;}
         });
@@ -456,18 +462,20 @@
     }
     let html=`<div class="wq2-chat-bg">`;
     msgs.forEach(m=>{
-      const op=U(m.origen)==="OPERADOR";
+      const op=NodoChatMessage.role(m)==="OPERADOR";
       const imgSrc=m.imagen_url||m.imagen||"";
       const imgHtml=(imgSrc&&!_chatImgFailed.has(imgSrc))?`<img src="${E(imgSrc)}" style="max-width:220px;border-radius:8px;margin-top:6px;display:block;cursor:pointer" title="Ver imagen" onclick="window.open(this.src,'_blank')" onerror="window._chatImgError('${E(imgSrc)}')">` : "";
       const editBtn=(op && !imgSrc && m.fecha)?`<button class="wq2-edit" onclick="editarMensajeOperador('${E(m.fecha)}')" title="Editar este mensaje (también se actualiza para el cliente)">✏️</button>`:"";
       const editedTag=m.editado?`<span class="wq2-edited" title="Mensaje editado">· editado</span>`:"";
-      html+=`<div class="wq2-row ${op?"op":"user"}"><div class="wq2-bubble">${E(m.mensaje||"").replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time">${hora(m.fecha)}${editedTag}${editBtn}</div></div></div>`;
+      html+=`<div class="wq2-row ${NodoChatMessage.className(m)}"><div class="wq2-bubble"><div class="wq2-author">${E(NodoChatMessage.author(m,fresh.usuario))}</div>${E(NodoChatMessage.visibleText(m)).replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time" title="${E(m.fecha)}">${hora(m.fecha)}${editedTag}${editBtn}</div></div></div>`;
     });
     html+=`</div>`;
-    if(body.innerHTML!==html){
-      body.innerHTML=html;
-      if(_wasAtBottom)body.scrollTop=body.scrollHeight;
-    }
+    bodies.forEach((box,i)=>{
+      if(box.innerHTML!==html){
+        box.innerHTML=html;
+        if(atBottom[i])box.scrollTop=box.scrollHeight;
+      }
+    });
   }
   window.renderChatMensajes=renderChatConversationStep5;
   window.v15RenderChatMensajes=renderChatConversationStep5;
@@ -480,7 +488,7 @@
     const ticket=window.__nodoChatCurrentTicket; if(!ticket) return;
     const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(ticket.usuario))||ticket;
     const merged=uniqThread((fresh.thread||[]).concat(getSavedMsgs(fresh)));
-    const m=merged.find(x=>String(x.fecha)===String(fechaIso)&&U(x.origen||x.tipo)==="OPERADOR");
+    const m=merged.find(x=>String(x.fecha)===String(fechaIso)&&NodoChatMessage.role(x)==="OPERADOR");
     if(!m){ try{toast('No encontré el mensaje.','red');}catch(_e){} return; }
     if(typeof abrirModal!=="function"){ return; }
     abrirModal('✏️ Editar mensaje',
@@ -491,11 +499,11 @@
         try{ cerrarModal(); }catch(_e){}
         if(!texto || texto===String(m.mensaje||'')) return;
         // 1) copia local
-        try{ const saved=getSavedMsgs(fresh); let ch=false; saved.forEach(x=>{ if(String(x.fecha)===String(fechaIso)&&U(x.tipo||x.origen)==="OPERADOR"){ x.mensaje=texto; x.editado=true; ch=true; } }); if(ch) setSavedMsgs(fresh,saved); }catch(_e){}
+        try{ const saved=getSavedMsgs(fresh); let ch=false; saved.forEach(x=>{ if(String(x.fecha)===String(fechaIso)&&NodoChatMessage.role(x)==="OPERADOR"){ x.mensaje=texto; x.editado=true; ch=true; } }); if(ch) setSavedMsgs(fresh,saved); }catch(_e){}
         // 2) chat_thread del servidor (lo que lee el portal)
         try{
           const masterId=Number(fresh.masterId||fresh.solicitudId||0);
-          const edited=(fresh.thread||[]).map(x=> (String(x.fecha)===String(fechaIso)&&U(x.origen)==="OPERADOR") ? Object.assign({},x,{mensaje:texto,editado:true}) : x);
+          const edited=(fresh.thread||[]).map(x=> (String(x.fecha)===String(fechaIso)&&NodoChatMessage.role(x)==="OPERADOR") ? Object.assign({},x,{mensaje:texto,editado:true}) : x);
           fresh.thread=edited;
           if(masterId && typeof actualizarSolicitudPortal==="function"){
             await actualizarSolicitudPortal(masterId,"EN_REVISION",{chat_estado:"RESPONDIDO_PANEL",chat_master_id:masterId,chat_thread:edited});
@@ -550,10 +558,10 @@
     })();
   }
 
-  window.enviarChat=async function(){
+  window.enviarChat=async function(inputId){
     const ticket=window.__nodoChatCurrentTicket;
     if(!ticket){alert("Abrí un chat primero.");return{ok:false}}
-    const input=document.getElementById("chatInput")||document.getElementById("v15ChatInput");
+    const input=document.getElementById(inputId==="v15ChatInput"?inputId:"chatInput")||document.getElementById("v15ChatInput");
     const msg=S(input?.value).trim();
     // Si hay una imagen subiendo, esperar a que termine para mandar la URL liviana (no el base64 pesado)
     if(window.chatImagenBase64 && !window.chatImagenUrl && window._chatImgUploadPromise){
@@ -597,7 +605,7 @@
       return{ok:false,error:e};
     }
   };
-  window.v15EnviarChatCompacto=window.enviarChat;
+  window.v15EnviarChatCompacto=function(){return window.enviarChat("v15ChatInput");};
 
   // Envía un mensaje del operador al thread del portal para un usuario dado, SIN depender del input
   // ni de tener el chat abierto. Lo usa el flujo de vinculación para avisar "ya podés ingresar" con

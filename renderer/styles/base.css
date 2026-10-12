@@ -881,3 +881,228 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   margin-bottom:8px!important;
 }
 
+/* La autoría se distingue también por texto, en el chat principal y en Inicio. */
+.chat-msg.bot{align-self:flex-end}
+.chat-msg.bot .chat-bubble{background:#25204a;color:#eee7ff;border:1px solid #6558a4}
+.chat-msg.system{align-self:center}
+.chat-msg.system .chat-bubble{background:#17212d;color:#b7c3d2;border:1px dashed #657387}
+.wq2-author{font-size:11px;font-weight:700;margin-bottom:5px}
+
+/* ============================================================
+   NODO · BANNER DESPLEGABLE DE SOLICITUD EN CHAT
+   ============================================================ */
+.chat-sol-banner {
+  margin: 6px 12px 10px 12px;
+  transition: all 0.2s ease-in-out;
+  position: relative;
+  z-index: 10;
+}
+.chat-sol-banner.hidden {
+  display: none !important;
+}
+
+.nodo-sol-pill {
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: background 0.2s ease, border-color 0.2s ease;
+  font-family: inherit;
+}
+
+.nodo-sol-pill-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(0, 0, 0, 0.28);
+}
+.nodo-sol-pill-head:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.nodo-sol-pill-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.nodo-sol-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.nodo-sol-monto {
+  font-size: 14px;
+  font-weight: 900;
+  color: #f8fafc;
+  letter-spacing: 0.3px;
+}
+
+.nodo-sol-resumen {
+  font-size: 11px;
+  color: #cbd5e1;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 340px;
+}
+
+.nodo-sol-pill-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nodo-sol-pill-right .mini-btn {
+  font-size: 10px;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.nodo-sol-panel-body {
+  padding: 12px 14px;
+  background: rgba(15, 23, 42, 0.92);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nodo-sol-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 14px;
+  align-items: start;
+}
+
+.nodo-sol-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #e2e8f0;
+}
+
+.nodo-sol-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.nodo-sol-item .lbl {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 65px;
+}
+.nodo-sol-item .cbu {
+  font-family: 'Consolas', 'Courier New', monospace;
+  letter-spacing: 0.5px;
+  color: #38bdf8;
+  font-weight: 600;
+}
+
+.nodo-sol-alerta-roja {
+  margin-top: 6px;
+  padding: 7px 10px;
+  background: rgba(239, 68, 68, 0.18);
+  border: 1px solid rgba(239, 68, 68, 0.5);
+  border-radius: 6px;
+  color: #fca5a5;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.nodo-sol-col-img {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 170px;
+}
+
+.nodo-sol-thumb {
+  width: 130px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+.nodo-sol-thumb:hover {
+  transform: scale(1.03);
+  border-color: #38bdf8;
+}
+
+.nodo-sol-ocr-box {
+  width: 100%;
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: #cbd5e1;
+}
+
+.nodo-sol-ocr-box .ocr-line {
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nodo-sol-ocr-box .ocr-line.red {
+  color: #f87171;
+  font-weight: 800;
+}
+
+.nodo-sol-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.nodo-sol-actions .mini-btn {
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.nodo-sol-actions .mini-btn.green {
+  background: #16a34a;
+  color: #ffffff;
+  border: 1px solid #22c55e;
+}
+.nodo-sol-actions .mini-btn.green:hover {
+  background: #15803d;
+}
+.nodo-sol-actions .mini-btn.red {
+  background: #dc2626;
+  color: #ffffff;
+  border: 1px solid #ef4444;
+}
+.nodo-sol-actions .mini-btn.red:hover {
+  background: #b91c1c;
+}
+
+/* Selector interactivo de prueba en dev */
+.nodo-dev-sol-tester {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 8px;
+  font-size: 10px;
+}
+
+
