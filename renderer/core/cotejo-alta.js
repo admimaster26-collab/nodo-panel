@@ -20,6 +20,71 @@ function _altaDist(a, b){
 }
 function _altaNormU(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,''); }
 function _altaNormTel(s){ return String(s||'').replace(/\D/g,''); }
+// ── LO QUE YA SE RESOLVIÓ EN ESTA CONSULTA ────────────────────────────────────────────────
+// Juan, 19/10: "revisa tambien que la proxima version cambie el cartel de revisar cuando se
+// termine de validar para que aparezca todo joya, por como esta en la version actual sigue
+// siendo incongruente".
+//
+// Y la tarjeta no tenía con qué saberlo. El cotejo compara lo que DECLARÓ el cliente contra el
+// padrón, y lo declarado no cambia nunca: si escribió "laugoat66" y su cuenta es "lauggoat66",
+// ese alias va a seguir sin existir para siempre. Así que el operador validaba, salía el
+// "Usuario validado y agendado"… y detrás quedaba el mismo REVISAR con los mismos botones
+// "usar lauggoat66", como si no hubiera hecho nada.
+//
+// Lo que faltaba no es un dato del padrón: es la MEMORIA de la decisión que acaba de tomar el
+// operador. Se guarda acá con el par declarado de llave —la misma que ya usa la tarjeta para no
+// re-cotejar— y nunca se pinta verde sin confirmarla contra el padrón recién traído.
+const _ALTA_RES_LS='nodo.cotejo.resueltos', _ALTA_RES_VIDA=7*24*60*60*1000, _ALTA_RES_MAX=300;
+function _altaResKey(uDecl,tDecl){ return _altaNormU(uDecl)+'|'+_altaNormTel(tDecl); }
+function _altaResLeer(){
+  if(window.__altaResueltos) return window.__altaResueltos;
+  let m={};
+  try{ if(typeof localStorage!=='undefined') m=JSON.parse(localStorage.getItem(_ALTA_RES_LS)||'{}')||{}; }catch(_e){ m={}; }
+  if(!m || typeof m!=='object') m={};
+  window.__altaResueltos=m; return m;
+}
+function _altaResGuardar(m){
+  // Podar: primero lo vencido, después las más viejas si siguen siendo muchas. Una PC de oficina
+  // no se reinicia nunca; sin techo esto crece hasta llenar el localStorage y romper el guardado.
+  const ahora=Date.now();
+  Object.keys(m).forEach(function(k){ if(!m[k] || (ahora-(m[k].cuando||0))>_ALTA_RES_VIDA) delete m[k]; });
+  const ks=Object.keys(m);
+  if(ks.length>_ALTA_RES_MAX){
+    ks.sort(function(a,b){ return (m[a].cuando||0)-(m[b].cuando||0); })
+      .slice(0,ks.length-_ALTA_RES_MAX).forEach(function(k){ delete m[k]; });
+  }
+  try{ if(typeof localStorage!=='undefined') localStorage.setItem(_ALTA_RES_LS,JSON.stringify(m)); }catch(_e){}
+}
+// Se llama al TERMINAR de validar. El guardia no es opcional: ejecutarVincular se usa también
+// desde el CRM y desde el chat normal, y sin él una validación de OTRO jugador marcaba como
+// resuelta la consulta que estuviera abierta. Un verde mentiroso es peor que el amarillo de más.
+window._altaMarcarResuelto=function(usuario,telefono){
+  try{
+    const d=window.__altaCotejoDecl; if(!d || (!d.u && !d.t)) return;
+    const tV=_altaNormTel(telefono), uV=_altaNormU(usuario);
+    if(!(tV && tV===_altaNormTel(d.t)) && !(uV && uV===_altaNormU(d.u))) return;
+    const m=_altaResLeer();
+    m[_altaResKey(d.u,d.t)]={ usuario:String(usuario||''), telefono:String(telefono||''), cuando:Date.now() };
+    _altaResGuardar(m);
+  }catch(_e){}
+};
+// El verde no se cree solo: se confirma contra el cotejo recién traído. Si el vínculo se deshizo
+// o el teléfono pasó a otra cuenta, la marca no se usa y la tarjeta vuelve a avisar.
+// Ojo: NO se borra cuando no confirma. Si la consulta al padrón falló por red, borrarla perdería
+// para siempre una validación que sí ocurrió; vencen solas por fecha.
+function _altaResuelto(uDecl,tDecl,r){
+  try{
+    const m=_altaResLeer(), k=_altaResKey(uDecl,tDecl), g=m[k];
+    if(!g) return null;
+    if((Date.now()-(g.cuando||0))>_ALTA_RES_VIDA){ delete m[k]; _altaResGuardar(m); return null; }
+    // Si el número aparece en varias cuentas hay algo NUEVO que mirar: eso manda sobre la marca.
+    if(r && r.telefono && r.telefono.varios) return null;
+    const uN=_altaNormU(g.usuario);
+    const confirma=(r && r.telefono && r.telefono.exacto && _altaNormU(r.telefono.exacto.usuario)===uN)
+                 ||(r && r.usuario  && r.usuario.exacto  && _altaNormU(r.usuario.exacto.usuario)===uN);
+    return confirma ? g : null;
+  }catch(_e){ return null; }
+}
 // Un jugador de la base LOCAL cuenta como "en sistema" sólo si hay algo más que su propia palabra:
 // un teléfono validado por un operador, un CBU de retiro (operó), un bono cobrado, o una operación
 // en el historial. La base local también tenía guardado lo que DECLARABAN los pedidos del portal
@@ -215,6 +280,9 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
     // Modal de RESULTADO (antes solo había feedback cuando fallaba): simple, para ver y agendar.
     try{ _altaModalResultado(usuario, telefono); }catch(_e){}
     // Repintar el cotejo con el vínculo YA guardado (si no, se queda en "NO COINCIDEN" por caché).
+    // Memoria de ESTA decisión: sin esto el cotejo vuelve a pintar REVISAR por el alias que el
+    // cliente tipeó mal, que no deja de estar mal por haberlo validado (Juan, 19/10).
+    try{ window._altaMarcarResuelto && window._altaMarcarResuelto(usuario, telefono); }catch(_e){}
     try{ window._altaCotejoRefrescar && window._altaCotejoRefrescar(); }catch(_e){}
     // Aviso al usuario por el chat del portal con su info de ingreso + botón "Ingresar" (background).
     try{
@@ -279,7 +347,7 @@ function abrirModalVincular(usuarioSugerido, telefono, prefill, desdeChat){
 // después de 6 líneas de datos crudos, y el alias se repetía 4 veces → el operador tenía que leer
 // todo para saber si podía seguir. Ahora: estado de un vistazo, y el detalle solo si aporta.
 // onPick = función global que recibe (usuario, telefono). titulo = contexto (esquina derecha).
-function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
+function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
   const esc=escapeHtml, tN=_altaNormTel(tDecl);
   const telsDe=function(c){ return ((c&&c.telefonos)||[]).map(_altaNormTel).filter(Boolean); };
   const uOk=r.usuario.exacto, tOk=r.telefono.exacto;
@@ -507,14 +575,34 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo){
       + ' style="cursor:pointer;background:rgba(18,183,106,.12);border:1px solid rgba(18,183,106,.55);color:#3fb950'
       + ';border-radius:8px;padding:5px 11px;font-size:11px;font-weight:800">➕ Crear la cuenta y mandarle los datos</button></div>';
   }
-  const nivel = conflicto ? 'conflicto' : alerta ? 'revisar' : (uOk||tOk) ? 'ok' : 'nuevo';
+  // ── YA VALIDADO DESDE ACÁ ─────────────────────────────────────────────────────────────────
+  // Resuelta la consulta, la tarjeta deja de ser un cotejo y pasa a ser un recibo: qué quedó
+  // validado. Los botones "usar fulano" se van porque ya no hay nada que elegir (Juan, cinco
+  // veces: cada fila ofrece sólo lo que SE PUEDE hacer sobre esa fila).
+  if(resuelto && resuelto.usuario){
+    const _rT=_altaNormTel(resuelto.telefono);
+    filas = fila('Usuario', esc(resuelto.usuario), '✓ validado', '#3fb950',
+              (uDecl && _altaNormU(resuelto.usuario)!==uDeclN)
+                ? sub('El cliente había escrito <b style="color:#c9d1d9">'+esc(uDecl)+'</b>') : '')
+          + (_rT ? fila('Teléfono', esc(_rT), '✓ validado', '#3fb950',
+              (tN.length>=6 && _rT!==tN)
+                ? sub('Había declarado <b style="color:#c9d1d9">'+esc(tN)+'</b>') : '') : '');
+    pie='Validado y agendado. Si escribió por el portal, ya recibió el botón para ingresar.';
+    // El rótulo "declaró el cliente" de la esquina ya no corresponde: las filas de arriba
+    // muestran la cuenta REAL con la que quedó validado, no lo que el cliente escribió.
+    alerta=false; conflicto=false; acciones=''; titulo='';
+  }
+  const nivel = (resuelto && resuelto.usuario) ? 'validado'
+              : conflicto ? 'conflicto' : alerta ? 'revisar' : (uOk||tOk) ? 'ok' : 'nuevo';
   const T = {
     ok:        { c:'#3fb950', bg:'rgba(63,185,80,.10)',  bd:'rgba(63,185,80,.38)',  ico:'✅' },
+    validado:  { c:'#3fb950', bg:'rgba(63,185,80,.14)',  bd:'rgba(63,185,80,.50)',  ico:'✅' },
     nuevo:     { c:'#58a6ff', bg:'rgba(88,166,255,.09)', bd:'rgba(88,166,255,.32)', ico:'🆕' },
     revisar:   { c:'#e3b341', bg:'rgba(227,179,65,.11)', bd:'rgba(227,179,65,.42)', ico:'⚠️' },
     conflicto: { c:'#ff7b72', bg:'rgba(248,81,73,.12)',  bd:'rgba(248,81,73,.50)',  ico:'🚨' }
   }[nivel];
-  const etiqueta = nivel==='conflicto' ? 'No coinciden'
+  const etiqueta = nivel==='validado'  ? 'Validado'
+                 : nivel==='conflicto' ? 'No coinciden'
                  : (nivel==='revisar' && _typoPropio) ? 'Teléfono mal tipeado'
                  : (nivel==='revisar' && _telCompartido) ? 'Teléfono en dos cuentas'
                  : nivel==='revisar'   ? 'Revisar'
@@ -659,7 +747,7 @@ async function _altaCotejoRender(){
   box.innerHTML='<div class="small" style="color:#8b949e">🔎 cotejando en la base…</div>';
   let r; try{ r=await window.altaCotejarDatos(uDecl,t); }catch(_e){ box.innerHTML=''; return; }
   // El rótulo de la esquina avisa que todavía se está cotejando lo del cliente y no el usuario real.
-  const out=_altaCotejoHtml(uDecl, t, r, '_altaUsarSugerencia', uInp?'':'declaró el cliente');
+  const out=_altaCotejoHtml(uDecl, t, r, '_altaUsarSugerencia', uInp?'':'declaró el cliente', _altaResuelto(uDecl, t, r));
   box.innerHTML=out.html;
 }
 // Modal de RESULTADO del alta/validación: simple (no el modal de error de antes), para VER lo que
@@ -698,7 +786,7 @@ function _altaModalResultado(usuario, telefono){
 window._altaCotejoConsulta = async function(ticket){
   const cont=document.getElementById('altaCotejoConsulta');
   if(!cont) return;
-  if(!ticket){ cont.innerHTML=''; return; }
+  if(!ticket){ cont.innerHTML=''; window.__altaCotejoDecl=null; return; }
   // 1) Lo DECLARADO por el cliente, parseado del mensaje
   let txt='';
   try{
@@ -713,12 +801,14 @@ window._altaCotejoConsulta = async function(ticket){
   // Cache por ticket: no re-cotejar en cada repintado del chat (que ocurre en cada poll)
   const key=_altaNormU(uDecl)+'|'+_altaNormTel(tDecl);
   window.__altaCotejoTicket=ticket;   // para poder re-cotejar tras vincular (ver _altaCotejoRefrescar)
+  // Lo DECLARADO, para que _altaMarcarResuelto sepa a qué consulta pertenece la validación.
+  window.__altaCotejoDecl={ u:uDecl, t:tDecl };
   if(cont.dataset.key===key) return;
   cont.dataset.key=key;
   cont.innerHTML='<div class="small" style="color:#8b949e">🔎 cotejando usuario y teléfono en la base…</div>';
   let r; try{ r=await window.altaCotejarDatos(uDecl,tDecl); }catch(_e){ cont.innerHTML=''; return; }
   if(cont.dataset.key!==key) return;  // llegó otro ticket mientras tanto
-  const out=_altaCotejoHtml(uDecl, tDecl, r, '_altaAbrirVincular', 'declaró el cliente');
+  const out=_altaCotejoHtml(uDecl, tDecl, r, '_altaAbrirVincular', 'declaró el cliente', _altaResuelto(uDecl, tDecl, r));
   cont.innerHTML='<div style="margin-top:6px">'+out.html+'</div>';
 };
 // Re-cotejar DESPUÉS de vincular. El cotejo se cachea por usuario|teléfono declarados, y esos dos
