@@ -334,6 +334,9 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 .bubble{padding:12px 14px;border-radius:14px;font-size:14px;line-height:1.45;word-break:break-word;white-space:pre-wrap}
 .msg.bot .bubble,.msg.sys .bubble{background:var(--surface-2);color:#eef0f7;border:1px solid var(--line);border-bottom-left-radius:5px}
 .msg.user .bubble{background:var(--gold);color:#1a1500;font-weight:600;border-bottom-right-radius:5px}
+/* Tilde de visto: gris = enviado, celeste = del otro lado ya lo vieron. */
+.msg.user .meta .visto{margin-left:5px;font-weight:800;letter-spacing:-2px;color:var(--muted-2)}
+.msg.user .meta .visto.si{color:#4aa8ff}
 .meta{font-size:10.5px;color:var(--muted);padding:4px 5px 0}
 .bubble img.chat-img{max-width:100%;border-radius:10px;margin-top:8px;display:block;cursor:pointer;border:1px solid var(--line-2)}
 .status-pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:6px 12px;font-size:12px;font-weight:800;background:rgba(233,194,92,.14);color:var(--gold-2);border:1px solid rgba(233,194,92,.3);margin:8px 0 2px}
@@ -459,6 +462,10 @@ const SUPABASE_URL = "https://pjvvyvfcwjoocjqvdror.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_NYqRoKptTgcL90VAVF2kqA_Gl06mEUF";
 const DEFAULT_ROUTE = "rt-a8f31"; // Solo compatibilidad/dev — NO usar como fallback en producción (hoy NO se referencia en ningún lado).
 const PLATFORM_URL = "https://bet-300.pw";
+// Sello de versión a la vista. Sin esto no hay forma de saber si lo que se abrió es el portal
+// nuevo o la copia vieja que guardó el service worker en el teléfono. Se cambia a mano en cada
+// publicación, junto con la versión del sw.js.
+const PORTAL_VER="v2.1.6 · 21/10";
 let sb=null;try{if(SUPABASE_ANON_KEY&&!SUPABASE_ANON_KEY.includes("PEGAR_"))sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)}catch(e){console.warn(e)}
 
 const state={
@@ -478,6 +485,8 @@ const state={
   // ve otra billetera y no entiende nada — o peor, cree que transfirió mal.
   pendingBilletera:localStorage.getItem("bet300_pending_billetera")||"",
   seenMsgIds:new Set(),
+  // Globo dibujado de cada mensaje propio, para poder ponerle el tilde cuando lo lean.
+  misGlobos:new Map(),
   portalThreadSeen:new Set(JSON.parse(localStorage.getItem("bet300_portal_thread_seen")||"[]")),
   shownTexts:new Set(),
   solicitudStartedAt:Number(localStorage.getItem("bet300_solicitud_started_at")||0),
@@ -535,7 +544,7 @@ function olvidarSolicitud(conChat){
   state.pendingTipo=""; state.pendingBilletera=""; state.solicitudId=""; state.solicitudStartedAt=0;
   if(conChat !== false){
     _borrar(CLAVES_CHAT);
-    state.chatId=""; state.chatToken=""; state.seenMsgIds=new Set();
+    state.chatId=""; state.chatToken=""; state.seenMsgIds=new Set(); state.misGlobos=new Map();
   }
 }
 function olvidarJugador(){
@@ -796,8 +805,15 @@ function addMsg(text,who="bot",imgUrl=null,meta=null){
   const labels={user:"Vos",operator:"Operador",bot:"Bot automático",guide:"Guía automática · opciones",system:"Sistema"};
   const stamp=meta?.fecha||meta?.created_at;
   const time=stamp?(_fechaCorta(stamp)||now()):now();
-  wrap.innerHTML='<div class="bubble">'+cuerpo+imgHtml+(actions?'<div class="chat-help-actions">'+actions+'</div>':"")+'</div><div class="meta">'+labels[who]+" · "+esc(time)+'</div>';
+  wrap.innerHTML='<div class="bubble">'+cuerpo+imgHtml+(actions?'<div class="chat-help-actions">'+actions+'</div>':"")+'</div><div class="meta">'+labels[who]+" · "+esc(time)+((who==="user")?'<span class="visto" aria-label="enviado">✓</span>':'')+'</div>';
   $("messages").appendChild(wrap);scrollChat();
+  // Se guarda con la MISMA clave que usa el dedup de renderThreadMsg, así el poll lo encuentra.
+  if(who==="user"){
+    try{
+      const _k = text ? ("u|"+String(text).substring(0,200)) : ("uimg|"+String(imgUrl||"").substring(0,80));
+      state.misGlobos.set(_k, wrap);
+    }catch(_e){}
+  }
   return wrap;
 }
 function incomingOperatorMsg(texto,imgUrl,m=null){
@@ -940,6 +956,11 @@ async function pollOperatorMessages(){
   const res=await rpc("landing_leer_chat_v2",{p_chat_id:Number(state.chatId),p_chat_token:state.chatToken});
   if(res.error||!Array.isArray(res.data)){_onPollFail();return;}
   _onPollOk();
+  // El servidor ya manda `leido` por mensaje en esta misma respuesta: no hace falta pedir nada
+  // más. Hoy se pone en true cuando NODO descarga la conversación; cuando el panel mande el
+  // acuse explícito va a significar "el operador lo vio en pantalla". El Portal no cambia: lee
+  // el mismo campo y el tilde se vuelve más honesto solo.
+  try{ marcarVistos(res.data); }catch(_e){}
   res.data.forEach(m=>{
     const msgKey=String(m.id||m.created_at||JSON.stringify(m));
     if(state.seenMsgIds.has(msgKey))return;
@@ -949,6 +970,24 @@ async function pollOperatorMessages(){
     const texto=m.mensaje||m.texto||"";
     if(isOp&&(texto||m.imagen_url)){const tk=(texto||m.imagen_url||"").substring(0,200);if(state.shownTexts.has(tk))return;state.shownTexts.add(tk);incomingOperatorMsg(texto,m.imagen_url||null,m);if(texto)notificarLocal("BET300 · "+(who==="operator"?"Operador":who==="bot"?"Bot automático":"Sistema"),chatHelpMessage(texto,who).text.substring(0,100),"/","bet300-op");}
   });
+}
+
+// Pinta el tilde de visto en los mensajes del jugador. Dos estados, nada más:
+//   ✓  gris    → se envió
+//   ✓✓ celeste → del otro lado ya lo leyeron
+// No inventa: si el servidor no dice nada, queda en gris.
+function marcarVistos(filas){
+  if(!Array.isArray(filas)||!state.misGlobos||!state.misGlobos.size)return;
+  for(const m of filas){
+    if(chatMessageRole(m)!=="user")continue;
+    if(!(m&&m.leido===true))continue;
+    const _t=m.mensaje||"";
+    const _k=_t?("u|"+String(_t).substring(0,200)):("uimg|"+String(m.imagen_url||"").substring(0,80));
+    const _g=state.misGlobos.get(_k);
+    if(!_g)continue;
+    const _v=_g.querySelector(".visto");
+    if(_v&&!_v.classList.contains("si")){ _v.textContent="✓✓"; _v.classList.add("si"); _v.setAttribute("aria-label","visto"); }
+  }
 }
 
 // ── Portal metadata thread poll (respuestas desde panel/NODO) ─────────────
@@ -1431,11 +1470,79 @@ function setEstadoLive(txt){const e=$("estadoLive");if(e)e.innerHTML='<span clas
 
 // ── Estado (pantalla) ──────────────────────────────────────────────────────
 // ── Historial del usuario (últimos 7 días) ───────────────────────────────────
+// Un lector por identidad para historial y rechazo previo. La ruta se elige una vez:
+// beta si existe; legacy sólo si PostgREST confirma que falta esa función concreta.
+// Sin timer nuevo ni segundo intento por un timeout. Cache breve en memoria, sin PII en salud.
+const HISTORIAL_BETA_RPC='landing_historial_usuario_beta_v1';
+let historialRuta='beta', historialVuelo=null, historialCache=null;
+let historialSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
+function portalHistorialEstado(){return {...historialSalud,ruta:historialRuta,enCurso:!!historialVuelo};}
+function _historialZona(){
+  try{return Intl.DateTimeFormat().resolvedOptions().timeZone||'America/Argentina/Buenos_Aires';}
+  catch(_e){return 'America/Argentina/Buenos_Aires';}
+}
+function _historialClave(){return JSON.stringify([state.usuario||'',state.telefono||'',state.publicCode||'',_historialZona()]);}
+function _historialFuncionAusente(error){
+  return !!error && ['PGRST202','42883'].includes(String(error.code||''))
+    && String(error.message||'').includes(HISTORIAL_BETA_RPC);
+}
+function _historialLegacy(rows){
+  const rechazos={CARGA:null,RETIRO:null};
+  for(const r of rows){
+    const tipo=String(r.tipo||'').toUpperCase();
+    if((tipo==='CARGA'||tipo==='RETIRO') && !rechazos[tipo]
+      && ['RECHAZADA','CANCELADA','ERROR','ERROR_OPERATIVO'].includes(String(r.estado||'').toUpperCase())
+      && String(r.motivo||'').trim() && _mismoTurno(r.fecha))rechazos[tipo]=r;
+  }
+  return {ok:true,contract:'portal.historial.legacy',rows,rechazos_turno:rechazos};
+}
+async function cargarResumenHistorial(){
+  if(!state.usuario||!state.telefono)return {ok:true,rows:[],rechazos_turno:{}};
+  const clave=_historialClave(), ahora=Date.now();
+  if(historialVuelo && historialVuelo.clave===clave)return historialVuelo.promise;
+  // Nunca reutilizar el aviso cuando cambió el turno. El servidor entrega su límite.
+  if(historialCache && historialCache.clave===clave && ahora-historialCache.ts<1500
+    && (!historialCache.data.turno_hasta || ahora<new Date(historialCache.data.turno_hasta).getTime()))return historialCache.data;
+  const args={p_usuario:state.usuario,p_telefono:state.telefono,p_public_code:state.publicCode||''};
+  const vuelo={clave,promise:null};
+  historialVuelo=vuelo;
+  historialSalud={...historialSalud,estado:'consultando',ultimoError:null};
+  vuelo.promise=(async()=>{
+    try{
+      let res;
+      if(historialRuta==='beta'){
+        res=await rpc(HISTORIAL_BETA_RPC,{...args,p_zona_horaria:_historialZona()});
+        if(_historialFuncionAusente(res&&res.error)){
+          historialRuta='legacy';
+          res=await rpc('landing_historial_usuario',args);
+        }
+      }else res=await rpc('landing_historial_usuario',args);
+      if(res&&res.error)throw res.error;
+      let data=res&&res.data;
+      if(typeof data==='string')data=JSON.parse(data);
+      if(historialRuta==='legacy'){
+        if(!Array.isArray(data))throw {code:'CONTRATO_INVALIDO'};
+        data=_historialLegacy(data);
+      }else if(!data || data.ok!==true || data.contract!=='portal.historial.v1'
+        || !Array.isArray(data.rows) || !data.rechazos_turno || !data.turno_hasta){
+        throw {code:data&&data.code||'CONTRATO_INVALIDO'};
+      }
+      // Una respuesta tardía de otra identidad no debe volver a pintarse ni llenar el cache.
+      if(_historialClave()!==clave)return {ok:false,code:'CONTEXTO_CAMBIO',rows:[],rechazos_turno:{}};
+      historialCache={clave,ts:Date.now(),data};
+      historialSalud={estado:'respuesta_confirmada',contrato:data.contract,ultimoExito:new Date().toISOString(),ultimoError:null};
+      return data;
+    }catch(error){
+      const code=String(error&&error.code||'SIN_CONEXION');
+      if(_historialClave()===clave)historialSalud={...historialSalud,estado:'error',ultimoError:code};
+      return {ok:false,code,rows:[],rechazos_turno:{}};
+    }finally{if(historialVuelo===vuelo)historialVuelo=null;}
+  })();
+  return vuelo.promise;
+}
 async function cargarHistorialUsuario(){
-  if(!state.usuario||!state.telefono) return [];
-  const res=await rpc("landing_historial_usuario",{p_usuario:state.usuario,p_telefono:state.telefono,p_public_code:state.publicCode||""});
-  if(res.error||!Array.isArray(res.data)) return [];
-  return res.data;
+  const resumen=await cargarResumenHistorial();
+  return resumen.rows;
 }
 function _fechaCorta(iso){
   // 24 h y con año corto: "06/08 09:01" — exacto y sin el "a. m." con espacios de es-AR.
@@ -1477,13 +1584,9 @@ function _mismoTurno(iso){
 }
 async function pintarRechazoPrevio(slotId,tipo){
   const slot=$(slotId); if(!slot) return;
-  let rows=[]; try{ rows=await cargarHistorialUsuario(); }catch(_e){ return; }
-  const r=(rows||[]).find(function(x){
-    return String(x.tipo||"").toUpperCase()===tipo
-      && ["RECHAZADA","CANCELADA","ERROR","ERROR_OPERATIVO"].includes(String(x.estado||"").toUpperCase())
-      && String(x.motivo||"").trim()
-      && _mismoTurno(x.fecha);
-  });
+  const resumen=await cargarResumenHistorial();
+  if(!resumen.ok || $(slotId)!==slot)return;
+  const r=resumen.rechazos_turno[tipo];
   if(!r) return;
   slot.innerHTML='<div style="background:rgba(239,68,68,.09);border:1px solid rgba(239,68,68,.3);border-radius:14px;padding:12px 13px;margin-bottom:14px">'
     +'<div style="font-size:13px;font-weight:800;color:#fca5a5;margin-bottom:5px">🚫 Tu '+(tipo==="RETIRO"?"retiro":"carga")+' anterior no se pudo procesar</div>'
@@ -1504,7 +1607,10 @@ function _histBox(){
 async function pintarHistorialUsuario(){
   const box=_histBox(); if(!box) return;
   box.innerHTML='<div style="text-align:center;color:#8b95a5;font-size:12px;padding:10px">Cargando historial…</div>';
-  const rows=await cargarHistorialUsuario();
+  const resumen=await cargarResumenHistorial();
+  if($('histUsuario')!==box || resumen.code==='CONTEXTO_CAMBIO')return;
+  if(!resumen.ok){box.innerHTML='<div role="status" style="text-align:center;color:#fca5a5;font-size:12px;padding:12px">No pudimos actualizar el historial. Volvé a intentarlo.</div>';return;}
+  const rows=resumen.rows;
   if(!rows.length){ box.innerHTML='<div style="text-align:center;color:#8b95a5;font-size:12px;padding:12px">Sin operaciones en los últimos 7 días.</div>'; return; }
   const filas=rows.map(function(r){
     const esRetiro=String(r.tipo||"").toUpperCase()==="RETIRO";
@@ -1533,7 +1639,7 @@ async function pintarHistorialUsuario(){
       + (rech && r.motivo ? '<div style="width:100%;font-size:11.5px;color:#fca5a5;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:6px 8px;margin-top:2px">🚫 '+esc(r.motivo)+'</div>' : '')
       + '</div>';
   }).join("");
-  box.innerHTML='<div style="font-size:12px;font-weight:800;color:#8b95a5;text-transform:uppercase;letter-spacing:.4px;margin:16px 2px 4px">Últimos 7 días</div>'+filas;
+  box.innerHTML='<div style="font-size:12px;font-weight:800;color:#8b95a5;text-transform:uppercase;letter-spacing:.4px;margin:16px 2px 4px">Últimos 7 días <span style="opacity:.55;font-weight:600;text-transform:none;letter-spacing:0">'+PORTAL_VER+'</span></div>'+filas;
 }
 
 // La billetera de la solicitud, y el aviso cuando la que figura ahora en el portal es otra.
