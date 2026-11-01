@@ -18,20 +18,15 @@
 </head>
 
 <body>
-<div id="updaterBox" style="position:fixed;top:10px;right:12px;z-index:100000;display:flex;align-items:center;gap:8px;background:#151a24;border:1px solid #272b36;border-radius:999px;padding:6px 12px;font-size:11px;color:#8b949e;box-shadow:0 2px 10px rgba(0,0,0,.45)">
-  <span id="updaterVersionTxt" style="font-weight:700;color:#c8d2e0">—</span>
-  <select id="updaterCanal" onchange="nodoSetCanal(this.value)" title="Canal de actualización · alpha = oficial (nuestro) · beta = repo del colega (pruebas)" style="background:#0d1117;border:1px solid #272b36;color:#c8d2e0;border-radius:8px;font-size:10px;padding:2px 4px;font-weight:700;cursor:pointer">
-    <option value="alpha">α oficial</option>
-    <option value="beta">β beta</option>
-  </select>
-  <button class="mini-btn gray" style="padding:4px 10px;font-size:11px" onclick="nodoBuscarActualizacion()" title="Buscar e instalar la última versión">🔄 Actualizar</button>
-  <button class="mini-btn gray" id="updaterRollbackBtn" style="padding:4px 10px;font-size:11px;display:none" onclick="nodoVolverVersionAnterior()" title="Volver a la versión anterior si esta falla">↩ Volver</button>
+<div id="updaterBox" class="updater-pill" style="position:fixed;top:10px;right:12px;z-index:100000;display:flex;align-items:center;gap:6px;background:rgba(21,26,36,.95);border:1px solid #2d3748;border-radius:999px;padding:3px 10px;font-size:11px;color:#94a3b8;box-shadow:0 3px 12px rgba(0,0,0,.4)">
+  <span id="updaterVersionTxt" style="font-weight:800;color:#cbd5e1;letter-spacing:.3px">—</span>
+  <button id="btnActualizarNodo" class="mini-btn gray" style="padding:2px 8px;font-size:11px;border-radius:999px" onclick="nodoBuscarActualizacion()" title="Buscar nueva versión y actualizar">🔄 Actualizar</button>
+  <button class="mini-btn gray" id="updaterRollbackBtn" style="padding:2px 7px;font-size:11px;border-radius:999px;display:none" onclick="nodoVolverVersionAnterior()" title="Descargas anteriores">↩</button>
   <span id="updaterStatusTxt"></span>
-  <button id="updaterMinBtn" onclick="nodoUpdaterMinimizar(true)" title="Minimizar" style="background:transparent;border:0;color:#6b7688;cursor:pointer;font-size:14px;line-height:1;padding:0 2px">—</button>
+  <button id="updaterMinBtn" onclick="nodoUpdaterMinimizar(true)" title="Minimizar" style="background:transparent;border:0;color:#64748b;cursor:pointer;font-size:13px;line-height:1;padding:0 2px;margin-left:2px">—</button>
 </div>
-<!-- Plegado: muestra la VERSIÓN, no un 🔄 pelado. Como círculo gris anónimo no se entendía que
-     ahí vivían las actualizaciones, y al mudarse de esquina directamente "desapareció". -->
-<button id="updaterMiniChip" onclick="nodoUpdaterMinimizar(false)" title="Versión y actualizaciones — clic para abrir" style="position:fixed;top:10px;right:12px;z-index:100000;display:none;align-items:center;gap:5px;background:#151a24;border:1px solid #272b36;border-radius:999px;height:28px;padding:0 11px;color:#8b949e;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.45);font-size:11px;font-weight:700;white-space:nowrap">🔄 <span id="updaterMiniVer">—</span></button>
+<!-- Plegado: muestra la VERSIÓN -->
+<button id="updaterMiniChip" onclick="nodoUpdaterMinimizar(false)" title="Versión y actualizaciones — clic para abrir" style="position:fixed;top:10px;right:12px;z-index:100000;display:none;align-items:center;gap:5px;background:#151a24;border:1px solid #272b36;border-radius:999px;height:26px;padding:0 9px;color:#8b949e;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.45);font-size:11px;font-weight:700;white-space:nowrap">🔄 <span id="updaterMiniVer">—</span></button>
 <div id="loginView" class="login-wrap">
   <div class="login-card">
     <img src="icons/icon-n.png" class="logo" alt="NODO">
@@ -67,17 +62,18 @@
         <div id="watchdogIndicator" title="Watchdog que compara saldos de Drex y Chunior cada minuto">🔄 Watchdog inactivo</div>
       </div>
 
-      <button id="navInicio" aria-label="Inicio" class="nav-btn active" onclick="mostrarVista('inicio')">🏠 Inicio</button>
-      <button id="navSolicitudes" aria-label="Solicitudes" class="nav-btn" onclick="mostrarVista('solicitudes')">📋 Solicitudes <span id="badgeSolicitudes" class="badge-alert hidden">0</span></button>
-      <button id="navBilleteras" aria-label="Billeteras" class="nav-btn" onclick="mostrarVista('billeteras')">💳 Billeteras</button>
-      <button id="navChat" aria-label="Chat" class="nav-btn" onclick="mostrarVista('chat')">💬 Chat <span id="badgeChat" class="badge-alert badge-chat hidden">0</span></button>
-      <button id="navJugadores" aria-label="Jugadores" class="nav-btn" onclick="mostrarVista('jugadores')">🏅 Jugadores</button>
-      <button id="navAuto" aria-label="Automatización" class="nav-btn hidden" onclick="mostrarVista('auto')" style="border:1px solid rgba(124,58,237,.5)">⚡ Automatización</button>
-      <!-- Apartado "🔍 Verificaciones" ELIMINADO (pedido del user): la sección viewVerificaciones y su
-           botón de nav se sacaron porque el panel se colaba visible en el Inicio. El procesador de
-           la cola sigue corriendo en background; setBox() ignora los contenedores que ya no existen. -->
+      <div class="sidebar-nav-top">
+        <button id="navInicio" aria-label="Inicio" class="nav-btn active" onclick="mostrarVista('inicio')">🏠 Inicio</button>
+        <button id="navSolicitudes" aria-label="Solicitudes" class="nav-btn" onclick="mostrarVista('solicitudes')">📋 Solicitudes <span id="badgeSolicitudes" class="badge-alert hidden">0</span></button>
+        <button id="navBilleteras" aria-label="Billeteras" class="nav-btn" onclick="mostrarVista('billeteras')">💳 Billeteras</button>
+        <button id="navChat" aria-label="Chat" class="nav-btn" onclick="mostrarVista('chat')">💬 Chat <span id="badgeChat" class="badge-alert badge-chat hidden">0</span></button>
+        <button id="navJugadores" aria-label="Jugadores" class="nav-btn" onclick="mostrarVista('jugadores')">🏅 Jugadores</button>
+      </div>
 
-      <button class="nav-btn" aria-label="Cerrar sesión" onclick="cerrarSesion()">🚪 Cerrar sesión</button>
+      <div class="sidebar-bottom">
+        <button id="navAjustes" aria-label="Ajustes" class="nav-btn" onclick="nodoAbrirAjustes()">⚙️ Ajustes</button>
+        <button class="nav-btn" aria-label="Cerrar sesión" onclick="cerrarSesion()">🚪 Cerrar sesión</button>
+      </div>
     </aside>
 
     <main class="main">
@@ -166,7 +162,7 @@
                 <div style="display:flex;gap:6px;align-items:center">
                   <button id="btnParcialesEnProceso" class="mini-btn" onclick="verRetirosParciales()"
                           style="font-size:11px;background:#7c3aed;color:#fff;border:none;display:none"
-                          title="Retiros que se están pagando por partes">💸 Parciales <span id="btnParcialesCount">0</span></button>
+                          title="Solicitudes que ya tomó alguien y retiros que se están pagando por partes">💸 En proceso <span id="btnParcialesCount">0</span></button>
                   <button class="mini-btn gray" onclick="mostrarVista('solicitudes')" style="font-size:11px">Ver todas</button>
                 </div>
               </div>
@@ -218,6 +214,7 @@
                       <button class="mini-btn blue" onclick="v15InsertarMacro('Listo ✅ Tu operación fue procesada.')">Listo</button>
                     </div>
                     <div class="v15-compose-row">
+                      <button class="mini-btn gray" onclick="document.getElementById('chatFile').click()" title="Adjuntar imagen">📎</button>
                       <textarea id="v15ChatInput" rows="1" placeholder="Responder desde inicio..."></textarea>
                       <button class="mini-btn blue" onclick="v15EnviarChatCompacto()">➤</button>
                     </div>
@@ -293,7 +290,7 @@
               </div>
               <!-- El centro de control trae sólo el turno actual: un parcial de ayer no aparecía en ningún
                    lado. Este botón abre la misma caja que el de la pantalla de inicio. -->
-              <button type="button" id="btnParcialesCC" class="sol-btn-refresh" onclick="verRetirosParciales()" title="Retiros que se están pagando por partes" style="display:none;background:#7c3aed;border-color:#7c3aed;color:#fff">💸 Parciales <b id="btnParcialesCCCount">0</b></button>
+              <button type="button" id="btnParcialesCC" class="sol-btn-refresh" onclick="verRetirosParciales()" title="Solicitudes que ya tomó alguien y retiros que se están pagando por partes" style="display:none;background:#7c3aed;border-color:#7c3aed;color:#fff">💸 En proceso <b id="btnParcialesCCCount">0</b></button>
               <button type="button" class="sol-btn-refresh" onclick="cargarSolicitudesPortal(true)" title="Refrescar solicitudes ahora">
                 <span>🔄</span> <b>Refrescar</b>
               </button>
@@ -477,62 +474,7 @@
         <div class="alert-box" style="padding:12px">⏳ Armando el CRM operativo…</div>
       </section>
 
-      <section id="viewAuto" class="hidden">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
-          <div>
-            <h1 style="font-size:26px">⚡ Automatización</h1>
-            <div class="small">Panel de prueba — cargas y retiros automáticos en el backoffice del casino.</div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button id="agentBackendBtn" class="mini-btn gray" onclick="nodoCambiarBackendAgentes()" title="Cambiar el backoffice de agentes (Casinodrex ⇄ BET300). Relanza la ventana de agentes; el proxy de la oficina NO cambia. Tocá para alternar.">🎰 Backoffice: …</button>
-            <button id="abrirBackofficeBtn" class="mini-btn purple" onclick="abrirBackoffice()">🖥 Abrir backoffice</button>
-          </div>
-        </div>
-
-        <div class="top-grid" style="margin-bottom:18px">
-          <div class="stat-card">
-            <div class="stat-title">Estado backoffice</div>
-            <div class="stat-value" id="autoEstadoVal" style="font-size:16px;margin-top:6px">—</div>
-            <div class="stat-sub" id="autoEstadoMsg">Sin verificar</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-title">Último resultado</div>
-            <div class="stat-value" id="autoResultVal" style="font-size:15px;margin-top:6px;word-break:break-all">—</div>
-          </div>
-        </div>
-
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px">
-
-          <div class="card">
-            <div class="card-title">🔍 Buscar usuario</div>
-            <label>Usuario (alias del jugador)</label>
-            <input id="autoUsuario" type="text" placeholder="Ej: aaal67" style="margin-bottom:12px">
-            <button class="btn btn-primary" onclick="testBuscar()">Buscar</button>
-            <div id="autoBuscarRes" style="margin-top:10px"></div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">➕ Cargar saldo</div>
-            <label>Usuario</label>
-            <input id="autoCargarUsuario" type="text" placeholder="Ej: aaal67" style="margin-bottom:12px">
-            <label>Monto (ARS)</label>
-            <input id="autoCargarMonto" type="number" min="1" placeholder="Ej: 1000" style="margin-bottom:12px">
-            <button class="btn btn-green" onclick="testCargar()">Cargar saldo</button>
-            <div id="autoCargarRes" style="margin-top:10px"></div>
-          </div>
-
-          <div class="card">
-            <div class="card-title">➖ Retirar saldo</div>
-            <label>Usuario</label>
-            <input id="autoRetirarUsuario" type="text" placeholder="Ej: aaal67" style="margin-bottom:12px">
-            <label>Monto (ARS)</label>
-            <input id="autoRetirarMonto" type="number" min="1" placeholder="Ej: 500" style="margin-bottom:12px">
-            <button class="btn btn-red" onclick="testRetirar()">Retirar saldo</button>
-            <div id="autoRetirarRes" style="margin-top:10px"></div>
-          </div>
-
-        </div>
-      </section>
+      
 
       <!-- ── Verificaciones de login ── -->
 
@@ -542,8 +484,96 @@
 
 <div id="mobileMenu" class="mobile-menu" onclick="cerrarMenuMobile(event)"></div>
 
+<!-- ── Modal Minimalista de Ajustes ── -->
+<div id="modalAjustesOverlay" class="modal-overlay hidden" onclick="if(event.target===this)nodoCerrarAjustes()">
+  <div class="ajustes-drawer" onclick="event.stopPropagation()">
+    <div class="ajustes-head">
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="ajustes-head-icon">⚙️</div>
+        <div>
+          <h2 style="font-size:15px;font-weight:800;color:#f1f5f9;margin:0;line-height:1.2">Ajustes</h2>
+          <div class="small" style="color:#94a3b8;font-size:11px">Tonos de notificación y backoffice de agentes</div>
+        </div>
+      </div>
+      <button class="ajustes-close-btn" onclick="nodoCerrarAjustes()" title="Cerrar (Esc)">✕</button>
+    </div>
+
+    <div class="ajustes-body">
+      <!-- Sección Tonos -->
+      <div class="ajustes-section">
+        <div class="ajustes-section-title">
+          <span>🔔</span> TONOS DE NOTIFICACIÓN
+        </div>
+        <div class="small" style="color:#94a3b8;margin-bottom:12px">
+          Tonos profesionales y discretos para solicitudes y mensajes de chat.
+        </div>
+
+        <div class="tono-picker-list" id="tonoPickerList"></div>
+
+        <div class="ajustes-vol-row">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span class="small" style="font-weight:700;color:#cbd5e1">Volumen de alerta</span>
+            <span id="txtVolumenTono" class="small" style="font-weight:800;color:#38bdf8">80%</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:13px;opacity:0.7">🔈</span>
+            <input type="range" id="sliderVolumenTono" min="0" max="100" value="80" oninput="nodoCambiarVolumen(this.value)" class="ajustes-slider">
+            <span style="font-size:13px;opacity:0.7">🔊</span>
+          </div>
+        </div>
+
+        <div class="ajustes-custom-audio">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+            <div>
+              <div style="font-size:12px;font-weight:700;color:#cbd5e1">Audio propio</div>
+              <div class="small" id="txtAudioPersonalizado" style="color:#64748b">Formatos .mp3, .wav, .ogg (máx 2 MB)</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <input type="file" id="inputAudioPersonalizado" accept="audio/wav,audio/mpeg,audio/mp3,audio/ogg" onchange="nodoCargarAudioArchivo(this)" style="display:none">
+              <button class="mini-btn gray" onclick="document.getElementById('inputAudioPersonalizado').click()" style="padding:5px 10px;font-size:11px">📁 Cargar</button>
+              <button id="btnQuitarAudioCustom" class="mini-btn red" onclick="nodoQuitarAudioCustom()" style="display:none;padding:5px 8px;font-size:11px" title="Quitar audio propio">✕</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sección Agentes -->
+      <div class="ajustes-section" style="margin-top:18px;border-top:1px solid #1e293b;padding-top:16px">
+        <div class="ajustes-section-title">
+          <span>🎰</span> BACKOFFICE DE AGENTES
+        </div>
+        <div class="small" style="color:#94a3b8;margin-bottom:10px">
+          Alterná el proveedor de backoffice o abrí la ventana operativa.
+        </div>
+
+        <div class="ajustes-agente-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <span class="small" style="color:#94a3b8">Estado de ventana</span>
+            <span id="autoEstadoVal" style="font-size:12px;font-weight:800;color:#facc15">—</span>
+          </div>
+          <div id="autoEstadoMsg" class="small" style="color:#64748b;word-break:break-all">Sin verificar</div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
+          <button id="agentBackendBtn" class="mini-btn blue" onclick="nodoCambiarBackendAgentes()" style="padding:10px;justify-content:center;text-align:center" title="Cambiar backend de agentes">🎰 Alternar Agente</button>
+          <button id="abrirBackofficeBtn" class="mini-btn gray" onclick="abrirBackoffice()" style="padding:10px;justify-content:center;text-align:center" title="Abrir ventana de backoffice">🖥 Abrir Ventana</button>
+        </div>
+      </div>
+
+      <!-- Estado del sistema -->
+      <div class="ajustes-section" style="margin-top:18px;border-top:1px solid #1e293b;padding-top:16px">
+        <div class="ajustes-section-title">
+          <span>🩺</span> ESTADO DEL SISTEMA
+        </div>
+        <div id="ajustesEstadoSistema" class="ajustes-agente-card" style="margin-top:8px"></div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
 <div id="modalExpedienteOverlay" class="expediente-overlay hidden" onclick="if(event.target===this)cerrarExpedienteSolicitud()">
-  <div class="expediente-drawer" onclick="event.stopPropagation()">
+  <div class="expediente-drawer" data-ocupa-derecha onclick="event.stopPropagation()">
     <div class="expediente-head">
       <div style="display:flex;align-items:center;gap:12px;min-width:0">
         <div id="expedienteTipoIco" class="expediente-ico">📋</div>
@@ -556,7 +586,7 @@
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-        <button class="mini-btn gray" type="button" onclick="copiarResumenExpediente()" title="Copiar ficha / resumen para soporte o WhatsApp">📋 Copiar ficha</button>
+        <button class="mini-btn gray" type="button" onclick="copiarResumenExpediente()" title="Copia los datos de esta operación (jugador, monto, estado, billetera y titular) listos para pegar en el chat o en WhatsApp">📋 Copiar datos</button>
         <button class="expediente-close-btn" type="button" onclick="cerrarExpedienteSolicitud()" title="Cerrar (Esc)">✕</button>
       </div>
     </div>
@@ -619,6 +649,9 @@
 
 
 <script>{{nodo:js:chat-ancho}}</script>
+
+
+<script>{{nodo:js:chat-redimensionable}}</script>
 
 
 <script>{{nodo:js:chat-actualizar-solicitud}}</script>

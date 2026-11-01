@@ -34,6 +34,7 @@ window.PANEL_DATA_SECRET = localStorage.getItem("nodo_panel_data_secret") || "no
 // no había forma de saber qué build tenía cada PC — justo lo que hace falta para decidir si ya se
 // puede exigir algo nuevo del lado del servidor. Se pide una sola vez y queda cacheada.
 async function _versionDelPanel(){
+  window.NodoSalud?.begin('CONEXION')?.record('ALIVE','OK','PANEL_VERSION_CHECK');
   if(window._versionApp) return window._versionApp;
   try{
     const v = await window.updaterAPI?.getVersion();
@@ -68,6 +69,7 @@ async function _latidoPanel(){
       p_instalacion:_instalacionId()
     });
   }catch(_e){}
+  finally{ try{ void window.NodoSalud?.flush(); }catch(_e){} }
 }
 setInterval(_latidoPanel, 45000);
 setTimeout(_latidoPanel, 6000);

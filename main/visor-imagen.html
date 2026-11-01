@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<!-- El visor no sale a internet: sólo pinta un <img> que ya viene resuelto desde main.
+     Esta política lo deja por escrito (nada de scripts externos, nada de conexiones). -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Imagen</title>
+<style>
+  :root{ --fondo:#0b0f16; --panel:rgba(17,23,34,.88); --linea:rgba(255,255,255,.12); --texto:#e6edf3; }
+  *{ box-sizing:border-box; }
+  /* Lo escondido tiene que quedar escondido aunque otra regla le ponga display. */
+  [hidden]{ display:none !important; }
+  html,body{ height:100%; margin:0; }
+  body{
+    background:var(--fondo); color:var(--texto);
+    font-family:"Segoe UI",system-ui,-apple-system,sans-serif;
+    overflow:hidden; user-select:none;
+  }
+
+  /* No hay barra interna: la ventana ya trae su título (el nombre del jugador) y su X. Repetirlos
+     adentro era información redundante que además le robaba alto a la imagen. La escena es TODA
+     la ventana, y lo que sobra de la imagen se recorta porque se la mueve con transform, no con
+     barras de desplazamiento. */
+  #escena{ position:fixed; inset:0; overflow:hidden; touch-action:none; }
+  #escena.movible{ cursor:grab; }
+  #escena.arrastrando{ cursor:grabbing; }
+
+  /* La imagen se dibuja a su tamaño original y acercar es SÓLO un transform: no se recarga ni se
+     cambia el src, así que acercar y mover no parpadea. El origen está en la esquina porque todas
+     las cuentas de abajo cuentan desde ahí. Sin max-width a propósito: el que la acomoda en la
+     ventana es la escala, no el CSS. pointer-events:none deja que el mouse lo reciba la escena. */
+  #foto{
+    position:absolute; left:0; top:0; max-width:none; max-height:none;
+    transform-origin:0 0; image-rendering:auto; background:#000;
+    pointer-events:none;
+  }
+  #error{
+    position:absolute; inset:0; display:grid; place-items:center; padding:20px;
+    text-align:center; color:#ff7b72; font-size:13px;
+  }
+
+  /* Controles chicos, abajo al centro. Se atenúan solos cuando el mouse no se mueve, para no tapar
+     el comprobante mientras se lo lee, y vuelven apenas se mueve el mouse o se pasa por encima. */
+  #controles{
+    position:fixed; left:50%; bottom:16px; transform:translateX(-50%); z-index:2;
+    display:flex; align-items:center; gap:2px; padding:4px;
+    background:var(--panel); border:1px solid var(--linea); border-radius:10px;
+    box-shadow:0 6px 20px rgba(0,0,0,.45);
+    transition:opacity .35s ease;
+  }
+  body.quieto #controles{ opacity:.2; }
+  body.quieto #controles:hover{ opacity:1; }
+  #controles button{
+    min-width:34px; height:30px; padding:0 10px; border:0; border-radius:7px;
+    background:transparent; color:var(--texto);
+    font:inherit; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;
+  }
+  #controles button:hover:not(:disabled){ background:rgba(255,255,255,.12); }
+  #controles button:disabled{ opacity:.35; cursor:default; }
+  /* Con el prefijo #controles para ganarle en especificidad a "#controles button" de arriba:
+     sin él, el 12px de esa regla pisa el tamaño y el + y el − quedan diminutos. */
+  #controles #btnMenos, #controles #btnMas{ font-size:18px; line-height:1; padding:0 8px; }
+  #btnEntera{ margin-left:4px; }
+  /* nowrap: "100 %" no se parte en dos renglones por angosta que quede la ventana. */
+  #porcentaje{
+    min-width:54px; text-align:center; font-size:12.5px; font-weight:700;
+    font-variant-numeric:tabular-nums; white-space:nowrap;
+  }
+</style>
+</head>
+<body>
+  <div id="escena">
+    <img id="foto" alt="" hidden>
+    <div id="error" hidden>No se pudo cargar la imagen.</div>
+  </div>
+  <div id="controles" role="group" aria-label="Acercar y alejar" hidden>
+    <button id="btnMenos" type="button" title="Alejar (tecla −)" aria-label="Alejar">&minus;</button>
+    <span id="porcentaje" title="Rueda del mouse: acerca y aleja. Arrastrar: mueve la imagen. Doble clic: acerca o vuelve a verla entera.">100 %</span>
+    <button id="btnMas" type="button" title="Acercar (tecla +)" aria-label="Acercar">+</button>
+    <button id="btnEntera" type="button" title="Ver la imagen entera (tecla 0)">Ver entera</button>
+  </div>
+<script>
+(function(){
+  'use strict';
+
+  // ── ACERCAR ES UNA CUENTA, NO UN TRUCO DE CSS ────────────────────────────────────────────────
+  // Juan: "se sigue sin poder agrandar las imagenes, anteriormente se podia y es redundante la
+  // informacion, no tiene sentido". El visor anterior sólo tenía "ajustada" y "tamaño real", y el
+  // botón para pasar a real se ESCONDÍA cuando la imagen entraba en la ventana: un comprobante
+  // chico (287 por 394) no se podía agrandar de ninguna forma, y nunca se escalaba por encima de
+  // su tamaño natural. Encima la barra de arriba repetía lo que ya dice la ventana.
+  //
+  // Ahora la imagen se dibuja a su tamaño original y todo es una escala más una posición
+  // (transform: translate() scale()). "Entera" es la escala a la que cabe en la ventana y a
+  // propósito PUEDE ser mayor que 1: una imagen chica se agranda hasta llenarla. El porcentaje
+  // que ve el operador cuenta "entera" como 100 %, así "200 %" siempre es el doble de lo que ya
+  // estaba viendo, sea cual sea el tamaño de la imagen.
+  //
+  // Los gestos son los de cualquier visor de escritorio: rueda hacia donde está el cursor, arrastrar
+  // para mover, doble clic entre entera y ampliada, tecla 0 para volver a verla entera.
+  //
+  // Lo que está entre las marcas @@zoom-puro no toca el DOM: la prueba lo saca de este archivo y
+  // lo ejecuta suelto (tests/visor-imagen-una-ventana.test.cjs). Si algo de acá adentro necesita
+  // `document` o `window`, la prueba falla, y es a propósito.
+
+  // @@zoom-puro-inicio
+  var ZOOM_MAXIMO = 8;      // 800 %: lo más que se acerca, contando "entera" como 100 %
+  var ZOOM_DOBLE  = 2;      // 200 %: a lo que salta el doble clic
+  var ZOOM_PASO   = 1.25;   // cuánto agranda o achica cada toque de + y −
+
+  // La vista es una foto de cómo se está mostrando la imagen:
+  //   nw, nh   tamaño original de la imagen (sólo se usa para calcular, nunca se muestra)
+  //   vw, vh   tamaño de la ventana
+  //   entera   escala a la que la imagen entra ENTERA en la ventana
+  //   escala   escala de ahora (1 = tamaño original)
+  //   x, y     dónde cae, en la ventana, la esquina de arriba a la izquierda de la imagen
+  // Las funciones de abajo devuelven una vista nueva y no tocan la que reciben.
+  function copiar(v, cambios){ return Object.assign({}, v, cambios); }
+
+  // Escala a la que la imagen entra entera. NO se limita a 1: un comprobante chico tiene que
+  // agrandarse hasta llenar la ventana en vez de quedar flotando en el medio.
+  function escalaEntera(nw, nh, vw, vh){
+    if(!(nw > 0 && nh > 0 && vw > 0 && vh > 0)) return 1;
+    return Math.min(vw / nw, vh / nh);
+  }
+
+  // Entre "entera" (100 %) y 8 veces eso (800 %). Más chica que entera no tiene sentido: sólo
+  // dejaría la imagen perdida en un mar de fondo.
+  function limitar(escala, entera){
+    return Math.min(entera * ZOOM_MAXIMO, Math.max(entera, escala));
+  }
+
+  // Mantiene la imagen dentro de la ventana: si en un eje es más grande que la ventana no deja
+  // ver fondo en los bordes, y si es más chica la centra.
+  function acotar(v){
+    var ancho = v.nw * v.escala, alto = v.nh * v.escala;
+    return copiar(v, {
+      x: ancho <= v.vw ? (v.vw - ancho) / 2 : Math.min(0, Math.max(v.vw - ancho, v.x)),
+      y: alto  <= v.vh ? (v.vh - alto)  / 2 : Math.min(0, Math.max(v.vh - alto,  v.y))
+    });
+  }
+
+  // La vista de apertura: la imagen entera, ajustada a la ventana y centrada.
+  function vistaEntera(nw, nh, vw, vh){
+    var entera = escalaEntera(nw, nh, vw, vh);
+    return acotar({ nw: nw, nh: nh, vw: vw, vh: vh, entera: entera, escala: entera, x: 0, y: 0 });
+  }
+  function verEntera(v){ return vistaEntera(v.nw, v.nh, v.vw, v.vh); }
+
+  // Con una tolerancia chica: después de varias cuentas con decimales, "entera" puede quedar a
+  // una milésima y tiene que seguir contando como entera.
+  function esEntera(v){ return v.escala <= v.entera * 1.0001; }
+  function enElTope(v){ return v.escala >= v.entera * ZOOM_MAXIMO * 0.9999; }
+  function porcentaje(v){ return Math.round(v.escala / v.entera * 100); }
+
+  // Acerca o aleja multiplicando la escala por `factor`, dejando FIJO el punto (px, py) de la
+  // ventana: lo que el cursor señala antes de acercar es lo mismo que señala después. (Si la
+  // imagen sigue siendo más chica que la ventana en un eje, en ese eje queda centrada y no hay
+  // punto fijo posible; en cuanto la desborda, vale.)
+  function zoomHacia(v, factor, px, py){
+    if(!(factor > 0) || !isFinite(factor)) return v;
+    if(!isFinite(px)) px = v.vw / 2;
+    if(!isFinite(py)) py = v.vh / 2;
+    var escala = limitar(v.escala * factor, v.entera);
+    var k = escala / v.escala;
+    return acotar(copiar(v, { escala: escala, x: px - (px - v.x) * k, y: py - (py - v.y) * k }));
+  }
+
+  // Arrastrar: pone la esquina de la imagen en (x, y) y la frena en los bordes. Cuando la imagen
+  // entra entera no hay a dónde moverla y se queda centrada.
+  function mover(v, x, y){ return acotar(copiar(v, { x: x, y: y })); }
+
+  // Doble clic alterna: si está entera salta a 200 % hacia el punto del clic; si no, vuelve a entera.
+  function dobleClic(v, px, py){
+    return esEntera(v) ? zoomHacia(v, ZOOM_DOBLE, px, py) : verEntera(v);
+  }
+
+  // La ventana cambió de tamaño. Si se estaba viendo entera, sigue entera (se vuelve a ajustar
+  // sola); si estaba acercada, conserva la escala y mira el mismo centro que antes.
+  function redimensionar(v, vw, vh){
+    if(esEntera(v)) return vistaEntera(v.nw, v.nh, vw, vh);
+    var cx = (v.vw / 2 - v.x) / v.escala, cy = (v.vh / 2 - v.y) / v.escala;
+    var entera = escalaEntera(v.nw, v.nh, vw, vh);
+    var escala = limitar(v.escala, entera);
+    return acotar({ nw: v.nw, nh: v.nh, vw: vw, vh: vh, entera: entera, escala: escala,
+                    x: vw / 2 - cx * escala, y: vh / 2 - cy * escala });
+  }
+
+  // Cuánto acerca o aleja un movimiento de rueda: una muesca de mouse (100) son unos 20 %, y el
+  // touchpad, que manda muchos movimientos chicos, queda suave. Hacia arriba (delta negativo)
+  // acerca. El tope por evento evita que un mouse de rueda libre salte de entera a 800 % de golpe.
+  function factorRueda(delta, modo){
+    var px = modo === 1 ? delta * 33 : (modo === 2 ? delta * 400 : delta);
+    return Math.exp(Math.max(-0.7, Math.min(0.7, -px * 0.0018)));
+  }
+  // @@zoom-puro-fin
+
+  // ── EL VISOR: engancha la cuenta de arriba con la página ─────────────────────────────────────
+  var escena    = document.getElementById('escena');
+  var foto      = document.getElementById('foto');
+  var err       = document.getElementById('error');
+  var controles = document.getElementById('controles');
+  var btnMenos  = document.getElementById('btnMenos');
+  var btnMas    = document.getElementById('btnMas');
+  var btnEntera = document.getElementById('btnEntera');
+  var etiqueta  = document.getElementById('porcentaje');
+
+  var REPOSO_MS = 2500;   // sin mover el mouse, los controles se atenúan pasado este rato
+  var vista    = null;    // cómo se ve la imagen ahora; null mientras no haya cargado ninguna
+  var arrastre = null;    // mientras se arrastra: dónde estaban el cursor y la imagen al empezar
+  var reposo   = null;    // temporizador de los controles
+
+  function cerrarVisor(){
+    if(window.visorImagen && window.visorImagen.cerrar) window.visorImagen.cerrar();
+    else window.close();
+  }
+
+  // Todo lo que se ve sale de `vista`: se pinta de una sola vez para que nada quede desparejo.
+  // Los decimales se recortan porque la cuenta arrastra ruido de coma flotante que no se ve.
+  function pintar(){
+    if(!vista) return;
+    var entera = esEntera(vista);
+    foto.style.transform = 'translate(' + vista.x.toFixed(2) + 'px,' + vista.y.toFixed(2) + 'px) ' +
+                           'scale(' + vista.escala.toFixed(5) + ')';
+    etiqueta.textContent = porcentaje(vista) + ' %';
+    // Los botones se APAGAN en los topes, pero nunca se esconden: que un botón desaparezca es
+    // justo lo que dejó sin poder agrandar el comprobante.
+    btnMenos.disabled  = entera;
+    btnEntera.disabled = entera;
+    btnMas.disabled    = enElTope(vista);
+    escena.classList.toggle('movible', !entera);   // la manito sólo cuando hay algo para mover
+  }
+  function aplicar(nueva){ vista = nueva; pintar(); }
+
+  function zoomCentro(factor){
+    if(vista) aplicar(zoomHacia(vista, factor, vista.vw / 2, vista.vh / 2));
+  }
+
+  // Los controles vuelven a verse apenas hay actividad y se atenúan cuando el mouse se queda quieto.
+  function despertar(){
+    document.body.classList.remove('quieto');
+    clearTimeout(reposo);
+    reposo = setTimeout(function(){ document.body.classList.add('quieto'); }, REPOSO_MS);
+  }
+
+  function mostrarError(){
+    vista = null;
+    foto.hidden = true;
+    controles.hidden = true;
+    err.hidden = false;
+  }
+
+  btnMas.addEventListener('click',    function(){ zoomCentro(ZOOM_PASO); });
+  btnMenos.addEventListener('click',  function(){ zoomCentro(1 / ZOOM_PASO); });
+  btnEntera.addEventListener('click', function(){ if(vista) aplicar(verEntera(vista)); });
+
+  // Rueda, sin Ctrl, hacia donde está el cursor. El listener NO puede ser pasivo: sin
+  // preventDefault, Chromium usaría la rueda con Ctrl para agrandar toda la página.
+  document.addEventListener('wheel', function(e){
+    e.preventDefault();
+    if(!vista) return;
+    aplicar(zoomHacia(vista, factorRueda(e.deltaY, e.deltaMode), e.clientX, e.clientY));
+    despertar();
+  }, { passive: false });
+
+  // Arrastrar mueve la imagen, pero sólo si está acercada (entera no hay a dónde moverla). Se cuenta
+  // desde donde empezó el gesto y no de a saltitos: si la imagen se frena en un borde y el cursor
+  // sigue de largo, al volver tiene que recorrer ese tramo antes de que la imagen se mueva.
+  escena.addEventListener('pointerdown', function(e){
+    if(!vista || e.button !== 0 || esEntera(vista)) return;
+    arrastre = { id: e.pointerId, px: e.clientX, py: e.clientY, x: vista.x, y: vista.y };
+    try { escena.setPointerCapture(e.pointerId); } catch(_) {}   // sigue llegando aunque el cursor salga
+    escena.classList.add('arrastrando');
+  });
+  escena.addEventListener('pointermove', function(e){
+    if(!arrastre || e.pointerId !== arrastre.id) return;
+    aplicar(mover(vista, arrastre.x + e.clientX - arrastre.px, arrastre.y + e.clientY - arrastre.py));
+  });
+  function soltar(e){
+    if(!arrastre || e.pointerId !== arrastre.id) return;
+    arrastre = null;
+    escena.classList.remove('arrastrando');
+    try { escena.releasePointerCapture(e.pointerId); } catch(_) {}
+  }
+  escena.addEventListener('pointerup', soltar);
+  escena.addEventListener('pointercancel', soltar);
+  escena.addEventListener('lostpointercapture', soltar);   // p. ej. si se cambia de ventana a mitad del arrastre
+
+  escena.addEventListener('dblclick', function(e){
+    if(vista) aplicar(dobleClic(vista, e.clientX, e.clientY));
+  });
+
+  // Teclado: + y − acercan y alejan, 0 vuelve a verla entera, Esc cierra. Se aceptan también con
+  // Ctrl y se les hace preventDefault: el menú de Electron trae esos mismos atajos para agrandar la
+  // página entera, y no queremos que escalen los controles junto con la imagen.
+  document.addEventListener('keydown', function(e){
+    if(e.altKey || e.metaKey) return;
+    var k = e.key, c = e.code;
+    if(k === 'Escape'){ cerrarVisor(); return; }
+    if(!vista) return;
+    if(k === '+' || k === '=' || c === 'NumpadAdd')                zoomCentro(ZOOM_PASO);
+    else if(k === '-' || k === '_' || c === 'NumpadSubtract')      zoomCentro(1 / ZOOM_PASO);
+    else if(k === '0' || c === 'Numpad0')                          aplicar(verEntera(vista));
+    else return;
+    e.preventDefault();
+    despertar();
+  });
+
+  document.addEventListener('mousemove', despertar);
+
+  window.addEventListener('resize', function(){
+    if(vista) aplicar(redimensionar(vista, escena.clientWidth, escena.clientHeight));
+  });
+
+  foto.addEventListener('load', function(){
+    var nw = foto.naturalWidth, nh = foto.naturalHeight;
+    if(!(nw > 0 && nh > 0)) { mostrarError(); return; }   // sin medidas no hay nada que mostrar
+    err.hidden = true;
+    // La caja de la imagen mide lo que mide la imagen: las cuentas de arriba cuentan con eso.
+    foto.style.width  = nw + 'px';
+    foto.style.height = nh + 'px';
+    foto.hidden = false;
+    controles.hidden = false;
+    aplicar(vistaEntera(nw, nh, escena.clientWidth, escena.clientHeight));
+    despertar();   // al abrir se ven los controles un rato, para que se note que hay con qué acercar
+  });
+  foto.addEventListener('error', mostrarError);
+
+  if(window.visorImagen && window.visorImagen.alCargar){
+    window.visorImagen.alCargar(function(p){
+      if(!p || !p.url) return;
+      // El nombre del jugador vive SOLO en el título de la ventana: adentro no se repite.
+      document.title = String(p.titulo || '').trim() || 'Imagen';
+      err.hidden = true;
+      foto.src = p.url;
+    });
+  }
+})();
+</script>
+</body>
+</html>

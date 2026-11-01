@@ -102,7 +102,37 @@
   window.actualizarSolicitudPortal = requests.actualizarSolicitudPortal;
   window.v154pRenderSolicitudesPortalEnInicio = requestsView.renderSolicitudesPortalEnInicio;
   window.v154pRenderSolicitudesPortalCompleto = requestsView.renderSolicitudesPortalCompleto;
-  window.v154pTomarSolicitud = id => requests.actualizarSolicitudPortal(id, 'EN_REVISION', { etapa: 'TOMADA_PANEL_V15_4_PLUS' });
+  // Tomar saca la solicitud de pendientes y la manda a 💸 En proceso. Se mueve YA —no a los segundos
+  // del próximo refresco— y se avisa adónde fue: si la tarjeta desaparece sin decir nada parece que
+  // algo se rompió.
+  function _estadoLocal(id, estado){
+    try{
+      const s = (V154P.solicitudes || []).find(x => Number(x.ID || x.SOLICITUD_ID) === Number(id));
+      if(!s) return;
+      s.ESTADO = estado;
+      const op = window.operador && (window.operador.usuario || window.operador.nombre);
+      if(op && estado !== 'PENDIENTE') s.OPERADOR = op;
+      requestsView.renderSolicitudesPortalEnInicio();
+    }catch(_e){}
+  }
+  window.v154pTomarSolicitud = async function(id){
+    const r = await requests.actualizarSolicitudPortal(id, 'EN_REVISION', { etapa: 'TOMADA_PANEL_V15_4_PLUS' });
+    if(r && !r.error){
+      _estadoLocal(id, 'EN_REVISION');
+      try{ deps.toast('Tomada ✓ · la encontrás en 💸 En proceso', 'green'); }catch(_e){}
+    }
+    return r;
+  };
+  // Tomada por error, o el que la tomó se fue: vuelve a la lista de pendientes para que otro la agarre.
+  window.v154pSoltarSolicitud = async function(id){
+    const r = await requests.actualizarSolicitudPortal(id, 'PENDIENTE', { etapa: 'SOLTADA_PANEL' });
+    if(r && !r.error){
+      _estadoLocal(id, 'PENDIENTE');
+      try{ if(window.cerrarExpedienteSolicitud) window.cerrarExpedienteSolicitud(); }catch(_e){}
+      try{ deps.toast('Soltada · volvió a la lista de pendientes', 'blue'); }catch(_e){}
+    }
+    return r;
+  };
   window.v154pDetalleSolicitud = operationModal.abrirExpedienteSolicitud;
   window.abrirExpedienteSolicitud = operationModal.abrirExpedienteSolicitud;
   window.mostrarExpedienteEnPane = operationModal.mostrarExpedienteEnPane || window.mostrarExpedienteEnPane;

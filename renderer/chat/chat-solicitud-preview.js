@@ -58,7 +58,8 @@
 
     // Regla C: Monto positivo O comprobante adjunto reciente
     const monto = Number(s.MONTO_REAL || s.MONTO_DECLARADO || s.monto || 0);
-    const tieneImgDirecta = Boolean(s.COMPROBANTE_URL || s.comprobante_url || s.IMAGEN_URL || s.imagen_url);
+    const sMeta = (s.metadata && typeof s.metadata === 'object') ? s.metadata : ((s.METADATA && typeof s.METADATA === 'object') ? s.METADATA : {});
+    const tieneImgDirecta = Boolean(s.COMPROBANTE_URL || s.comprobante_url || s.IMAGEN_URL || s.imagen_url || sMeta.comprobante_url || sMeta.imagen_url);
 
     if((isNaN(monto) || monto <= 0) && !tieneImgDirecta){
       // Si no tiene monto ni foto directa, solo se admite si el chat tiene imagen reciente (< 2 horas)
@@ -270,6 +271,7 @@
         }
       } else {
         const resp = await fetch(urlOBase64);
+        window.NodoSalud?.begin('CHAT')?.record('DATA', resp?.ok ? 'OK' : 'ERROR', 'CHAT_PREVIEW_FETCH');
         const blob = await resp.blob();
         mimeType = blob.type || 'image/jpeg';
         const buffer = await blob.arrayBuffer();
@@ -375,7 +377,8 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
     const billeteraDeclarada = String(sol.BILLETERA_NOMBRE || sol.billetera || sol.DESTINO || '').trim();
 
     // Obtener comprobante: de la solicitud o del último mensaje reciente con foto del chat
-    let comprobanteUrl = sol.COMPROBANTE_URL || sol.comprobante_url || sol.IMAGEN_URL || sol.imagen_url || null;
+    const solMeta = (sol.metadata && typeof sol.metadata === 'object') ? sol.metadata : ((sol.METADATA && typeof sol.METADATA === 'object') ? sol.METADATA : {});
+    let comprobanteUrl = sol.COMPROBANTE_URL || sol.comprobante_url || sol.IMAGEN_URL || sol.imagen_url || solMeta.comprobante_url || solMeta.imagen_url || null;
     if(!comprobanteUrl && window.__nodoChatCurrentTicket && Array.isArray(window.__nodoChatCurrentTicket.thread)){
       const hace2hs = Date.now() - (2 * 3600 * 1000);
       const userImgs = window.__nodoChatCurrentTicket.thread.filter(m => {
@@ -447,31 +450,39 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
 
     // Estilos visuales según semáforo
     const colorBorder = semaforo === 'rojo'
+      ? 'rgba(239, 68, 68, 0.45)'
+      : (semaforo === 'ambar'
+          ? 'rgba(234, 179, 8, 0.35)'
+          : (semaforo === 'azul' ? 'rgba(56, 189, 248, 0.35)' : 'rgba(34, 197, 94, 0.35)'));
+
+    const colorMonto = semaforo === 'rojo'
+      ? '#fca5a5'
+      : (semaforo === 'verde' ? '#4ade80' : '#facc15');
+
+    const colorEstado = semaforo === 'rojo'
       ? '#ef4444'
-      : (semaforo === 'ambar'
-          ? '#eab308'
-          : (semaforo === 'azul' ? '#38bdf8' : '#22c55e'));
+      : (semaforo === 'verde' ? '#22c55e' : (semaforo === 'azul' ? '#38bdf8' : '#eab308'));
 
-    const colorBg = semaforo === 'rojo'
-      ? 'rgba(239,68,68,0.12)'
-      : (semaforo === 'ambar'
-          ? 'rgba(234,179,8,0.12)'
-          : (semaforo === 'azul' ? 'rgba(56,189,248,0.10)' : 'rgba(34,197,94,0.10)'));
+    const iconTipo = tipo === 'RETIRO' ? '🏧' : '💳';
+    const labelTipo = tipo === 'RETIRO' ? 'Retiro' : 'Carga';
+    const labelDestino = tipo === 'RETIRO' ? 'Retiro a:' : 'Transferiste a:';
 
-    const badgeBg = tipo === 'RETIRO' ? 'rgba(251,146,60,0.2)' : 'rgba(34,197,94,0.2)';
-    const badgeColor = tipo === 'RETIRO' ? '#fb923c' : '#22c55e';
+    let fechaFormatted = '';
+    if(fechaSolStr){
+      try{
+        const d = new Date(fechaSolStr);
+        if(!isNaN(d.getTime())){
+          fechaFormatted = d.toLocaleDateString('es-AR', {day:'2-digit', month:'2-digit'}) + ' ' + d.toLocaleTimeString('es-AR', {hour:'2-digit', minute:'2-digit'});
+        }
+      }catch(_e){}
+    }
+    if(!fechaFormatted) fechaFormatted = 'Reciente';
 
     let html = `
-      <div class="nodo-sol-pill" style="border:1px solid ${colorBorder};background:${colorBg}">
-        <div class="nodo-sol-pill-head" onclick="window.nodoToggleSolBanner('${contenedorId}','${esc(usuarioActual)}')">
-          <div class="nodo-sol-pill-left">
-            <span class="nodo-sol-badge" style="background:${badgeBg};color:${badgeColor}">
-              ${tipo === 'RETIRO' ? '⬇️ RETIRO' : '⬆️ CARGA'} #${solId}
-            </span>
-            <span class="nodo-sol-monto">${fmtMoney(monto)}</span>
-            <span class="nodo-sol-resumen">${esc(resumenEstado)}</span>
-          </div>
-          <div class="nodo-sol-pill-right" onclick="event.stopPropagation()">
+      <div class="nodo-sol-pill" style="border:1px solid ${colorBorder}">
+        <div class="nodo-sol-tag-header">
+          <span>${tipo === 'RETIRO' ? '⬇️ SOLICITUD RETIRO' : '💳 SOLICITUD CARGA'} #${esc(solId)}</span>
+          <div style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
             ${sol._isDemo ? `
               <div class="nodo-dev-sol-tester">
                 <button class="mini-btn green" type="button" onclick="window.nodoDemoPreview('verde')" title="Verde: OK">🟢</button>
@@ -480,52 +491,87 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
                 <button class="mini-btn gray" type="button" onclick="window.nodoDemoPreview('off')" title="Cerrar demo">✕</button>
               </div>
             ` : ''}
-            <button class="mini-btn gray" type="button" onclick="window.nodoToggleSolBanner('${contenedorId}','${esc(usuarioActual)}')">
-              ${desplegado ? '▲ Plegar' : '▼ Detalle'}
+            <button class="nodo-sol-btn-toggle" type="button" onclick="window.nodoToggleSolBanner('${contenedorId}','${esc(usuarioActual)}')">
+              ${desplegado ? '▲ Ocultar detalle' : '▼ Ver detalle'}
             </button>
           </div>
         </div>
 
-        ${desplegado ? `
-          <div class="nodo-sol-panel-body">
-            <div class="nodo-sol-grid">
-              <div class="nodo-sol-col">
-                <div class="nodo-sol-item"><span class="lbl">Titular:</span> <b>${esc(titular)}</b></div>
-                ${cbu ? `<div class="nodo-sol-item"><span class="lbl">CBU/Alias:</span> <span class="cbu">${esc(cbu)}</span></div>` : ''}
-                ${billetera ? `<div class="nodo-sol-item"><span class="lbl">Billetera:</span> <span>${esc(billetera)}</span></div>` : ''}
-                ${prev ? `<div class="nodo-sol-alerta-roja">⛔ CUIDADO: Este usuario ya recibió una carga de ${fmtMoney(prev.monto)} hoy a las ${prev.hora} (Op #${prev.opId}).</div>` : ''}
-              </div>
-
-              ${comprobanteUrl ? `
-                <div class="nodo-sol-col-img">
-                  <a href="${esc(comprobanteUrl)}" target="_blank" title="Clic para abrir en tamaño completo">
-                    <img src="${esc(comprobanteUrl)}" class="nodo-sol-thumb" alt="Comprobante">
-                  </a>
-                  <div class="nodo-sol-ocr-box">
-                    ${ocr ? `
-                      ${ocr.esComprobante === false ? '<div class="ocr-line red">⚠️ <b>NO ES UN COMPROBANTE BANCARIO</b></div>' : ''}
-                      <div class="ocr-line">🕒 <b>Hora ticket:</b> ${esc(ocr.hora || 'No visible')} ${ocr.minutosAtras != null ? `(${ocr.minutosAtras}m atrás)` : ''}</div>
-                      <div class="ocr-line">🏦 <b>Banco:</b> ${esc(ocr.banco || 'Billetera')}</div>
-                      ${ocr.idOp ? `<div class="ocr-line">🔢 <b>Op:</b> ${esc(ocr.idOp)}</div>` : ''}
-                      ${ocr.monto ? `<div class="ocr-line">💵 <b>Monto en foto:</b> ${fmtMoney(ocr.monto)}</div>` : ''}
-                      ${ocr.esProgramada ? `<div class="ocr-line red">⛔ <b>TRANSFERENCIA PROGRAMADA</b></div>` : ''}
-                      ${ocr.sospecha ? `<div class="ocr-line red">⚠️ ${esc(ocr.sospecha)}</div>` : ''}
-                    ` : '<div style="color:#38bdf8;font-size:11px">🤖 Analizando comprobante con IA…</div>'}
-                  </div>
-                </div>
-              ` : ''}
+        <div class="nodo-sol-hero" onclick="window.nodoToggleSolBanner('${contenedorId}','${esc(usuarioActual)}')">
+          <div class="nodo-sol-hero-left">
+            <div class="nodo-sol-hero-icon">${iconTipo}</div>
+            <div>
+              <div class="nodo-sol-hero-title">${labelTipo}</div>
+              <div class="nodo-sol-hero-date">${fechaFormatted}</div>
             </div>
+          </div>
+          <div class="nodo-sol-hero-right">
+            <div class="nodo-sol-hero-monto" style="color:${colorMonto}">${fmtMoney(monto)}</div>
+            <div class="nodo-sol-hero-estado" style="color:${colorEstado}">${esc(resumenEstado)}</div>
+          </div>
+        </div>
 
-            <div class="nodo-sol-actions">
-              <button class="mini-btn green" type="button" onclick="window.nodoAprobarSolDesdeChat('${solId}', ${monto}, '${esc(titular)}')" ${prev ? 'style="border-color:#ef4444"' : ''}>
-                ${prev ? '⚠ Forzar Aprobación' : `⚡ Aprobar (${fmtMoney(monto)})`}
-              </button>
-              <button class="mini-btn red" type="button" onclick="window.nodoRechazarSolDesdeChat('${solId}')">
-                ❌ Rechazar
-              </button>
+        <div class="nodo-sol-meta-rows">
+          ${billetera && billetera !== '—' ? `
+            <div class="nodo-sol-meta-row">
+              <span class="lbl">${labelDestino}</span>
+              <span class="val">${esc(billetera)}</span>
+            </div>
+          ` : ''}
+          ${titular && titular !== '—' ? `
+            <div class="nodo-sol-meta-row">
+              <span class="lbl">Titular:</span>
+              <span class="val">${esc(titular)}</span>
+            </div>
+          ` : ''}
+          ${cbu ? `
+            <div class="nodo-sol-meta-row">
+              <span class="lbl">CBU / Alias:</span>
+              <span class="cbu">${esc(cbu)}</span>
+            </div>
+          ` : ''}
+        </div>
+
+        ${prev ? `
+          <div class="nodo-sol-alerta-roja">
+            ⛔ CUIDADO: Este usuario ya recibió una carga de ${fmtMoney(prev.monto)} hoy a las ${prev.hora} (Op #${prev.opId}).
+          </div>
+        ` : ''}
+
+        ${desplegado && comprobanteUrl ? `
+          <div class="nodo-sol-panel-body">
+            <div class="nodo-sol-col-img">
+              <a href="${esc(comprobanteUrl)}" onclick="if(window.nodoVerImagenCompleta){window.nodoVerImagenCompleta('${esc(comprobanteUrl)}');return false;}" target="_blank" title="Clic para abrir en tamaño completo">
+                <img src="${esc(comprobanteUrl)}" class="nodo-sol-thumb" alt="Comprobante">
+              </a>
+              <div class="nodo-sol-ocr-box">
+                ${ocr ? `
+                  ${ocr.esComprobante === false ? '<div class="ocr-line red">⚠️ <b>NO ES UN COMPROBANTE BANCARIO</b></div>' : ''}
+                  <div class="ocr-line">🕒 <b>Hora ticket:</b> ${esc(ocr.hora || 'No visible')} ${ocr.minutosAtras != null ? `(${ocr.minutosAtras}m atrás)` : ''}</div>
+                  <div class="ocr-line">🏦 <b>Banco:</b> ${esc(ocr.banco || 'Billetera')}</div>
+                  ${ocr.idOp ? `<div class="ocr-line">🔢 <b>Op:</b> ${esc(ocr.idOp)}</div>` : ''}
+                  ${ocr.monto ? `<div class="ocr-line">💵 <b>Monto en foto:</b> ${fmtMoney(ocr.monto)}</div>` : ''}
+                  ${ocr.esProgramada ? `<div class="ocr-line red">⛔ <b>TRANSFERENCIA PROGRAMADA</b></div>` : ''}
+                  ${ocr.sospecha ? `<div class="ocr-line red">⚠️ ${esc(ocr.sospecha)}</div>` : ''}
+                ` : '<div style="color:#38bdf8;font-size:11px">🤖 Analizando comprobante con IA…</div>'}
+              </div>
             </div>
           </div>
         ` : ''}
+
+        <div class="nodo-sol-actions-bar">
+          <div style="font-size:11px;color:#94a3b8">
+            ${comprobanteUrl ? '📎 Comprobante adjunto' : 'Sin comprobante adjunto'}
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="nodo-sol-btn-rechazar" type="button" onclick="window.nodoRechazarSolDesdeChat('${solId}')">
+              ✕ Rechazar
+            </button>
+            <button class="nodo-sol-btn-aprobar" type="button" onclick="window.nodoAprobarSolDesdeChat('${solId}', ${monto}, '${esc(titular)}')" ${prev ? 'style="border-color:#ef4444;background:#b91c1c"' : ''}>
+              ${prev ? '⚠ Forzar Aprobación' : `⚡ Aprobar (${fmtMoney(monto)})`}
+            </button>
+          </div>
+        </div>
       </div>
     `;
 

@@ -98,6 +98,13 @@
         max-width:68%!important;
       }
 
+      /* La burbuja que lleva un comprobante se ensancha. Esta regla va con !important porque la
+         de arriba también lo lleva: sin esto el 68% ganaba y la foto seguía chica justo en la
+         vista donde el operador la mira para aprobar la carga. */
+      body.nodo-chat-open .wq2-bubble:has(.wq2-img){
+        max-width:92%!important;
+      }
+
       /* Por si el HTML viejo metió anchos fijos internos */
       body.nodo-chat-open #viewChat [style*="grid-template-columns"],
       body.nodo-chat-open #viewChat [style*="width: 50"],

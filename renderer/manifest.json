@@ -29,10 +29,16 @@
     "domain/presencia.js",
     "domain/telefono.js",
     "domain/identidad.js",
+    "domain/perfil-consulta.js",
+    "domain/persistencia-sync.js",
     "runtime/refresh-coordinator.js",
-    "runtime/realtime.js",
-    "chat/message-model.js",
-    "chat/metrics.js"
+     "runtime/realtime.js",
+     "runtime/desconexiones-estaticas.js",
+     "runtime/integration-health.js",
+     "runtime/pruebas-sistema.js",
+     "chat/message-model.js",
+     "chat/metrics.js",
+     "chat/beta-chat.js"
    ]
   },
   {
@@ -60,7 +66,8 @@
     "core/historial-unificado.js",
     "core/lotes-y-solicitudes.js",
     "core/chat.js",
-    "core/avisos-y-watchdog.js",
+     "core/avisos-y-watchdog.js",
+     "core/modal-y-watchdog.js",
     "core/chat-acciones.js",
     "core/cotejo-alta.js",
     "core/caja-negra-panel.js",
@@ -162,6 +169,13 @@
    "type": "script",
    "sources": [
     "chat/chat-ancho.js"
+   ]
+  },
+  {
+   "id": "js:chat-redimensionable",
+   "type": "script",
+   "sources": [
+    "chat/chat-redimensionable.js"
    ]
   },
   {

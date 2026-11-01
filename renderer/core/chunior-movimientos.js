@@ -25,11 +25,13 @@ function _readyChuniorJs(uid){
     + '&&document.getElementById("id_monto")&&document.getElementById("id_notas"));})()';
 }
 async function _registrarAdminChunior(addUrl, chunior_uid, monto, notas, opts){
+  const _admHealth = window.NodoSalud?.begin('ADMIN');
   // Bloqueo del cotejo (igual que en registrarCargaEnChunior): esperar la declaración abierta.
   for(let _w=0; window._cotejoDeclarando && _w<90; _w++){ await new Promise(function(r){setTimeout(r,1000);}); }
   if(!window.chunior) return { ok:false, movimientoId:null, error:'Ventana de Chunior no disponible' };
   if(!chunior_uid) return { ok:false, movimientoId:null, error:'La billetera no tiene chunior_uid configurado' };
   await window.chunior.navigate(addUrl);
+  _admHealth?.record('CONNECTED', 'OK', 'CHUNIOR_NAV_OK');
   const t0 = Date.now(); let ready = false;
   while(Date.now() - t0 < 10000){
     // El desplegable de billetera no se llama igual en todas las pantallas (gastos locales tiene el

@@ -5,6 +5,16 @@
   --bg:#0e1014;--panel:#151821;--card:#191d27;--card2:#1c2230;--line:#2c3140;
   --muted:#98a2b3;--blue:#3d5afe;--green:#12b76a;--red:#f04438;--yellow:#fdb022;
   --purple:#7c3aed;
+  /* ── ANCHO DE LA COLUMNA DEL CHAT ────────────────────────────────────────────────────────
+     Juan, 25/10: "poder estirar el chat hasta donde el operador quiera para la comodidad, que
+     se auto ajusten las cosas en el interior para que no se rompa nada, que tenga un tamaño
+     minimo y un tamaño maximo para que no haya errores."
+     Era 405px escrito a mano en cuatro lugares distintos. Ahora es UNA variable: la manija de
+     arrastre (chat/chat-redimensionable.js) la pisa en <html> y la grilla se reacomoda sola.
+     El mínimo y el máximo viven acá para que el que arrastra y el que dibuja no discutan. */
+  --chat-w:405px;
+  --chat-w-min:300px;
+  --chat-w-max:900px;
 }
 body{background:var(--bg);color:#fff;overflow:hidden}
 .hidden{display:none!important}
@@ -32,6 +42,22 @@ body{background:var(--bg);color:#fff;overflow:hidden}
 input,select,textarea,button{font-size:14px}
 input,select,textarea{width:100%;border:none;border-radius:10px;padding:11px;margin-top:6px;margin-bottom:12px;background:#fff;color:#111}
 textarea{resize:vertical;min-height:80px}
+/* ── Botones: estética plana, con respuesta táctil física al hacer click ── */
+button, .btn, .mini-btn, .nav-btn, .chat-tb-btn, .macro-btn {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  cursor: pointer;
+  transition: transform 0.08s ease, filter 0.08s ease;
+}
+button:active:not(:disabled),
+.btn:active:not(:disabled),
+.mini-btn:active:not(:disabled),
+.nav-btn:active:not(:disabled),
+.chat-tb-btn:active:not(:disabled),
+.macro-btn:active:not(:disabled) {
+  transform: scale(0.97) translateY(1px) !important;
+}
+
 .btn{width:100%;border:none;border-radius:12px;padding:12px;cursor:pointer;font-weight:bold}
 .btn-primary{background:var(--blue);color:#fff}.btn-green{background:var(--green);color:#fff}.btn-red{background:var(--red);color:#fff}.btn-gray{background:#667085;color:#fff}.btn-yellow{background:var(--yellow);color:#111}
 .mini-btn{border:none;border-radius:10px;padding:8px 10px;cursor:pointer;font-size:12px;font-weight:bold}
@@ -315,10 +341,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   #appView{height:100vh;overflow:hidden}
   .layout{
     display:grid;
-    grid-template-columns:66px calc(100vw - 66px - 405px - 27px);
+    grid-template-columns:66px calc(100vw - 66px - var(--chat-w) - 27px);
     height:100vh;
     gap:9px;
-    padding:9px 414px 9px 9px;
+    padding:9px calc(var(--chat-w) + 9px) 9px 9px;
     background:#070a0f;
   }
   .sidebar{
@@ -354,7 +380,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     display:flex;
     align-items:center;
     justify-content:center;
-    overflow:visible;   /* el globito sale del botón (ver .sidebar > .nav-btn::after) */
+    overflow:visible;   /* el globito sale del botón (ver .sidebar .nav-btn::after) */
   }
   .nav-btn::first-letter{font-size:16px}
   .nav-btn .badge-alert{
@@ -436,7 +462,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     top:9px;
     right:9px;
     bottom:9px;
-    width:405px;
+    width:var(--chat-w);
     height:auto;
     z-index:20;
     background:rgba(17,23,34,.94);
@@ -530,7 +556,7 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 /* V16 clean pass: grilla real, sin overlay fijo */
 @media(min-width:1101px){
   .layout{
-    grid-template-columns:66px minmax(0,1fr) 405px!important;
+    grid-template-columns:66px minmax(0,1fr) var(--chat-w)!important;
     grid-template-rows:1fr;
     padding:9px!important;
     gap:9px!important;
@@ -550,11 +576,11 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     z-index:auto!important;
   }
   #viewChat.hidden{display:flex!important}
-  .sidebar > .nav-btn{
+  .sidebar .nav-btn{
     position:relative;
     color:transparent!important;
   }
-  .sidebar > .nav-btn::before{
+  .sidebar .nav-btn::before{
     color:#fff;
     font-size:17px;
     line-height:1;
@@ -568,11 +594,11 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
   #navBilleteras::before{content:"\1F4B3"}
   #navChat::before{content:"\1F4AC"}
   #navJugadores::before{content:"\1F3C5"}
-  #navAuto::before{content:"\26A1"}
-  .sidebar > .nav-btn[onclick*="cerrarSesion"]::before{content:"\1F6AA"}
+  #navAjustes::before{content:"\2699"}
+  .sidebar .nav-btn[onclick*="cerrarSesion"]::before{content:"\1F6AA"}
   /* Globito con el nombre: el texto del botón está en color:transparent + font-size:0, así que
      sin esto la barra angosta era pura adivinanza. Sale del aria-label (una sola fuente). */
-  .sidebar > .nav-btn::after{
+  .sidebar .nav-btn::after{
     content:attr(aria-label);
     position:absolute;left:calc(100% + 9px);top:50%;
     transform:translateY(-50%) translateX(-5px);
@@ -582,10 +608,10 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
     opacity:0;pointer-events:none;z-index:99998;  /* arriba de cualquier tarjeta (las hay con z:35) */
     transition:opacity .14s ease,transform .14s ease;
   }
-  .sidebar > .nav-btn:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}
+  .sidebar .nav-btn:hover::after{opacity:1;transform:translateY(-50%) translateX(0)}
   @media(prefers-reduced-motion:reduce){
-    .sidebar > .nav-btn::after{transition:opacity .12s linear;transform:translateY(-50%)}
-    .sidebar > .nav-btn:hover::after{transform:translateY(-50%)}
+    .sidebar .nav-btn::after{transition:opacity .12s linear;transform:translateY(-50%)}
+    .sidebar .nav-btn:hover::after{transform:translateY(-50%)}
   }
   #appView .sidebar .logo{
     display:block;
@@ -1107,3 +1133,43 @@ table{width:100%;border-collapse:collapse}th,td{padding:11px;border-bottom:1px s
 }
 
 
+
+/* ── Updater Pill ── */
+.updater-pill{display:inline-flex;align-items:center;gap:6px;background:#151a24!important;border:1px solid #272b36!important;border-radius:999px;padding:3px 10px;font-size:11px;color:#8b949e}
+/* El cartel de versión se corre hacia el costado cuando se despliega algo contra la derecha (el cajón
+   del expediente, el chat): que lo haga con la misma suavidad con que entra el cajón. */
+#updaterBox,#updaterMiniChip{transition:right .24s cubic-bezier(.16,1,.3,1)}
+@media (prefers-reduced-motion:reduce){#updaterBox,#updaterMiniChip{transition:none}}
+
+/* ── Sidebar: organización con barra de ajustes abajo de todo ── */
+.sidebar{display:flex!important;flex-direction:column!important}
+.sidebar-nav-top{display:flex;flex-direction:column;gap:2px}
+.sidebar-bottom{margin-top:auto!important;padding-top:12px;border-top:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;gap:4px;width:100%}
+
+/* ── Apartado Minimalista de Ajustes (Modal Drawer) ── */
+.ajustes-drawer{width:100%;max-width:500px;max-height:86vh;background:#0d1117;border:1px solid #242c3d;border-radius:18px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 60px rgba(0,0,0,.85),0 0 0 1px rgba(255,255,255,.06);animation:ajustesFadeIn .15s ease}
+@keyframes ajustesFadeIn{from{opacity:0;transform:scale(.97) translateY(6px)}to{opacity:1;transform:scale(1) translateY(0)}}
+.ajustes-head{display:flex;align-items:center;justify-content:space-between;padding:14px 18px;background:#131822;border-bottom:1px solid #1f2737}
+.ajustes-head-icon{width:32px;height:32px;border-radius:10px;background:#1a2130;border:1px solid #29344a;display:flex;align-items:center;justify-content:center;font-size:15px}
+.ajustes-close-btn{background:transparent;border:none;color:#64748b;font-size:17px;width:28px;height:28px;border-radius:8px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .12s}
+.ajustes-close-btn:hover{background:#1f2838;color:#fff}
+.ajustes-body{padding:16px 18px;overflow-y:auto;max-height:calc(86vh - 65px)}
+.ajustes-section-title{font-size:11px;font-weight:800;letter-spacing:.06em;color:#94a3b8;margin-bottom:3px;display:flex;align-items:center;gap:6px}
+.tono-picker-list{display:grid;gap:6px;margin:10px 0}
+.tono-row{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-radius:10px;background:#12161f;border:1px solid #1d2535;cursor:pointer;transition:background .1s,border-color .1s}
+.tono-row:hover{background:#161c27;border-color:#2a364c}
+.tono-row.selected{background:#151f33;border-color:#38bdf8;box-shadow:0 0 0 1px rgba(56,189,248,.35)}
+.tono-row-left{display:flex;align-items:center;gap:10px;min-width:0}
+.tono-row-ico{font-size:16px;opacity:.92;flex-shrink:0}
+.tono-row-info{display:flex;flex-direction:column;min-width:0}
+.tono-row-title{font-size:12px;font-weight:700;color:#f1f5f9;line-height:1.2}
+.tono-row-desc{font-size:10.5px;color:#8b949e;line-height:1.2;margin-top:2px}
+.tono-row-right{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.tono-play-btn{background:#19202c;border:1px solid #283446;color:#94a3b8;border-radius:7px;padding:4px 9px;font-size:11px;font-weight:700;cursor:pointer;line-height:1}
+.tono-play-btn:hover{background:#232d3f;color:#fff;border-color:#38bdf8}
+.tono-check-badge{width:18px;height:18px;border-radius:999px;border:1px solid #2b3548;display:flex;align-items:center;justify-content:center;font-size:10px;color:transparent;font-weight:900}
+.tono-row.selected .tono-check-badge{background:#38bdf8;border-color:#38bdf8;color:#0b1118}
+.ajustes-vol-row{background:#12161f;border:1px solid #1d2535;border-radius:10px;padding:11px 13px;margin:10px 0}
+.ajustes-slider{flex:1;height:4px;border-radius:999px;background:#242d3e;outline:none;cursor:pointer;accent-color:#38bdf8;margin:0}
+.ajustes-custom-audio{background:#12161f;border:1px solid #1d2535;border-radius:10px;padding:9px 13px}
+.ajustes-agente-card{background:#12161f;border:1px solid #1d2535;border-radius:10px;padding:11px 13px}

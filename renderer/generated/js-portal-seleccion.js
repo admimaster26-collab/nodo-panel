@@ -38,6 +38,7 @@
 
     // Si hay UID Chunior, esa es la verdad: buscar ID real activo en Supabase.
     if(uid && uid.toLowerCase() !== 'nan'){
+      window.NodoSalud?.begin('BILLETERAS')?.record('DATA','OK','BILLETERA_UID_RESOLVE');
       const r = await supabaseClient
         .from('billeteras')
         .select('id,chunior_uid,activa,seleccionada_manual')
@@ -121,6 +122,7 @@
       return {ok:true, data:b};
     }
 
+    let salud;
     try{
       // Resolver el id real de la billetera elegida (desde el array local).
       const _uid = String(uidArg || '').trim();

@@ -14,14 +14,15 @@ begin;
 -- que las oficinas al día anden mejor que las desfasadas.
 -- Verificado: 30 usuarios reales, 0 diferencias contra landing_historial_usuario.
 create or replace function public._zona_valida(p_zona text) returns boolean
-language plpgsql immutable security definer set search_path = '' as $zona$
+language plpgsql immutable security invoker set search_path = '' as $zona$
 declare v timestamp;
 begin
-  v := now() at time zone p_zona;
+  v := timestamptz '2000-01-01 00:00:00+00' at time zone p_zona;
   return true;
 exception when others then
   return false;
 end $zona$;
+revoke all on function public._zona_valida(text) from public, anon, authenticated;
 
 create or replace function public.landing_historial_usuario_beta_v1(
   p_usuario text,
@@ -44,8 +45,14 @@ begin
      or nullif(regexp_replace(coalesce(p_telefono,''),'\D','','g'),'') is null then
     return jsonb_build_object('ok', false, 'code', 'IDENTIDAD_REQUERIDA', 'contract', 'portal.historial.v1');
   end if;
-  if not public._zona_valida(p_zona_horaria) then
+  if p_zona_horaria is null or not public._zona_valida(p_zona_horaria) then
     return jsonb_build_object('ok', false, 'code', 'ZONA_HORARIA_INVALIDA', 'contract', 'portal.historial.v1');
+  end if;
+  -- Un enlace desconocido nunca habilita la rama manual sin filtro de oficina.
+  if nullif(btrim(p_public_code),'') is not null and not exists (
+    select 1 from public.landing_rutas_publicas r where r.public_code=p_public_code
+  ) then
+    return jsonb_build_object('ok', false, 'code', 'RUTA_INVALIDA', 'contract', 'portal.historial.v1');
   end if;
   -- Mismos bloques locales de 8 h (00-08 / 08-16 / 16-24), reloj del servidor.
   v_local := statement_timestamp() at time zone p_zona_horaria;
@@ -57,14 +64,13 @@ begin
     where coalesce(p_public_code,'') <> '' and r.public_code = p_public_code
     limit 1
   ), autorizado as (
-    select v.usuario
+    select v.usuario, v.pc_codigo
     from public.usuarios_portal_vinculos v
     where lower(trim(v.usuario)) = lower(trim(coalesce(p_usuario,'')))
       and right(regexp_replace(coalesce(v.telefono_canon, v.telefono_raw, ''),'\D','','g'), 10)
           = right(regexp_replace(coalesce(p_telefono,''),'\D','','g'), 10)
       and ( not exists (select 1 from pc)
             or upper(coalesce(v.pc_codigo,'')) = upper((select pc_codigo from pc)) )
-    limit 1
   ), portal_filtrado as materialized (
     select s.*
     from public.landing_solicitudes s
@@ -108,7 +114,8 @@ begin
     from portal_filtrado s  ), manuales_filtrados as materialized (
     select h.*
     from public.historial_ops h
-    where exists (select 1 from autorizado)
+    where exists (select 1 from autorizado a
+      where upper(btrim(coalesce(a.pc_codigo,'')))=upper(btrim(coalesce(h.pc_codigo,''))))
       and h.created_at >= now() - interval '7 days'
       and upper(coalesce(h.tipo,'')) in ('CARGA','RETIRO')
       and lower(btrim(h.usuario)) = lower(btrim(coalesce(p_usuario,'')))
@@ -161,4 +168,3 @@ grant execute on function public.landing_historial_usuario_beta_v1(text,text,tex
 comment on function public.landing_historial_usuario_beta_v1(text,text,text,text)
   is 'portal.historial.v1: 50 operaciones de 7 días y rechazo del turno resuelto. Lectura pura; identidad/alcance legacy, sin ACK ni escrituras.';
 commit;
-

@@ -8,6 +8,42 @@
   const dependencies = Object.freeze(["V154P","document","esc","estadoCerrado","fecha","money","renderHistorialUnificado","window"]);
   function create(deps){
 const api = {};
+  // Los retiros que se están pagando POR PARTES salen de la lista principal y se agrupan en su
+  // propio botón: son trabajo en curso (a veces por días) y tapaban las solicitudes nuevas.
+  // Al botón 💸 van los retiros CON PROGRESO parcial, estén a medio pagar o ya saldados pero sin
+  // cerrar (esos últimos quedaban tapando la lista principal sin forma de sacarlos).
+  // UN solo criterio, el mismo que usa el modal al abrirse (NodoDomain.parciales.enProceso).
+  // Estaban escritos aparte: el modal decía «saldado» y este filtro lo devolvía a la caja, y al
+  // revés — un retiro ya cobrado entero seguía figurando con «falta $38.907» (D-108).
+  function esParcial(s){
+    try{
+      const dom = deps.window.NodoDomain && deps.window.NodoDomain.parciales;
+      if(!dom) return false;
+      return dom.enProceso(s, {
+        info: deps.window._retiroParcialInfo,
+        cerrado: deps.window._retiroCerradoAMano,
+        estadoCerrado: deps.estadoCerrado,
+        sigueAbierto: deps.window._retiroParcialSigueAbierto
+      });
+    }catch(_e){ return false; }
+  }
+  // Tres lugares: pagándose por partes, TOMADAS (alguien ya las agarró) y sin tocar. Las dos
+  // primeras van al botón 💸 En proceso; la lista principal queda sólo con lo que nadie tocó.
+  // La que está en la cola de carga se queda acá: es donde se ve "2º en la cola" / "Cargando…".
+  function repartir(abiertas){
+    const dom = deps.window.NodoDomain && deps.window.NodoDomain.parciales;
+    if(!dom || !dom.repartirAbiertas) return { parciales: [], tomadas: [], pendientes: (abiertas || []).slice() };
+    return dom.repartirAbiertas(abiertas, {
+      esParcial: esParcial,
+      enCola: function(s){ return !!(deps.window._colaCargaEstado || {})[String(s.ID || s.SOLICITUD_ID || '')]; }
+    });
+  }
+  // Lo que nadie tocó, de cualquier lista de solicitudes abiertas. Es la misma cuenta de la lista
+  // de Inicio, y la usan el cartel amarillo y el número del menú: si cada uno contaba a su manera,
+  // el menú decía 5 y la lista mostraba 2.
+  api.nodoSolicitudesSinTocar = function(abiertas){
+    try{ return repartir(abiertas).pendientes; }catch(_e){ return (abiertas || []).slice(); }
+  };
   function renderSolicitudesPortalEnInicio(){
     const box = deps.document.getElementById("tablaSolicitudesInicio");
     if(!box) return;
@@ -15,41 +51,22 @@ const api = {};
     const all = (deps.V154P.solicitudes || []).slice();
     // INICIO: solo muestra CARGA y RETIRO pendientes. SOPORTE va al chat inbox, no acá.
     const abiertas = all.filter(s => (!deps.estadoCerrado(s.ESTADO) || (deps.window._retiroParcialSigueAbierto && deps.window._retiroParcialSigueAbierto(s))) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
-    // Los retiros que se están pagando POR PARTES salen de la lista principal y se agrupan en su
-    // propio botón: son trabajo en curso (a veces por días) y tapaban las solicitudes nuevas.
-    // Al botón 💸 van los retiros CON PROGRESO parcial, estén a medio pagar o ya saldados pero sin
-    // cerrar (esos últimos quedaban tapando la lista principal sin forma de sacarlos).
-    // UN solo criterio, el mismo que usa el modal al abrirse (NodoDomain.parciales.enProceso).
-    // Estaban escritos aparte: el modal decía «saldado» y este filtro lo devolvía a la caja, y al
-    // revés — un retiro ya cobrado entero seguía figurando con «falta $38.907» (D-108).
-    const _esParc = function(s){
-      try{
-        const dom = deps.window.NodoDomain && deps.window.NodoDomain.parciales;
-        if(!dom) return false;
-        return dom.enProceso(s, {
-          info: deps.window._retiroParcialInfo,
-          cerrado: deps.window._retiroCerradoAMano,
-          estadoCerrado: deps.estadoCerrado,
-          sigueAbierto: deps.window._retiroParcialSigueAbierto
-        });
-      }catch(_e){ return false; }
-    };
-    const parciales = [], pendientes = [];
-    for(const solicitud of abiertas){
-      (_esParc(solicitud) ? parciales : pendientes).push(solicitud);
-    }
+    const _rep = repartir(abiertas);
+    const parciales = _rep.parciales, tomadas = _rep.tomadas, pendientes = _rep.pendientes;
     deps.window._parcialesEnProceso = parciales;
+    deps.window._tomadasEnProceso = tomadas;
+    const _enProceso = parciales.length + tomadas.length;
     try{
       const bp = deps.document.getElementById("btnParcialesEnProceso");
       const bc = deps.document.getElementById("btnParcialesCount");
-      if(bc) bc.textContent = String(parciales.length);
-      if(bp) bp.style.display = parciales.length ? "" : "none";
+      if(bc) bc.textContent = String(_enProceso);
+      if(bp) bp.style.display = _enProceso ? "" : "none";
       // El mismo botón en el centro de control, que trae sólo el turno actual: un parcial de ayer no
       // aparecía en ningún lado ("tenía una parte para el retiro parcial, no sé por qué no aparece más").
       const bcc = deps.document.getElementById("btnParcialesCC");
       const bccN = deps.document.getElementById("btnParcialesCCCount");
-      if(bccN) bccN.textContent = String(parciales.length);
-      if(bcc) bcc.style.display = parciales.length ? "" : "none";
+      if(bccN) bccN.textContent = String(_enProceso);
+      if(bcc) bcc.style.display = _enProceso ? "" : "none";
     }catch(_e){}
     const visibles = pendientes.slice(0,8);
     // Un mismo jugador con DOS solicitudes abiertas del mismo tipo. El portal lo permitía (se está
@@ -178,6 +195,8 @@ const api = {};
              + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id},true)">Ver</button>`)
           : ((tomada ? `<button class="v154p-btn yellow" disabled>Tomada</button>`
                      : `<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`)
+             // Desde la lista, Aprobar abre el cartel con el monto ya seleccionado para cotejar antes
+             // de aprobar. Aprobar de una es sólo adentro de "Ver", donde ya se revisó todo (Juan, 1/11).
              + `<button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>`
              + (_esRet ? `<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>` : "")
              + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id},true)">Ver</button>`

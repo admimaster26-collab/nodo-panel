@@ -63,7 +63,10 @@ contextBridge.exposeInMainWorld('panelAPI', {
   getContext: () => ipcRenderer.invoke('panel:get-context'),
   // Abre en el navegador del operador, NO en una ventana de NODO: así usa la sesión de
   // WhatsApp Web que ya tiene abierta y no hay que escanear el QR adentro de la app.
-  abrirExterno: (url) => ipcRenderer.invoke('app:abrir-externo', url)
+  abrirExterno: (url) => ipcRenderer.invoke('app:abrir-externo', url),
+  // Visor de imágenes del chat en VENTANA APARTE. Main garantiza que haya una sola: abrir otra
+  // mata la anterior. Así mirar un comprobante no tapa el panel ni traba tomar cargas.
+  verImagen:   (url, titulo) => ipcRenderer.invoke('visor:abrir', { url, titulo })
 });
 
 // ============================================================

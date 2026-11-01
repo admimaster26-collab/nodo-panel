@@ -40,6 +40,7 @@ function activarChunior(){
 
 // Después del login, chequear si Chunior está esperando selección de puesto y arrancar el flujo
 async function _checkPuestoPostLogin(){
+  window.NodoSalud?.begin('CONEXION')?.record('CONNECTED','OK','CHUNIOR_PUESTO_CHECK');
   if(!window.chunior) return;
   await new Promise(function(r){setTimeout(r,500);});
   try {
@@ -271,6 +272,7 @@ async function sincronizarBilleterasChunior(silencioso){
   }
 
   if(!silencioso) toast('Sincronizando billeteras con Chunior...','blue');
+  const salud = window.NodoSalud?.begin('BILLETERAS');
 
   const addUrl = CHUNIOR_BASE + '/transacciones/movimientoficha/add/';
   const cur = await window.chunior.getUrl();
@@ -310,11 +312,13 @@ async function sincronizarBilleterasChunior(silencioso){
       '})()'
     );
   } catch(e){
+    salud?.record('EFFECT','ERROR','BILLETERAS_SIN_SINCRONIZAR');
     if(!silencioso) toast('Error leyendo Chunior: '+(e.message||''), 'red');
     return;
   }
 
   if(!data || !data.opts || !data.opts.length){
+    salud?.record('EFFECT','ERROR','BILLETERAS_SIN_SINCRONIZAR');
     if(!silencioso) toast('No se pudieron leer billeteras de Chunior. ¿Estás en la página correcta?', 'red');
     return;
   }
@@ -359,6 +363,7 @@ async function sincronizarBilleterasChunior(silencioso){
       p_wallets: walletsChunior
     });
     if(rpcErr) throw rpcErr;
+    salud?.record('EFFECT','OK');
   }catch(e){
     console.warn('panel_nodo_sync_chunior_wallets falló, usando fallback directo:', e);
     try{
@@ -371,7 +376,8 @@ async function sincronizarBilleterasChunior(silencioso){
           .eq('chunior_uid', uid)
           .neq('estado','FUSIONADA');
       }
-    }catch(e2){ console.warn('fallback sync saldo también falló:', e2); }
+      salud?.record('EFFECT','OK');
+    }catch(e2){ salud?.record('EFFECT','ERROR','BILLETERAS_SIN_SINCRONIZAR'); console.warn('fallback sync saldo también falló:', e2); }
   }
 
   await cargarBilleteras(false);

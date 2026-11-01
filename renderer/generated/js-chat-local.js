@@ -84,6 +84,7 @@
       .wq2-row{display:flex;margin:7px 0}
       .wq2-row.op{justify-content:flex-end}
       .wq2-bubble{max-width:76%;border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;box-shadow:0 1px 1px #0006;word-break:break-word}
+      .wq2-bubble:has(.wq2-img){max-width:92%}
       .wq2-row.user .wq2-bubble{background:#1f2937;color:#e5e7eb}
       .wq2-row.op .wq2-bubble{background:#14532d;color:#dcfce7}
       .wq2-time{font-size:10px;color:#9ca3af;margin-top:4px;text-align:right}
@@ -160,8 +161,7 @@
 
     // Actualizar badge del chat con total en espera
     try{
-      const bc=document.getElementById("badgeChat");
-      if(bc){ if(espera.length){bc.classList.remove("hidden");bc.textContent=String(espera.length);}else bc.classList.add("hidden"); }
+      window.nodoChatRefreshUnread?.();
     }catch(_e){}
 
     const tabBtn=(id,label,count,active)=>
@@ -201,6 +201,7 @@
     }
     html += `</div>`;
     box.innerHTML=html;
+    window.nodoChatRefreshUnread?.();
   }
 
   window.aceptarTicketLocalStep2=function(ticketId){
@@ -267,7 +268,10 @@
     msgs.forEach(m=>{
       const op=U(m.tipo)==="OPERADOR";
       const imgSrc=m.imagen||"";
-      const imgHtml=imgSrc?`<img src="${imgSrc}" style="max-width:220px;border-radius:8px;margin-top:6px;display:block">`:"";
+      // Mismo criterio que el chat de hilos: sin recortar, ancho de burbuja, y que se pueda
+      // abrir en la ventana aparte. Acá además la imagen NO tenía clic: se veía el recorte de
+      // 220px y no había forma de agrandarla. Y la url iba sin escapar al atributo.
+      const imgHtml=imgSrc?`<div class="wq2-img" style="margin-top:6px"><img src="${E(imgSrc)}" style="max-width:100%;height:auto;max-height:min(46vh,420px);border-radius:8px;display:block;cursor:zoom-in;object-fit:contain;background:#0b0f16;border:1px solid rgba(255,255,255,0.12)" title="Clic para verla en una ventana aparte" onclick="if(window.nodoVerImagenCompleta){window.nodoVerImagenCompleta(this.src,'');}else{window.open(this.src,'_blank');}" onerror="this.onerror=null;this.style.opacity='0.6';this.alt='No se pudo cargar la imagen';"></div>`:"";
       html+=`<div class="wq2-row ${op?"op":"user"}"><div class="wq2-bubble">${E(m.mensaje||"").replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time">${hora(m.fecha||"")}</div></div></div>`;
     });
     html+=`</div>`;

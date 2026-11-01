@@ -1,7 +1,7 @@
 function _updaterForzarVisible(){
   try{
     const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
-    if(box){ box.style.display="flex"; box.style.borderColor="#3fb950"; }
+    if(box){ box.style.display="flex"; box.style.borderColor="#10b981"; }
     if(chip) chip.style.display="none";
   }catch(_e){}
 }
@@ -10,77 +10,91 @@ function nodoUpdaterStatus(payload){
   if(!el || !payload) return;
   const st=payload.state;
   if(st==="available" || st==="downloaded") _updaterForzarVisible();
-  if(st==="checking") el.innerHTML="Buscando actualización...";
-  else if(st==="not-available") el.innerHTML="✅ Ya tenés la última versión";
-  else if(st==="available") el.innerHTML="🆕 v"+escapeHtml(payload.version||"")+" disponible — <a href=\"javascript:void 0\" onclick=\"nodoDescargarActualizacion()\" style=\"color:#58a6ff\">Descargar</a>";
-  else if(st==="downloading") el.innerHTML="⬇️ Descargando... "+(payload.percent||0)+"%";
-  else if(st==="downloaded") el.innerHTML="✅ Lista v"+escapeHtml(payload.version||"")+" — <a href=\"javascript:void 0\" onclick=\"nodoInstalarActualizacion()\" style=\"color:#3fb950;font-weight:700\">Reiniciar e instalar</a>";
-  else if(st==="error") el.innerHTML='<span style="color:#f85149">Error: '+escapeHtml(payload.message||"")+"</span>";
+  if(st==="checking") el.innerHTML="<span style='color:#94a3b8'>Buscando...</span>";
+  else if(st==="not-available"){
+    el.innerHTML="<span style='color:#10b981;font-weight:600'>✅ Al día</span>";
+    setTimeout(function(){ try{ if(el && el.innerHTML.includes("Al día")) el.innerHTML=""; }catch(_e){} }, 3500);
+  }
+  else if(st==="available") el.innerHTML="<button class=\"mini-btn blue\" onclick=\"nodoDescargarActualizacion()\" style=\"padding:2px 8px;font-size:11px;font-weight:700\">⬇️ v"+escapeHtml(payload.version||"")+" Descargar</button>";
+  else if(st==="downloading") el.innerHTML="<span style='color:#60a5fa;font-weight:700'>⬇️ "+(payload.percent||0)+"%</span>";
+  else if(st==="downloaded") el.innerHTML="<button class=\"mini-btn green\" onclick=\"nodoInstalarActualizacion()\" style=\"padding:2px 8px;font-size:11px;font-weight:800\">🚀 Reiniciar e instalar</button>";
+  else if(st==="error") el.innerHTML='<span style="color:#f87171" title="'+escapeHtml(payload.message||"")+'">⚠️ Error</span>';
 }
-// Canal de actualización (portado de NexoBetaChan): alpha = repo oficial nuestro · beta = repo del colega (pruebas).
-function nodoGetCanal(){ try{ return localStorage.getItem("nodo_update_channel")==="beta" ? "beta" : "alpha"; }catch(_e){ return "alpha"; } }
-function nodoAplicarIconoCanal(){
-  try{
-    const beta = nodoGetCanal()==="beta";
-    const box = document.getElementById("updaterBox"); if(box) box.style.borderColor = beta ? "rgba(34,197,94,.6)" : "#272b36"; // verde = beta
-    const sel = document.getElementById("updaterCanal"); if(sel) sel.value = nodoGetCanal();
-  }catch(_e){}
-}
-function nodoSetCanal(c){
-  const canal = c==="beta" ? "beta" : "alpha";
-  try{ localStorage.setItem("nodo_update_channel", canal); }catch(_e){}
-  nodoAplicarIconoCanal();
-  try{ toast("Canal: "+(canal==="beta"?"β Beta (repo del colega · pruebas)":"α Alpha (oficial · nuestro)")+" · tocá 🔄 para buscar en ese canal", "blue"); }catch(_e){}
-}
+// Canal único de actualización unificado
+function nodoGetCanal(){ return "main"; }
+function nodoAplicarIconoCanal(){}
+function nodoSetCanal(_c){}
 async function nodoInitUpdater(){
   try{
     if(!window.updaterAPI){ const b=document.getElementById("updaterBox"); if(b) b.style.display="none"; return; }
     nodoAplicarIconoCanal();
+    const _updHealth = window.NodoSalud?.begin('CONEXION');
     const v = await window.updaterAPI.getVersion();
+    _updHealth?.record('ALIVE','OK','UPDATER_VERSION_OK');
     const el=document.getElementById("updaterVersionTxt");
     if(el && v && v.version) el.textContent = "v"+v.version;
     const mv=document.getElementById("updaterMiniVer");
-    if(mv && v && v.version) mv.textContent = "v"+v.version;   // el plegado también dice la versión
-    // Mostrar el botón "Volver" solo si la función existe (app instalada con updater).
+    if(mv && v && v.version) mv.textContent = "v"+v.version;
     const rb=document.getElementById("updaterRollbackBtn"); if(rb) rb.style.display="";
     window.updaterAPI.onStatus(nodoUpdaterStatus);
-    // Restaurar si el operador lo había dejado minimizado.
     try{ if(localStorage.getItem("nodo_updater_min")==="1") nodoUpdaterMinimizar(true); }catch(_e){}
-    // Buscar SOLO. Antes esto no existía: la única forma de enterarse de que había una
-    // versión nueva era apretar 🔄 por las dudas, así que no se enteraba nadie — la 1.1.81
-    // salió y dos días después seguía sin instalarse en ninguna oficina, con máquinas
-    // cuatro versiones atrás. Ahora chequea al arrancar y cada 3 horas.
-    // Sigue SIN instalar por su cuenta: instalar reinicia la app y en medio del turno eso
-    // corta la operación. Avisar es del panel, decidir cuándo cortar es del operador.
-    setTimeout(nodoAutoBuscar, 20000);                 // dar tiempo al login
+    setTimeout(nodoAutoBuscar, 20000);
     setInterval(nodoAutoBuscar, 3*60*60*1000);
   }catch(_e){}
 }
 function nodoAutoBuscar(){
   try{
-    if(window.updaterAPI && window.updaterAPI.check) window.updaterAPI.check({ channel: nodoGetCanal() });
+    if(window.updaterAPI && window.updaterAPI.check) window.updaterAPI.check();
   }catch(_e){}
 }
 // Arriba a la derecha, pero apoyado en el borde izquierdo del panel de chat: ahí está el hueco
 // que queda arriba del botón "Rechequear". Se mide del DOM, así sigue bien si el chat se minimiza.
+//
+// Y se corre más todavía cuando se despliega algo contra el costado derecho que lo taparía —el cajón
+// del expediente al apretar "Ver"—: queda al costado, sin pisar el título (Juan, 25/10). Cualquier
+// cajón nuevo que se pegue a la derecha sólo tiene que llevar el atributo data-ocupa-derecha; no hace
+// falta tocar esto. Sirve igual si el cajón queda por encima o por debajo del cartel: se corre por
+// posición, no por capa.
+function _updaterBordeOcupado(){
+  const ancho=window.innerWidth;
+  let borde=null;
+  // alturaTodaLaPantalla: el chat es una columna que ocupa todo el costado, y el cartel se apoya en su
+  // borde aunque el chat arranque más abajo. Un cajón sí tiene que llegar a la franja del cartel.
+  const tomar=function(el, ignorarAltura){
+    try{
+      if(!el) return;
+      const cs=getComputedStyle(el);
+      if(cs.display==="none" || cs.visibility==="hidden") return;
+      const r=el.getBoundingClientRect();
+      if(r.width<20 || r.height<20) return;                   // escondido o sin dibujar
+      if(r.right<ancho-60) return;                            // no está pegado a la derecha
+      if(!ignorarAltura && r.top>46) return;                  // no llega a la franja del cartel
+      if(borde===null || r.left<borde) borde=r.left;
+    }catch(_e){}
+  };
+  // En la pantalla de LOGIN el chat está tapado (el login ocupa toda la pantalla) pero sigue
+  // midiendo: el cartel se enganchaba a su borde y quedaba flotando en el MEDIO del login. Sin el chat
+  // a la vista, el cartel va a la esquina.
+  const login=document.getElementById("loginView");
+  let enLogin=false;
+  try{ enLogin=!!(login && !login.classList.contains("hidden") && getComputedStyle(login).display!=="none"); }catch(_e){}
+  if(!enLogin) tomar(document.getElementById("viewChat"), true);
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ocupa-derecha]"), function(el){ tomar(el, false); });
+  return borde;
+}
 function _updaterAnclar(){
   try{
-    const chat=document.getElementById("viewChat");
-    let right=12;
-    // En la pantalla de LOGIN el chat está tapado (el login ocupa toda la pantalla) pero sigue
-    // midiendo: el cartel se enganchaba a su borde y quedaba flotando en el MEDIO del login. Juan
-    // lo pidió dos veces; la primera se entendió mal y se movió la tira de proceso en vez de esto.
-    // Sin el chat a la vista, el cartel va a la esquina.
-    const login=document.getElementById("loginView");
-    let enLogin=false;
-    try{ enLogin=!!(login && !login.classList.contains("hidden") && getComputedStyle(login).display!=="none"); }catch(_e){}
-    if(chat && !enLogin){
-      const r=chat.getBoundingClientRect();
-      if(r.width>0 && r.right>window.innerWidth-60) right=Math.round(window.innerWidth-r.left)+14;
-    }
+    const ancho=window.innerWidth;
+    const borde=_updaterBordeOcupado();
+    const right = borde===null ? 12 : Math.round(ancho-borde)+14;
     ["updaterBox","updaterMiniChip"].forEach(function(id){
       const el=document.getElementById(id);
-      if(el){ el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=right+"px"; }
+      if(!el) return;
+      // Nunca se sale de la pantalla: si el cajón ocupa casi todo el ancho y no queda lugar al costado,
+      // se queda lo más a la izquierda que entra.
+      const w=el.offsetWidth;
+      const r = w>0 ? Math.min(right, Math.max(12, ancho-w-8)) : right;
+      el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=r+"px";
     });
   }catch(_e){}
 }
@@ -106,9 +120,10 @@ async function nodoVolverVersionAnterior(){
 async function nodoBuscarActualizacion(){
   const el=document.getElementById("updaterStatusTxt");
   if(!window.updaterAPI){ if(el) el.textContent="No disponible en este entorno."; return; }
-  const r = await window.updaterAPI.check({ channel: nodoGetCanal() });
+  if(el) el.innerHTML="<span style='color:#94a3b8'>Buscando...</span>";
+  const r = await window.updaterAPI.check();
   if(!r || !r.ok){
-    if(el) el.textContent = (r&&r.reason==="dev-mode") ? "Solo disponible en la app instalada." : "No se pudo buscar actualización.";
+    if(el) el.textContent = (r&&r.reason==="dev-mode") ? "Solo disponible en app instalada." : "No se pudo buscar actualización.";
   }
 }
 async function nodoDescargarActualizacion(){
@@ -121,5 +136,3 @@ async function nodoInstalarActualizacion(){
 }
 document.addEventListener("DOMContentLoaded", nodoInitUpdater);
 if(document.readyState !== "loading") nodoInitUpdater();
-
-// ── Crear nuevo usuario en el casino ─────────────────────────────────────────

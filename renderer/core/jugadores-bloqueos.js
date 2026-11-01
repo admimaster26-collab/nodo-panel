@@ -59,6 +59,7 @@ window.marcarTitularRechazado = function(usuario, titular, motivo){
   m[k] = { motivo:motivo||'', fecha:new Date().toISOString(), titular:String(titular||''), usuario:String(usuario||'') };
   const ks = Object.keys(m); if(ks.length > 500) delete m[ks[0]];   // tope del caché local
   _rechSave(m);
+  try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
 
   // A la base, que es lo que ve el portal y el resto de las PCs. No se espera: si falla, el
   // bloqueo local igual quedó y se avisa.
@@ -83,6 +84,7 @@ window.desmarcarTitularRechazado = function(usuario, titular){
   delete m[_rechClave(usuario, titular)];
   delete m[_rechClaveGlobal(titular)];        // desbloquear siempre limpia los dos
   _rechSave(m);
+  try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
   try{
     supabaseClient.rpc('panel_titular_desbloquear', {
       p_pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : null),
@@ -266,5 +268,6 @@ window.sincronizarTitularesBloqueados = async function(){
       m[k] = { motivo:b.motivo||'', fecha:b.created_at||'', titular:String(b.titular||''), usuario:u };
     });
     _rechSave(m);
+  try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
   }catch(e){ console.warn('[titulares bloqueados] sync', e); }
 };

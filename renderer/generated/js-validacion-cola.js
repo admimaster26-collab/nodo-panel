@@ -54,6 +54,7 @@
   }
 
   async function leerValidaciones(){
+    const health = window.NodoSalud?.begin('VALIDACION');
     let source="validaciones_usuario";
     let data=null, error=null;
 
@@ -82,7 +83,9 @@
       }
     }
 
-    if(error)throw error;
+    health?.reply(error);
+    if(error){ health?.record('DATA','ERROR','VALIDACION_READ_FAILED'); throw error; }
+    health?.record('DATA','OK','VALIDACION_READ_OK');
     return {source,data:data||[]};
   }
 

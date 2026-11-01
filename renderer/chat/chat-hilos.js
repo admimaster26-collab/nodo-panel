@@ -68,9 +68,17 @@
   function isAccepted(usuario){return !!accInfo(usuario)?.accepted}
   window._wq2IsAccepted=isAccepted;
 
-  function storageKey(ticket){return "nodo_chat_local_master_"+String(ticket?.masterId||ticket?.usuario||"x").replace(/[^A-Z0-9]/gi,"_")}
+  function storageKey(ticket){
+    if(ticket?._beta)return 'nodo_chat_local_beta_'+encodeURIComponent(JSON.stringify([ticket._betaPc,ticket._chatId]));
+    return "nodo_chat_local_master_"+String(ticket?.masterId||ticket?.usuario||"x").replace(/[^A-Z0-9]/gi,"_");
+  }
   function getSavedMsgs(ticket){try{return JSON.parse(localStorage.getItem(storageKey(ticket))||"[]")}catch(_e){return[]}}
-  function setSavedMsgs(ticket,msgs){try{localStorage.setItem(storageKey(ticket),JSON.stringify(msgs||[]))}catch(_e){}}
+  function setSavedMsgs(ticket,msgs){try{localStorage.setItem(storageKey(ticket),JSON.stringify(msgs||[]));return true;}catch(_e){return false;}}
+  const betaRetries=new Map();
+  function freshTicket(ticket){
+    if(!ticket) return null;
+    return ticketsAgrupadosFinal().find(t=>ticket._chatId ? t._chatId===ticket._chatId : ticket.id ? t.id===ticket.id : U(t.usuario)===U(ticket.usuario))||ticket;
+  }
 
   function soporteRows(incluirCerrados){
     const arr=(window.V154P&&Array.isArray(V154P.solicitudes))?V154P.solicitudes:(Array.isArray(window.solicitudes)?window.solicitudes:[]);
@@ -91,6 +99,9 @@
     const out=[];
     (arr||[]).forEach(raw=>{
       const m=normalizeThreadRow(raw);
+      // Todo hilo que se dibuja o se guarda pasa por acá: lo inventado no se ve y no se vuelve a
+      // escribir (D-130).
+      if(NodoChatMessage.isFiller(m))return;
       // La copia local y la del servidor comparten autor, fecha, texto e imagen. No usamos
       // solicitud_id porque la copia local puede no tenerlo; combinamos sus datos sin perderlo.
       const k=NodoChatMessage.key(m);
@@ -105,28 +116,52 @@
     return out;
   }
 
-  // ── Store LOCAL de chats CERRADOS ──────────────────────────────────────────
-  // La RPC de solicitudes solo trae una ventana reciente → un chat cerrado viejo se cae de
-  // V154P.solicitudes y desaparecía de la pestaña "Cerrados". Acá los persistimos (con su hilo)
-  // en localStorage para que "Cerrados" muestre TODOS, sobrevivan reinicios y a la ventana del server.
+  // ── Store LOCAL de chats CERRADOS (Con aislamiento por oficina y TTL 7 días) ────────
   const CHATS_CERRADOS_KEY='nodo_chats_cerrados_v1';
-  function _chatsCerradosAll(){ try{ return JSON.parse(localStorage.getItem(CHATS_CERRADOS_KEY)||'{}')||{}; }catch(_e){ return {}; } }
+  function _pcActualChat(){
+    return String((typeof pcOperativa!=="undefined"&&pcOperativa)||window.pcOperativa||"").toUpperCase().trim();
+  }
+  function _chatsCerradosAll(){
+    try{
+      const map = JSON.parse(localStorage.getItem(CHATS_CERRADOS_KEY)||'{}')||{};
+      const pc = _pcActualChat();
+      const corte7Dias = Date.now() - (7 * 24 * 3600 * 1000);
+      let cambio = false;
+      for(const k of Object.keys(map)){
+        const c = map[k];
+        if(!c){ delete map[k]; cambio = true; continue; }
+        const f = toDate(c.fecha || c._cachedAt || 0).getTime();
+        // 1) Si tiene más de 7 días, se purga para evitar consumo desmedido de RAM/disco
+        if(f > 0 && f < corte7Dias){
+          delete map[k]; cambio = true; continue;
+        }
+        // 2) Si tiene oficina asignada y no coincide con la oficina actual del nodo, se descarta
+        if(c.pc_codigo && pc && String(c.pc_codigo).toUpperCase().trim() !== pc){
+          delete map[k]; cambio = true; continue;
+        }
+      }
+      if(cambio) _chatsCerradosSave(map);
+      return map;
+    }catch(_e){ return {}; }
+  }
   function _chatsCerradosSave(map){
     try{
       const keys=Object.keys(map);
-      if(keys.length>600){ keys.map(k=>({k,f:toDate(map[k].fecha||0)})).sort((a,b)=>a.f-b.f).slice(0,keys.length-600).forEach(x=>delete map[x.k]); }
+      if(keys.length>300){ keys.map(k=>({k,f:toDate(map[k].fecha||0)})).sort((a,b)=>a.f-b.f).slice(0,keys.length-300).forEach(x=>delete map[x.k]); }
       localStorage.setItem(CHATS_CERRADOS_KEY, JSON.stringify(map));
     }catch(_e){}
   }
   function _chatsCerradosGuardar(list){
     try{
       const map=_chatsCerradosAll(); let cambio=false;
+      const pc = _pcActualChat();
       (list||[]).forEach(g=>{
         if(!g || !g.cerrado) return;
         const key=U(g.usuario||''); if(!key) return;
         map[key]={ id:g.id, usuario:g.usuario, telefono:g.telefono||'', thread:(g.thread||[]).slice(-200),
           masterId:g.masterId||null, solicitudId:g.solicitudId||'', fecha:g.fecha||'', mensaje:g.mensaje||'',
-          items:(g.items||[]).map(s=>({ID:idSol(s)})).filter(x=>x.ID), _cachedAt:new Date().toISOString() };
+          items:(g.items||[]).map(s=>({ID:idSol(s)})).filter(x=>x.ID), _cachedAt:new Date().toISOString(),
+          pc_codigo: pc };
         cambio=true;
       });
       if(cambio) _chatsCerradosSave(map);
@@ -146,6 +181,9 @@
         map.set(key,{id:"TICKET_"+key.replace(/[^A-Z0-9]/g,"_"),usuario,telefono:tel0,items:[],fecha:"",mensaje:"",solicitudId:"",masterId:null,accepted:false,thread:[]});
       }
       const g=map.get(key);
+      g._legacyOwner=true;
+      const linkedChat=S(m0.chat_id||s.chat_id||s.CHAT_ID||'');
+      if(linkedChat){ g._chatId=linkedChat; g._betaLinked=window.NodoBetaChat?.active()===true; }
       g.items.push(s);
       const sid=idSol(s);
       const m=m0;
@@ -216,6 +254,16 @@
         window._chatCanalNuevo.tickets(incluirCerrados).forEach(function(t){
           const k = U(t.usuario || '');
           if(!k) return;
+          if(t._beta){
+            // A user name is not a conversation identity. Only an explicit bridge
+            // may reuse legacy ownership; two episodes of the same user stay separate.
+            const index=list.findIndex(g=>g._chatId && g._chatId===t._chatId);
+            if(index<0){list.push(t);return;}
+            const old=list[index];
+            list[index]={...old,...t,items:old.items,masterId:old.masterId,_legacyThread:old.thread,
+              solicitudId:old.solicitudId,_legacyOwner:true,_betaLinked:true};
+            return;
+          }
           const ya = porUsuario.get(k);
           if(!ya){ porUsuario.set(k, t); list.push(t); return; }
           // La conversación SIGUE ABIERTA pero por solicitudes el usuario figura cerrado.
@@ -285,6 +333,10 @@
       .wq2-row{display:flex;margin:7px 0;width:100%}
       .wq2-row.op{justify-content:flex-end}
       .wq2-bubble{max-width:70%;border-radius:10px;padding:8px 10px;font-size:13px;line-height:1.35;box-shadow:0 1px 1px #0006;word-break:break-word}
+      /* Cuando el mensaje ES una imagen, la burbuja se ensancha: el comprobante es el mensaje,
+         no un adorno al costado del texto. Con el 70% de las burbujas de texto la foto quedaba
+         en unos 250px de ancho y no se leía nada. */
+      .wq2-bubble:has(.wq2-img){max-width:92%}
       .wq2-row.user .wq2-bubble{background:#1f2937;color:#e5e7eb}
       .wq2-row.op .wq2-bubble{background:#14532d;color:#dcfce7}
       .wq2-row.bot{justify-content:flex-end}
@@ -293,12 +345,71 @@
       .wq2-row.system .wq2-bubble{background:#17212d;color:#b7c3d2;border:1px dashed #657387}
       .wq2-author{font-size:11px;font-weight:700;margin-bottom:5px;letter-spacing:.02em}
       .wq2-time{font-size:10px;color:#9ca3af;margin-top:4px;text-align:right}
+      /* Lista de chats. La línea de estado sólo existe cuando hay un problema (vacía no ocupa
+         lugar) y "Cargar más" es el mismo botón de las solapas, no uno sin estilo. */
+      .wq2-wrap .wq2-estado{padding:7px 14px;font-size:11px;font-weight:700;color:#fca5a5;background:rgba(127,29,29,.28);border-bottom:1px solid rgba(248,113,113,.22)}
+      .wq2-wrap .wq2-estado:empty{display:none}
+      .wq2-wrap .wq2-mas{padding:12px;text-align:center}
+      .wq2-wrap .wq2-mas .wq2-tab{cursor:pointer}
+      .wq2-wrap .wq2-mas .wq2-tab:hover:not(:disabled){background:#273449}
+      .wq2-wrap .wq2-mas .wq2-tab:disabled{opacity:.6;cursor:default}
     `;
     document.head.appendChild(st);
   }
 
   window.wq2SetTab=function(tab){window.__wq2ActiveTab=tab;renderChatListStep2Final();}
   function tabActual(){return window.__wq2ActiveTab||"espera"}
+
+  // ── Buscador de la lista ───────────────────────────────────────────────────
+  // Hay UN solo buscador (#wq2Search). Al escribir filtra lo que ya está en la lista. Si el chat
+  // nuevo está andando, hay 3 letras o más y acá no aparece nada, a los 400 ms le pregunta al
+  // servidor por ese usuario (la lista cargada trae sólo las últimas conversaciones). Al vaciar
+  // el cuadro, la lista vuelve a ser la de siempre.
+  const BUSQUEDA_MIN=3, BUSQUEDA_ESPERA_MS=400, BUSQUEDA_REINTENTO_MS=15000;
+  const SIN_CONEXION="Sin conexión con el chat. Reintentando…";   // el mismo texto que escribe beta-chat.js
+  // timer: la espera de los 400 ms · activas: preguntas al servidor en camino · mas: "Cargar más"
+  // en camino · noAntesDe: tope para que la vuelta a la lista de siempre no se reintente sin pausa.
+  const busqueda={timer:0,activas:0,mas:false,noAntesDe:0};
+  function textoBuscado(){return S(document.getElementById("wq2Search")?.value).toLowerCase().trim()}
+  function coincideBusqueda(t,q){return (S(t.usuario)+" "+S(t.telefono)+" "+S(t.mensaje)).toLowerCase().includes(q)}
+  function consultaDelServidor(){
+    try{return S(window._chatCanalNuevo?.consulta?.()).toLowerCase()}catch(_e){return ""}
+  }
+  function avisarError(texto){try{toast(texto,"red")}catch(_e){}}
+  // Para repintar desde lo que termina tarde (una respuesta del servidor): si el repintado
+  // tropieza, que no se convierta en un error suelto de una promesa que nadie espera.
+  function repintarLista(){try{renderChatListStep2Final()}catch(e){console.warn("lista de chats",e)}}
+
+  // Lo llama el cuadro de búsqueda en cada tecla: filtra al instante lo que ya está, y deja
+  // programada la consulta al servidor para cuando se deje de escribir.
+  window.wq2Buscar=function(){
+    // Primero la espera y después el repintado: la lista tiene que saber que hay una búsqueda en
+    // camino para decir "Buscando…" y no "No encontramos…" durante esos 400 ms.
+    clearTimeout(busqueda.timer);
+    busqueda.timer=setTimeout(()=>{busqueda.timer=0;void sincronizarBusqueda();},BUSQUEDA_ESPERA_MS);
+    renderChatListStep2Final();
+  };
+
+  async function sincronizarBusqueda(){
+    if(!window._chatCanalNuevo||!window.NodoBetaChat?.active?.())return;
+    busqueda.activas++;
+    try{
+      const q=textoBuscado();
+      const aplicada=consultaDelServidor();
+      // El servidor quedó filtrado por algo que ya no se está escribiendo (o el cuadro quedó
+      // vacío): primero se vuelve a la lista de siempre y recién ahí se mira qué falta.
+      if(aplicada&&!(q.length>=BUSQUEDA_MIN&&aplicada.includes(q))){
+        if(!await window.nodoBuscarChatBeta(""))return;
+        if(textoBuscado()!==q)return;              // siguió escribiendo: lo ve la pasada que sigue
+      }
+      if(q.length<BUSQUEDA_MIN||consultaDelServidor()===q)return;
+      if(ticketsAgrupadosFinal(true).some(t=>coincideBusqueda(t,q)))return;   // ya está a la vista
+      await window.nodoBuscarChatBeta(q);
+    }finally{
+      busqueda.activas--;
+      repintarLista();
+    }
+  }
 
   function renderChatListStep2Final(){
     ensureCss();
@@ -312,21 +423,28 @@
     let tab=tabActual();
     if(tab==="espera"&&!espera.length&&abiertos.length)tab=window.__wq2ActiveTab="abiertos";
 
-    const q=(document.getElementById("wq2Search")?.value||"").toLowerCase().trim();
+    // Lo escrito vuelve al cuadro tal cual (mayúsculas, espacios): sólo para comparar se normaliza.
+    const entrada=document.getElementById("wq2Search");
+    const escrito=entrada?S(entrada.value):"";
+    const q=escrito.toLowerCase().trim();
     let pool=tab==="cerrados"?cerrados:tab==="abiertos"?abiertos:espera;
-    if(q)pool=pool.filter(t=>(t.usuario+" "+t.telefono+" "+t.mensaje).toLowerCase().includes(q));
+    if(q)pool=pool.filter(t=>coincideBusqueda(t,q));
 
     try{
-      const bc=document.getElementById("badgeChat");
-      if(bc){ if(espera.length){bc.classList.remove("hidden");bc.textContent=String(espera.length)}else bc.classList.add("hidden");}
-      const stat=document.getElementById("statChats");
-      if(stat)stat.textContent=String(espera.length);
+      window.nodoChatRefreshUnread?.();
       try{ window.__wq2EnEspera=espera.length; }catch(_e){} // fuente ACTUAL de "sin leer" (el banner de Inicio la usa)
     }catch(_e){}
 
     const tabBtn=(id,label,count,active)=>`<button class="wq2-tab${active?" active":""}" onclick="wq2SetTab('${id}')">${label}${count?` <span class="wq2-count">${count}</span>`:""}</button>`;
+    const beta=window.NodoBetaChat?.active();
+    // Estado del chat: nada cuando anda bien. Con un problema, una sola línea corta y sin códigos
+    // (el código ya queda en el semáforo). El nodo existe aunque esté vacío para que beta-chat.js
+    // lo pueda llenar apenas cambie el estado, sin esperar al próximo repintado.
+    const estadoChat=window.NodoBetaChat?.status?.();
+    const lineaEstado=estadoChat&&estadoChat.enabled?`<div id="nodoBetaChatEstado" class="wq2-estado" role="status">${estadoChat.code?SIN_CONEXION:""}</div>`:"";
     let html=`<div class="wq2-wrap">
-      <div class="wq2-search"><input id="wq2Search" placeholder="Nombre, número o usuario..." oninput="renderChatListStep2Final()" value="${E(q)}"></div>
+      <div class="wq2-search"><input id="wq2Search" placeholder="Nombre, número o usuario..." oninput="wq2Buscar()" value="${E(escrito)}"></div>
+      ${lineaEstado}
       <div class="wq2-tabs">
         ${tabBtn("espera","En espera",espera.length,tab==="espera")}
         ${tabBtn("abiertos","Abiertos",abiertos.length,tab==="abiertos")}
@@ -334,7 +452,20 @@
       </div>`;
 
     if(!pool.length){
-      html+=`<div class="wq2-empty">${tab==="cerrados"?"No hay chats cerrados recientes.":tab==="abiertos"?"No hay chats abiertos.":tab==="interno"?"Sin mensajes internos.":"No hay consultas en espera."}</div>`;
+      let vacio;
+      if(!q){
+        vacio=tab==="cerrados"?"No hay chats cerrados recientes.":tab==="abiertos"?"No hay chats abiertos.":tab==="interno"?"Sin mensajes internos.":"No hay consultas en espera.";
+      }else{
+        // Buscando algo que no está en ESTA solapa: antes de decir que no existe se mira en las otras.
+        const enOtras=[["espera","En espera",espera],["abiertos","Abiertos",abiertos],["cerrados","Cerrados",cerrados]]
+          .filter(x=>x[0]!==tab).map(x=>[x[1],x[2].filter(t=>coincideBusqueda(t,q)).length]).filter(x=>x[1]>0);
+        if(enOtras.length) vacio="Nada en esta solapa. Hay resultados en: "+enOtras.map(x=>x[0]+" ("+x[1]+")").join(", ")+".";
+        // "Buscando…" mientras la pregunta está en camino o esperando sus 400 ms; si el servidor ya
+        // estaba filtrado por este mismo texto no hay nada que esperar.
+        else if(beta&&q.length>=BUSQUEDA_MIN&&(busqueda.activas>0||(busqueda.timer&&consultaDelServidor()!==q))) vacio="Buscando…";
+        else vacio="No encontramos a ese usuario.";
+      }
+      html+=`<div class="wq2-empty">${E(vacio)}</div>`;
     }else{
       pool.forEach(t=>{
         const active=U(window.__nodoChatCurrentUser||"")===U(t.usuario);
@@ -345,7 +476,7 @@
         // Sin linea de estado: "ABIERTO" ya lo dice la solapa donde estás, y ni el contador de
         // mensajes ni el N° de solicitud se usan para nada acá — el operador no decide con eso.
         // Quedan avatar, usuario, último mensaje y hora, que es lo que se mira para elegir un chat.
-        html+=`<div class="wq2-item ${active?"active":""} ${accepted?"chat-open-final":""}"
+        html+=`<div data-ticket-id="${E(t.id)}" class="wq2-item ${active?"active":""} ${accepted?"chat-open-final":""}"
             ${clickeable?`onclick="aceptarTicketLocalStep2('${E(t.id)}')" style="cursor:pointer" title="Abrir la conversación"`:""}>
           <div class="wq2-avatar" style="background:${avatarColor(t.usuario)}">${iniciales(t.usuario)}</div>
           <div style="min-width:0">
@@ -363,32 +494,136 @@
         </div>`;
       });
     }
+    // "Cargar más" es el mismo botón de las solapas, centrado al pie de la lista.
+    if(beta && window._chatCanalNuevo?.pagina()?.has_more) html+=`<div class="wq2-mas"><button class="wq2-tab" onclick="nodoMasChatsBeta()"${busqueda.mas?" disabled":""}>${busqueda.mas?"Cargando…":"Cargar más conversaciones"}</button></div>`;
     html+=`</div>`;
+
+    // Poner el html nuevo destruye el cuadro de búsqueda (y la lista que se venía bajando). Se
+    // anota dónde estaba el cursor y cuánto se había bajado, y se deja todo como estaba: si no,
+    // cada tecla —y cada repintado automático— sacaba al operador del cuadro en medio de lo que
+    // escribía.
+    const teniaFoco=!!entrada&&document.activeElement===entrada;
+    const selIni=teniaFoco?entrada.selectionStart:null, selFin=teniaFoco?entrada.selectionEnd:null;
+    const selDir=teniaFoco?entrada.selectionDirection:null;
+    const envoltorio=box.querySelector(".wq2-wrap");
+    const bajadoWrap=envoltorio?envoltorio.scrollTop:0, bajadoBox=box.scrollTop;
     box.innerHTML=html;
+    if(bajadoBox)box.scrollTop=bajadoBox;
+    const envoltorioNuevo=bajadoWrap?box.querySelector(".wq2-wrap"):null;
+    if(envoltorioNuevo)envoltorioNuevo.scrollTop=bajadoWrap;
+    if(teniaFoco){
+      const nueva=document.getElementById("wq2Search");
+      if(nueva){
+        try{nueva.focus({preventScroll:true});}catch(_e){}
+        try{nueva.setSelectionRange(selIni,selFin,selDir||"none");}catch(_e){}
+      }
+    }
+    window.nodoChatRefreshUnread?.();
+
+    // El cuadro quedó vacío pero el servidor sigue filtrado por una búsqueda anterior (por ejemplo
+    // se cortó la conexión justo al borrar): se vuelve a la lista de siempre, sin insistir más de
+    // una vez cada 15 s.
+    if(beta&&!q&&!busqueda.timer&&busqueda.activas===0&&consultaDelServidor()&&Date.now()>=busqueda.noAntesDe){
+      busqueda.noAntesDe=Date.now()+BUSQUEDA_REINTENTO_MS;
+      void window.nodoBuscarChatBeta("",true);
+    }
   }
 
   window.renderChatListStep2=renderChatListStep2Final;
   window.v15RenderChatList=renderChatListStep2Final;
   window.cargarChats=async function(){renderChatListStep2Final();return{ok:true,data:ticketsAgrupadosFinal()}};
   window.v15CargarChatsCompacto=window.cargarChats;
+  // Le pregunta al servidor por un usuario ("" = volver a la lista de siempre) y repinta la lista.
+  // Devuelve true si el servidor contestó. Si falla, el operador lee una frase corta: el motivo
+  // técnico no le sirve y queda en el semáforo (NodoSalud).
+  window.nodoBuscarChatBeta=async function(texto,silencioso){
+    const canal=window._chatCanalNuevo;
+    if(!canal)return false;
+    let contesto=false;
+    busqueda.activas++;
+    try{
+      repintarLista();                              // mientras tanto la lista dice "Buscando…"
+      contesto=(await canal.buscarUsuario(S(texto).trim()))!==false;
+    }catch(_e){
+      if(!silencioso)avisarError("No pudimos buscar. Probá de nuevo en un momento.");
+    }finally{
+      busqueda.activas--;
+      if(!contesto)busqueda.noAntesDe=Date.now()+BUSQUEDA_REINTENTO_MS;
+    }
+    repintarLista();
+    return contesto;
+  };
+  window.nodoMasChatsBeta=async function(){
+    if(busqueda.mas)return;
+    busqueda.mas=true;
+    try{
+      repintarLista();                              // el botón pasa a "Cargando…" y no se aprieta dos veces
+      await window._chatCanalNuevo.mas();
+    }catch(_e){avisarError("No pudimos cargar más conversaciones. Probá de nuevo en un momento.");}
+    finally{busqueda.mas=false;}
+    repintarLista();
+  };
+  window.nodoMasMensajesBeta=async function(){
+    const t=window.__nodoChatCurrentTicket;
+    const page=window._chatCanalNuevo?.paginaMensajes(t?._chatId);
+    if(!t?._beta || !page?.has_more) return;
+    try{await window._chatCanalNuevo.mensajesDe(t._chatId,{beforeId:page.next_before_id});
+      if(window.__nodoChatCurrentTicket?._chatId===t._chatId)renderChatConversationStep5();
+    }catch(_e){avisarError("No pudimos cargar los mensajes anteriores. Probá de nuevo en un momento.");}
+  };
 
   window.aceptarTicketLocalStep2=function(ticketId){
-    const ticket=ticketsAgrupadosFinal().find(t=>t.id===ticketId);
-    if(!ticket){alert("No encontré la consulta. Actualizá chats.");return;}
+    let ticket=ticketsAgrupadosFinal().find(t=>t.id===ticketId);
+    if(!ticket){
+      // Si no está entre las activas, chequear si es un ticket de cerrados cacheados
+      ticket = (ticketsAgrupadosFinal(true)||[]).find(t=>t.id===ticketId);
+    }
+    if(!ticket){
+      // Era un residuo fantasma de otra sesión / oficina: purgarlo de una vez para que no estorbe
+      try{
+        const store = _chatsCerradosAll();
+        let encontrado = false;
+        for(const k of Object.keys(store)){
+          if(store[k].id === ticketId || ("TICKET_" + k.replace(/[^A-Z0-9]/g,"_")) === ticketId || k === ticketId){
+            delete store[k];
+            encontrado = true;
+          }
+        }
+        if(encontrado){
+          _chatsCerradosSave(store);
+          renderChatListStep2Final();
+          try{ if(typeof toast==='function') toast("Consulta de otra sesión removida del historial local.","blue"); }catch(_e){}
+          return;
+        }
+      }catch(_e){}
+      renderChatListStep2Final();
+      try{ if(typeof toast==='function') toast("No se encontró la consulta activa en esta oficina.","amber"); }catch(_e){}
+      return;
+    }
     setAccepted(ticket.usuario,ticket.masterId);
     ticket.accepted=true;
     window.__nodoChatCurrentUser=ticket.usuario;
     window.__nodoChatCurrentTicket=ticket;
     document.body.classList.add("nodo-chat-open");
-    // Cargar chat_mensajes para obtener imagen_url de mensajes de usuarios
+    // Cargar chat_mensajes para obtener imagen_url de mensajes de usuarios y canal nuevo
     try{
       const sol=(ticket.items||[]).find(s=>metaObj(s).chat_id||s.chat_id||s.CHAT_ID);
-      const chatId=sol&&(sol.CHAT_ID||sol.chat_id||metaObj(sol).chat_id||"");
+      const chatId=ticket._chatId||ticket.chatId||(sol&&(sol.CHAT_ID||sol.chat_id||metaObj(sol).chat_id))||"";
       if(chatId){
         window.chatActualId=String(chatId);
+        ticket._chatId=String(chatId);
         if(window.V154P)window.V154P.chatActual=String(chatId);
-        if(typeof window._v154pCargarChat==="function")setTimeout(()=>window._v154pCargarChat(true),400);
+        if(typeof window._v154pCargarChat==="function")setTimeout(()=>window._v154pCargarChat(true),200);
+        else if(window._chatCanalNuevo && typeof window._chatCanalNuevo.mensajesDe==="function"){
+          window._chatCanalNuevo.mensajesDe(chatId).then(nuevos=>{
+            if(nuevos && nuevos.length){
+              ticket.thread = uniqThread((ticket.thread||[]).concat(nuevos));
+              if(window.__nodoChatCurrentTicket?._chatId===String(chatId))renderChatConversationStep5();
+            }
+          }).catch(()=>{});
+        }
       }
+      else { window.chatActualId=''; if(window.V154P)window.V154P.chatActual=''; }
     }catch(_e){}
     renderChatListStep2Final();
     renderChatConversationStep5();
@@ -415,7 +650,7 @@
       return;
     }
     // refrescar ticket con últimos datos
-    const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(ticket.usuario))||ticket;
+    const fresh=freshTicket(ticket);
     window.__nodoChatCurrentTicket=fresh;
     try{ if(typeof window.actualizarPreviewSolicitudChat==='function') window.actualizarPreviewSolicitudChat(fresh.usuario); }catch(_e){}
     if(titulo)titulo.textContent=fresh.usuario;
@@ -440,13 +675,22 @@
     // se percibía como "no guarda los mensajes". El localStorage ya se escribe al enviar; uniqThread
     // dedup-ea (mismo origen+fecha+mensaje), así el server y el local no se duplican, y los mensajes
     // aún-no-propagados al server igual se ven y sobreviven una recarga.
-    const msgs=uniqThread((fresh.thread||[]).concat(getSavedMsgs(fresh)));
+    const betaPage=fresh._beta?window._chatCanalNuevo?.paginaMensajes(fresh._chatId):null;
+    if(fresh._beta) fresh.thread=(betaPage?.rows||[]).concat((betaPage?.legacy_thread||[]).map(m=>({...m,id:null,_legacy:true})));
+    const combined=(fresh.thread||[]).concat(getSavedMsgs(fresh));
+    // Canonical IDs identify messages. Equal text/time does not prove two
+    // historical messages or a legacy projection are the same event.
+    const msgs=fresh._beta ? [...combined.reduce((map,raw,index)=>{
+      const m=normalizeThreadRow(raw);
+      const key=m.id?'id:'+m.id:m.portal_key?'legacy:'+m.portal_key:m.request_id?'request:'+m.request_id:'local:'+index;
+      map.set(key,map.has(key)?NodoChatMessage.merge(map.get(key),m):m);return map;
+    },new Map()).values()].filter(m=>!NodoChatMessage.isFiller(m)).sort((a,b)=>toDate(a.fecha)-toDate(b.fecha)) : uniqThread(combined);
     // Parchear imagen_url desde window.chatMensajes cuando el RPC no lo incluye en chat_thread.
     // Matching por timestamp más cercano (diferencia < 5 min) para evitar asignar imagen incorrecta
     // cuando hay múltiples mensajes con imagen.
     const cmArr=(window.chatMensajes||window.V154P?.chatMensajes||[]);
     const usedCm=new Set();
-    if(cmArr.length){
+    if(cmArr.length && !fresh._beta){
       msgs.forEach(m=>{
         if(m.imagen_url||NodoChatMessage.role(m)!=="USUARIO")return;
         const mts=toDate(m.fecha).getTime();
@@ -461,13 +705,27 @@
       });
     }
     let html=`<div class="wq2-chat-bg">`;
+    if(fresh._beta && betaPage?.has_more) html+=`<div style="text-align:center;margin:0 0 10px"><button class="mini-btn gray" onclick="nodoMasMensajesBeta()">Cargar mensajes anteriores</button></div>`;
+    // Con _chatId los mensajes llegan después de abrir: hilo vacío ahí no significa que no escribió.
+    if(!msgs.length && !fresh._chatId) html+=`<div class="wq2-row system"><div class="wq2-bubble">El jugador todavía no escribió nada.</div></div>`;
     msgs.forEach(m=>{
       const op=NodoChatMessage.role(m)==="OPERADOR";
       const imgSrc=m.imagen_url||m.imagen||"";
-      const imgHtml=(imgSrc&&!_chatImgFailed.has(imgSrc))?`<img src="${E(imgSrc)}" style="max-width:220px;border-radius:8px;margin-top:6px;display:block;cursor:pointer" title="Ver imagen" onclick="window.open(this.src,'_blank')" onerror="window._chatImgError('${E(imgSrc)}')">` : "";
-      const editBtn=(op && !imgSrc && m.fecha)?`<button class="wq2-edit" onclick="editarMensajeOperador('${E(m.fecha)}')" title="Editar este mensaje (también se actualiza para el cliente)">✏️</button>`:"";
+      // La vista previa ya no recorta. Antes era una caja de 220×180 con `object-fit:cover`, que
+      // recorta: de un comprobante de transferencia —que es alto— se veía un pedazo del medio.
+      // Juan, 25/10: "no se aprecia un carajo lo que mierda envia el usuario".
+      // Ahora ocupa el ancho de la burbuja y conserva la proporción, así que se lee de una.
+      //
+      // Ni la url ni el nombre se meten adentro del onclick: van por atributos y el handler los
+      // lee de `this`. E() escribe las comillas como &#39;, que el navegador vuelve a convertir
+      // en comilla ANTES de que lo lea el JavaScript — un titular "D'Angelo" partía el botón.
+      const imgHtml = imgSrc ? `<div class="wq2-img" style="margin-top:6px"><img src="${E(imgSrc)}" data-titulo="${E(NodoChatMessage.author(m,fresh.usuario))}" style="max-width:100%;height:auto;max-height:min(46vh,420px);border-radius:8px;display:block;cursor:zoom-in;object-fit:contain;background:#0b0f16;border:1px solid rgba(255,255,255,0.12)" title="Clic para verla en una ventana aparte" onclick="if(window.nodoVerImagenCompleta){window.nodoVerImagenCompleta(this.src,this.dataset.titulo||'');}else{window.open(this.src,'_blank');}" onerror="this.onerror=null;this.style.opacity='0.6';this.alt='No se pudo cargar la imagen';"></div>` : "";
+      const editBtn=(op && !imgSrc && m.fecha && !fresh._beta)?`<button class="wq2-edit" onclick="editarMensajeOperador('${E(m.fecha)}')" title="Editar este mensaje (también se actualiza para el cliente)">✏️</button>`:"";
       const editedTag=m.editado?`<span class="wq2-edited" title="Mensaje editado">· editado</span>`:"";
-      html+=`<div class="wq2-row ${NodoChatMessage.className(m)}"><div class="wq2-bubble"><div class="wq2-author">${E(NodoChatMessage.author(m,fresh.usuario))}</div>${E(NodoChatMessage.visibleText(m)).replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time" title="${E(m.fecha)}">${hora(m.fecha)}${editedTag}${editBtn}</div></div></div>`;
+      const retryBtn=fresh._beta && !fresh._legacyOwner && m.request_id && !m.persisted ?
+        `<button type="button" data-beta-request-id="${E(m.request_id)}" onclick="nodoReintentarMensajeBeta(this.dataset.betaRequestId)">Confirmación pendiente · Reintentar</button>`:'';
+      const receipt=fresh._beta && m.id?` data-beta-message-id="${E(m.id)}" data-beta-role="${E(NodoChatMessage.role(m))}"`:'';
+      html+=`<div${receipt} class="wq2-row ${NodoChatMessage.className(m)}"><div class="wq2-bubble"><div class="wq2-author">${E(NodoChatMessage.author(m,fresh.usuario))}</div>${E(NodoChatMessage.visibleText(m)).replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time" title="${E(m.fecha)}">${hora(m.fecha)}${editedTag}${editBtn}${retryBtn}</div></div></div>`;
     });
     html+=`</div>`;
     bodies.forEach((box,i)=>{
@@ -476,6 +734,7 @@
         if(atBottom[i])box.scrollTop=box.scrollHeight;
       }
     });
+    if(fresh._beta) window.NodoBetaChat?.observeRendered(fresh,bodies,msgs);
   }
   window.renderChatMensajes=renderChatConversationStep5;
   window.v15RenderChatMensajes=renderChatConversationStep5;
@@ -486,7 +745,8 @@
   // que en Electron no anda). Marca el mensaje como "editado".
   window.editarMensajeOperador=function(fechaIso){
     const ticket=window.__nodoChatCurrentTicket; if(!ticket) return;
-    const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(ticket.usuario))||ticket;
+    if(ticket._beta) return; // Editing needs its own authenticated server contract.
+    const fresh=freshTicket(ticket);
     const merged=uniqThread((fresh.thread||[]).concat(getSavedMsgs(fresh)));
     const m=merged.find(x=>String(x.fecha)===String(fechaIso)&&NodoChatMessage.role(x)==="OPERADOR");
     if(!m){ try{toast('No encontré el mensaje.','red');}catch(_e){} return; }
@@ -515,10 +775,43 @@
   };
 
   async function persistirChatStep5(ticket,estadoChat,extraMsg=null){
-    if(typeof actualizarSolicitudPortal!=="function")throw new Error("actualizarSolicitudPortal no disponible");
     const operador=(window.operador?.usuario||window.operador?.nombre||"panel");
-    const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(ticket.usuario))||ticket;
-    const thread=uniqThread(fresh.thread);
+    const fresh=freshTicket(ticket);
+    // A canonical conversation has one writer. A bridge owned by solicitudes
+    // keeps its existing writer; no simultaneous second send and no global ID fallback.
+    if(fresh._canalNuevo && !fresh._legacyOwner){
+      if(!extraMsg) return; // Accepting locally is neither a message nor a read receipt.
+      const chatId=S(fresh._chatId);
+      if(!chatId)throw new Error('No se identificó la conversación');
+      if(fresh._beta){
+        if(fresh._betaPc!==_pcActualChat())throw new Error('BETA_CONTEXT_CHANGED');
+        if(!extraMsg.request_id)extraMsg.request_id=window.crypto.randomUUID();
+        const pending=getSavedMsgs(fresh).filter(m=>m.fecha!==extraMsg.fecha || m.request_id && m.request_id!==extraMsg.request_id);
+        pending.push(extraMsg);
+        if(!setSavedMsgs(fresh,pending))throw new Error('No se pudo conservar el identificador para reintentar el mensaje');
+        const confirmed=await window.NodoBetaChat.enviar(chatId,extraMsg);
+        const saved=getSavedMsgs(fresh).map(m=>m.request_id===extraMsg.request_id?{...m,...NodoChatMessage.normalize(confirmed),persisted:true}:m);
+        setSavedMsgs(fresh,saved);
+        return;
+      }
+      if(typeof window.panelAPI?.rpc!=='function')throw new Error('Canal de chat no disponible');
+      const _chatHealth=window.NodoSalud?.begin?.('CHAT');
+      const result=await window.panelAPI.rpc(extraMsg.imagen_url?'panel_nodo_send_chat_message':'panel_core_enviar_chat_json',{
+        p_chat_id:chatId,p_mensaje:extraMsg.mensaje||(extraMsg.imagen_url?'[Imagen adjunta]':''),p_emisor:operador,
+        ...(extraMsg.imagen_url?{p_imagen_url:extraMsg.imagen_url,p_pc_codigo:_pcActualChat()}: {})
+      });
+      _chatHealth?.reply?.(result?.error);
+      let data=result?.data;
+      if(typeof data==='string'){try{data=JSON.parse(data);}catch(_){}}
+      if(result?.error || !data || data.ok===false || data.exito===false){
+        _chatHealth?.record?.('EFFECT','ERROR','CHAT_LEGACY_SEND_ERROR');
+        throw new Error(result?.error?.message||data?.error||'El servidor no confirmó el mensaje');
+      }
+      _chatHealth?.record?.('EFFECT','OK');
+      return;
+    }
+    if(typeof actualizarSolicitudPortal!=="function")throw new Error("actualizarSolicitudPortal no disponible");
+    const thread=uniqThread(fresh._legacyThread||fresh.thread);
     // Si localStorage falló al guardar (ej. imagen base64 grande), incluir el mensaje directamente
     if(extraMsg){
       const yaEsta=thread.some(m=>m.fecha===extraMsg.fecha&&U(m.origen)==="OPERADOR");
@@ -526,6 +819,7 @@
     }
     const masterId=Number(fresh.masterId||fresh.solicitudId||0);
 
+    if(!masterId)throw new Error('No se identificó la solicitud de la conversación');
     if(masterId){
       await actualizarSolicitudPortal(masterId,"EN_REVISION",{
         chat_estado:estadoChat||"ABIERTO_PANEL",
@@ -570,7 +864,7 @@
     const imagen=window.chatImagenUrl||window.chatImagenBase64||"";
     if(!msg&&!imagen)return{ok:true};
 
-    const fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(ticket.usuario))||ticket;
+    const fresh=freshTicket(ticket);
     const saved=getSavedMsgs(fresh);
     const msgObj={origen:"OPERADOR",tipo:"OPERADOR",usuario:fresh.usuario,operador:(window.operador?.usuario||window.operador?.nombre||"panel"),mensaje:msg,fecha:new Date().toISOString()};
     if(imagen)msgObj.imagen_url=imagen;
@@ -601,11 +895,37 @@
       return{ok:true};
     }catch(e){
       console.warn("persist step5 send",e);
-      alert("La respuesta quedó local, pero no se pudo guardar: "+(e.message||e));
+      const errTxt = String(e?.message || e || '');
+      let humano = 'No se pudo guardar la respuesta en el servidor. Tu mensaje quedó acá para reintentar.';
+      if (/BETA_CHAT_CLOSED|cerrad/i.test(errTxt)) {
+        humano = 'Esta consulta figuraba como cerrada. La reabrimos en el sistema; probá enviar de nuevo.';
+        try { if (typeof window.reabrirConsultaWq2 === 'function') window.reabrirConsultaWq2(fresh.id); } catch(_re) {}
+      } else if (/NETWORK|fetch failed|econn|timeout|sin conexi/i.test(errTxt)) {
+        humano = 'Sin conexión con el servidor. Tu mensaje quedó guardado para enviarse al volver internet.';
+      } else if (/BETA_CONTEXT_CHANGED/i.test(errTxt)) {
+        humano = 'Cambió la oficina seleccionada. Reabrí la conversación para enviar.';
+      }
+      try { if (typeof toast === 'function') toast(humano, 'amber'); else alert(humano); } catch(_a) { alert(humano); }
+      renderChatConversationStep5();
       return{ok:false,error:e};
     }
   };
   window.v15EnviarChatCompacto=function(){return window.enviarChat("v15ChatInput");};
+
+  window.nodoReintentarMensajeBeta=async function(requestId){
+    const ticket=window.__nodoChatCurrentTicket;
+    if(!ticket?._beta || ticket._legacyOwner || ticket._betaPc!==_pcActualChat())return{ok:false,error:'BETA_CONTEXT_CHANGED'};
+    const key=ticket._betaPc+'|'+ticket._chatId+'|'+requestId;
+    if(betaRetries.has(key))return betaRetries.get(key);
+    const message=getSavedMsgs(ticket).find(m=>m.request_id===requestId && !m.persisted);
+    if(!message)return{ok:false,error:'BETA_PENDING_MESSAGE_MISSING'};
+    const pending=(async()=>{
+      try{await persistirChatStep5(ticket,'RESPONDIDO_PANEL',message);return{ok:true};}
+      catch(e){try{toast('Sigue pendiente: '+e.message,'red');}catch(_){}return{ok:false,error:e.message};}
+      finally{betaRetries.delete(key);renderChatConversationStep5();}
+    })();
+    betaRetries.set(key,pending);return pending;
+  };
 
   // Envía un mensaje del operador al thread del portal para un usuario dado, SIN depender del input
   // ni de tener el chat abierto. Lo usa el flujo de vinculación para avisar "ya podés ingresar" con
@@ -748,11 +1068,29 @@
   window.reabrirConsultaWq2=async function(ticketId){
     let t=(ticketsAgrupadosFinal(true)||[]).find(x=>String(x.id)===String(ticketId));
     if(!t) t=(ticketsAgrupadosFinal(true)||[]).find(x=>U(x.usuario)===U(ticketId));
-    if(!t){ try{toast('No encontré esa consulta.','red');}catch(_e){} return; }
+    if(!t){
+      // Si no existe, limpiar del cache de cerrados y refrescar
+      try{
+        const store = _chatsCerradosAll();
+        for(const k of Object.keys(store)){
+          if(store[k].id === ticketId || U(store[k].usuario) === U(ticketId) || k === ticketId){
+            delete store[k];
+          }
+        }
+        _chatsCerradosSave(store);
+        renderChatListStep2Final();
+      }catch(_e){}
+      try{toast('Consulta de otra sesión removida.','blue');}catch(_e){}
+      return;
+    }
     try{
+      let actualizado = false;
       for(const s of (t.items||[])){
         const sid=idSol(s);
-        if(sid)await actualizarSolicitudPortal(sid,"EN_REVISION",{chat_estado:"RESPONDIDO_PANEL",chat_master_id:t.masterId||t.solicitudId||sid});
+        if(sid){
+          await actualizarSolicitudPortal(sid,"EN_REVISION",{chat_estado:"RESPONDIDO_PANEL",chat_master_id:t.masterId||t.solicitudId||sid});
+          actualizado = true;
+        }
       }
       setAccepted(t.usuario, t.masterId);       // vuelve a "Abiertos"
       window.__wq2ActiveTab="abiertos";
@@ -761,7 +1099,10 @@
       const _abrir = window.aceptarTicketLocalStep2 || (typeof aceptarTicketLocalStep2==="function"?aceptarTicketLocalStep2:null);
       if(_abrir){ try{ _abrir(t.id); }catch(_e){} }
       try{toast('↩ Consulta reabierta: '+E(t.usuario)+' · seguí escribiéndole','green');}catch(_e){}
-    }catch(e){ try{toast('No se pudo reabrir: '+(e.message||e),'red');}catch(_e){} }
+    }catch(e){
+      // A network/auth failure is not proof that the conversation is obsolete.
+      try{toast('No se pudo reabrir: '+(e.message||e)+'. La consulta se conserva.','yellow');}catch(_e){}
+    }
   };
 
   // ── Auto-cierre de consultas sin respuesta ──────────────────────────────
@@ -849,7 +1190,73 @@
     }
   },true);
 
+  // ── Saneamiento y Limpieza preventiva de datos locales y memoria ────────────
+  window.nodoLimpiarDatosAntiguosLocal = function(){
+    try{
+      let removidos = 0;
+      const pc = _pcActualChat();
+      const corte7Dias = Date.now() - (7 * 24 * 3600 * 1000);
+
+      // 1. Limpiar nodo_chats_cerrados_v1
+      const cerrados = _chatsCerradosAll();
+      for(const k of Object.keys(cerrados)){
+        const c = cerrados[k];
+        const f = toDate(c?.fecha || c?._cachedAt || 0).getTime();
+        if((f > 0 && f < corte7Dias) || (c?.pc_codigo && pc && String(c.pc_codigo).toUpperCase().trim() !== pc)){
+          delete cerrados[k];
+          removidos++;
+        }
+      }
+      _chatsCerradosSave(cerrados);
+
+      // 2. Limpiar marcas de aceptación antiguas (> 7 días)
+      const accepted = getAccepted();
+      for(const u of Object.keys(accepted)){
+        const at = toDate(accepted[u]?.at || 0).getTime();
+        if(at > 0 && at < corte7Dias){
+          delete accepted[u];
+          removidos++;
+        }
+      }
+      localStorage.setItem(ACCEPT_KEY, JSON.stringify(accepted));
+
+      // 3. Limpiar claves huérfanas nodo_chat_local_master_* y nodo_chat_local_*
+      for(let i = localStorage.length - 1; i >= 0; i--){
+        const key = localStorage.key(i);
+        if(key && (key.startsWith('nodo_chat_local_master_') || key.startsWith('nodo_chat_local_'))){
+          try{
+            const val = JSON.parse(localStorage.getItem(key) || '[]');
+            if(Array.isArray(val) && val.length > 0){
+              const lastDate = toDate(val[val.length - 1]?.fecha || 0).getTime();
+              // Never discard a reply merely because it is old: it may still be
+              // pending persistence after a network failure.
+              if(val.every(m=>m.persisted===true) && lastDate > 0 && lastDate < corte7Dias){
+                localStorage.removeItem(key);
+                removidos++;
+              }
+            } else {
+              localStorage.removeItem(key);
+              removidos++;
+            }
+          }catch(_e){ /* Preserve unreadable local evidence for diagnostics. */ }
+        }
+      }
+
+      renderChatListStep2Final();
+      if(removidos > 0){
+        console.log(`[NODO Limpieza] Se purgaron ${removidos} datos obsoletos de sesiones/oficinas anteriores.`);
+        try{ if(typeof toast === 'function') toast(`🧹 Se limpiaron ${removidos} datos obsoletos de sesiones anteriores`, 'blue'); }catch(_e){}
+      }
+      return { ok: true, removidos };
+    }catch(err){
+      console.warn('[NODO Limpieza] Error en saneamiento local:', err);
+      return { ok: false, error: err.message };
+    }
+  };
+
   setTimeout(()=>{renderChatListStep2Final();},700);
+  // Limpieza inicial preventiva a los 3 segundos
+  setTimeout(()=>{ try{ window.nodoLimpiarDatosAntiguosLocal(); }catch(_e){} }, 3000);
   // Primer auto-close 90s después del inicio (cuando los tickets ya cargaron)
   setTimeout(()=>autoCloseTicketsViejos(true), 90000);
   // Luego cada 30 minutos

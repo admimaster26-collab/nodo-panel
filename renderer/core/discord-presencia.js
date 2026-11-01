@@ -19,17 +19,25 @@
         solicitudes: (window.V154P && window.V154P.solicitudes) || [],
         version: window._versionApp || '',
         pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : '') || window.pcOperativa || '',
-        // El MISMO criterio con el que la pantalla decide qué es un parcial. Un retiro pagándose
-        // por partes ya se aceptó: no está esperando que alguien lo agarre.
+        // El MISMO criterio con el que la pantalla decide qué queda en la lista de pendientes. Un
+        // retiro pagándose por partes ya se aceptó, y una solicitud TOMADA también: ninguna está
+        // esperando que alguien la agarre. Se pregunta por el mismo reparto que usa la lista, así no
+        // puede decir "5 pendientes" cuando la pantalla muestra 2.
         esParcial: function(s){
           try{
             const par = window.NodoDomain && window.NodoDomain.parciales;
             if(!par) return false;
-            return par.enProceso(s, {
-              info: window._retiroParcialInfo,
-              cerrado: window._retiroCerradoAMano,
-              sigueAbierto: window._retiroParcialSigueAbierto
+            const r = par.repartirAbiertas([s], {
+              esParcial: function(x){
+                return par.enProceso(x, {
+                  info: window._retiroParcialInfo,
+                  cerrado: window._retiroCerradoAMano,
+                  sigueAbierto: window._retiroParcialSigueAbierto
+                });
+              },
+              enCola: function(x){ return !!(window._colaCargaEstado || {})[String(x.ID || x.SOLICITUD_ID || '')]; }
             });
+            return r.pendientes.length === 0;
           }catch(_e){ return false; }
         }
       });
@@ -45,6 +53,7 @@
       // Mandar lo mismo una y otra vez es ruido: Discord lo descarta igual.
       if(!forzar && dom && !dom.distinta(p, ultima)) return;
       ultima = p;
+      window.NodoSalud?.begin('ADMIN')?.record('ALIVE','OK','DISCORD_PRESENCIA');
       window.ctrlElectron.discordPresencia(p).catch(function(){});
     }catch(_e){}
   };

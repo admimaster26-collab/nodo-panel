@@ -399,6 +399,7 @@ window.copiarDetalleError = function(histId){
 // actúa ANTES de "Aplicar" (nunca después — la plata ya se movió). Portado de NexoBetaChan.
 function _mostrarBtnAbort(show){ try{ const b=document.getElementById('btnAbortarOp'); if(b) b.style.display = show ? 'inline-block' : 'none'; }catch(_e){} }
 async function abortarOperacionActual(){
+  window.NodoSalud?.begin('AUTOMATISMOS')?.record('EFFECT','OK','MANUAL_ABORT_REQUESTED');
   try{
     if(window.ctrlElectron && ctrlElectron.drexAutomation){
       await ctrlElectron.drexAutomation('abortarOperacion');

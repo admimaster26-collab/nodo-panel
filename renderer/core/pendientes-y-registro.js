@@ -74,12 +74,12 @@
     _wdLock();
     try{
       toast('Leyendo saldo de '+it.usuario+'...', 'blue');
-      const b = await callDrex('buscarUsuario', it.usuario, { skipBalance:false });
-      if(b && b.exists && b.balance && b.balance.raw){
-        colaPendientesPatch(qid, { saldoLeido: b.balance.raw.trim(), saldoLeidoHora: new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) });
-        toast('Saldo de '+it.usuario+': '+b.balance.raw.trim(), 'blue');
-      } else { toast('No se pudo leer el saldo'+(b&&b.needsLogin?' (sesión caída)':''), 'red'); }
-    }catch(e){ toast('Error leyendo saldo: '+(e.message||''), 'red'); }
+      const lectura = await window.leerFichasJugador(it.usuario);
+      if(lectura.confiable === true){
+        colaPendientesPatch(qid, { saldoLeido: lectura.raw, saldoLeidoHora: new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) });
+        toast('Saldo de '+it.usuario+': '+lectura.raw, 'blue');
+      } else { toast(lectura.error, 'red'); }
+    }catch(_e){ toast('No se pudo leer el saldo. Probá de nuevo.', 'red'); }
     finally{ _wdUnlock(); _drexGlobalUnlock(); }
   };
   // Reintentar SEGURO (nuestro): en vez de re-ejecutar la carga a ciegas, PRECARGA el formulario
@@ -183,6 +183,7 @@ async function registrarEnHistorial(op){
 
   // Intento 1: completo, quitando columnas ya detectadas como inexistentes.
   let intento = { ...baseRow };
+  window.NodoSalud?.begin('HISTORIAL')?.record('EFFECT','OK','HISTORIAL_REGISTRO');
   _HISTORIAL_COLS_INEXISTENTES.forEach(c => delete intento[c]);
 
   for(let i = 0; i <= _HISTORIAL_COLS_OPCIONALES.length; i++){

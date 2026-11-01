@@ -42,6 +42,12 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
     agentWindow = new BrowserWindow({
       width:  1400,
       height: 900,
+      // Juan, 25/10: "la ventana de agentes si esta visible debe de tener un tamaño minimo fijo
+      // pq no se ve el campo de contraseña". No tenía mínimo: achicada a mano —o abierta chica
+      // por una resolución baja— el formulario del casino queda cortado y el operador no puede
+      // escribir la clave, así que no hay forma de abrir la sesión de Agentes.
+      minWidth:  1000,
+      minHeight: 700,
       title:  'Agentes — Cargas automáticas',
       icon:   icon,
       show:   false,

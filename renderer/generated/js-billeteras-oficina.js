@@ -138,8 +138,13 @@
     return rows.filter(b => _isActiva(b) && !_isFusionada(b)).map(_mapWallet);
   }
 
+  // Ésta es la carga de billeteras que corre: la de core/vistas-y-billeteras.js queda pisada acá. Por
+  // eso el semáforo se engancha en ésta (Juan, 1/11: anotarlo en la otra dejaba Billeteras sin datos).
   window.cargarBilleteras = cargarBilleteras = async function(render=true){
+    const health = window.NodoSalud?.begin('BILLETERAS');
     const mapped = await _readWalletsForced();
+    if((mapped||[]).length) health?.record('DATA','OK');
+    else health?.record('DATA','ERROR','BILLETERAS_LOAD_FAILED');
     // Dedup por CHUNIOR_UID: la misma wallet puede venir repetida (filas duplicadas en billeteras).
     // Conserva la primera (la EN PORTAL queda primera por el orden seleccionada_manual desc).
     const _seen=new Set(); const _ded=[];

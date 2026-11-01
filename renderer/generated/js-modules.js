@@ -682,6 +682,52 @@
     }catch(_e){ return false; }
   }
 
+  // ── Solicitudes TOMADAS ─────────────────────────────────────────────────────────────────────
+  // Tomar una solicitud (carga o retiro) la saca de la lista de pendientes y la manda al mismo
+  // apartado donde están los retiros pagándose por partes: las dos cosas son lo mismo para el
+  // operador, trabajo que ya alguien agarró. La lista principal queda sólo con lo que NADIE tocó,
+  // que es lo que hace falta ver cuando entran tres o cinco juntas (Juan, 25/10).
+  //
+  // Tomar → EN_REVISION; los pagos por partes la llevan a EN_PROCESO. Las dos significan "ya la tiene
+  // alguien".
+  const TOMADA = /^(EN_REVISION|EN_PROCESO)$/;
+
+  // Sólo cargas y retiros: el cambio de clave no se "toma" y el soporte va al chat.
+  function tomada(s){
+    const t = tipoDe(s);
+    if(t !== 'CARGA' && t !== 'RETIRO') return false;
+    return TOMADA.test(texto(s && s.ESTADO).toUpperCase());
+  }
+
+  // Reparte lo abierto en tres lugares: pagándose por partes, tomadas, y sin tocar.
+  //
+  // Lo que está en la COLA DE CARGA se queda en la lista principal aunque esté tomada: ahí es donde
+  // la tarjeta dice "2º en la cola" / "Cargando…", y si desapareciera de ahí el operador apretaría
+  // de nuevo creyendo que el clic se perdió.
+  //
+  // Ante la duda, la lista principal: un callback que falla NO puede esconder una solicitud.
+  function repartirAbiertas(abiertas, opciones){
+    const o = opciones || {};
+    // Un criterio que no se pasó es "no" (no hay parciales ni cola). Un criterio que se pasó y FALLÓ
+    // es "no sé": ahí gana la lista principal, que es donde nada se pierde de vista.
+    const preguntar = function(fn, s){
+      if(typeof fn !== 'function') return { dudoso: false, si: false };
+      try{ return { dudoso: false, si: !!fn(s) }; }catch(_e){ return { dudoso: true, si: false }; }
+    };
+    const parciales = [], tomadas = [], pendientes = [];
+    for(const s of (Array.isArray(abiertas) ? abiertas : [])){
+      const p = preguntar(o.esParcial, s);
+      if(p.dudoso){ pendientes.push(s); continue; }
+      if(p.si){ parciales.push(s); continue; }
+      if(tomada(s)){
+        const c = preguntar(o.enCola, s);
+        if(!c.dudoso && !c.si){ tomadas.push(s); continue; }
+      }
+      pendientes.push(s);
+    }
+    return { parciales: parciales, tomadas: tomadas, pendientes: pendientes };
+  }
+
   // La nota que queda registrada y que ve el jugador. Sin nombres de operadores ni billeteras.
   function notaCierre(caso, money){
     const m = typeof money === 'function' ? money : function(n){ return String(n); };
@@ -690,7 +736,7 @@
          + '; quedaron sin pagar ' + m(caso.restante) + '.';
   }
 
-  return { aCerrarPorCarga, enProceso, notaCierre, MOTIVO, ETIQUETA };
+  return { aCerrarPorCarga, enProceso, tomada, repartirAbiertas, notaCierre, MOTIVO, ETIQUETA };
 });
 // Qué muestra NODO en Discord. Dos renglones, nada más:
 //
@@ -1039,6 +1085,889 @@
   return { telefono, titular, usuario, numeros, destino, veredicto, hayQueValidar };
 });
 (function(root, factory){
+  if(typeof module === 'object' && module.exports) module.exports = { create: factory };
+  else root.NodoPerfilConsulta = factory(root);
+})(globalThis, function(root){
+  'use strict';
+  const CONTRACT = 'nodo.beta.v1', LIMIT = 50, TTL = 60000;
+  const text = value => String(value == null ? '' : value).trim();
+  const user = value => text(value).toLowerCase();
+  const office = value => text(value).toUpperCase();
+  const pc = () => office(root.pcOperativa || root.__pcCodigo);
+  const validId = value => typeof value === 'string' && /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n;
+  const validObsId = value => typeof value === 'string' && value.length >= 1 && value.length <= 1024;
+  const validDate = value => value === null || (typeof value === 'string' && Number.isFinite(Date.parse(value)));
+  const validCursor = value => value && typeof value === 'object' && validId(value.id) && validDate(value.created_at);
+  const validObsCursor = value => value && typeof value === 'object' && validObsId(value.id) && validDate(value.fecha);
+  const equalCursor = (a,b) => !!a && !!b && a.id === b.id && a.created_at === b.created_at;
+  const equalObsCursor = (a,b) => !!a && !!b && a.id === b.id && a.fecha === b.fecha;
+  // Postgres retains microseconds; Date alone would collapse distinct rows to a
+  // millisecond and incorrectly compare their IDs at that boundary.
+  const timestamp = value => BigInt(Date.parse(value))*1000n + BigInt(((value.match(/\.(\d+)/)||[])[1]||'').padEnd(6,'0').slice(3,6)||'0');
+  function older(row,cursor){
+    if(row.created_at===null) return cursor.created_at!==null || BigInt(row.id)<BigInt(cursor.id);
+    if(cursor.created_at===null)return false;
+    const a=timestamp(row.created_at),b=timestamp(cursor.created_at);
+    return a<b || (a===b && BigInt(row.id)<BigInt(cursor.id));
+  }
+  function olderObs(row,cursor){
+    if(row.fecha===null) return cursor.fecha!==null || row.id < cursor.id;
+    if(cursor.fecha===null) return false;
+    const a=timestamp(row.fecha),b=timestamp(cursor.fecha);
+    return a<b || (a===b && row.id < cursor.id);
+  }
+  let scope = '', epoch = 0, mode = 'pending', legacyReason = '', identityCapable = false, negotiation = null;
+  const entries = new Map();
+  function fail(code){ const error = new Error(code); error.code = code; return error; }
+  function sync(){
+    if(scope !== pc()){
+      scope = pc(); epoch++; mode = 'pending'; legacyReason = ''; identityCapable = false; negotiation = null; entries.clear();
+    }
+    return scope;
+  }
+  function current(version, requestedPc){ sync(); return epoch === version && scope === requestedPc; }
+  function decode(result){
+    let data = result?.data;
+    if(typeof data === 'string'){ try{ data = JSON.parse(data); }catch(_){ data = null; } }
+    if(result?.error) throw fail(/^[A-Z0-9_]{1,64}$/.test(result.error.code || '') ? result.error.code : 'PERFIL_RPC_FAILED');
+    if(data?.ok !== true || data.contract !== CONTRACT) throw fail('PERFIL_CONTRACT_MISMATCH');
+    return data;
+  }
+  async function ready(){
+    sync();
+    if(mode === 'beta') return true;
+    if(mode === 'legacy' && legacyReason !== 'config') return false;
+    if(negotiation) return negotiation;
+    const version = epoch, requestedPc = scope;
+    const pending = (async()=>{
+      if(!root.panelAPI?.getContext){ mode = 'legacy'; legacyReason = 'no-bridge'; return false; }
+      const context = await root.panelAPI.getContext();
+      if(!current(version,requestedPc)) throw fail('PERFIL_CONTEXT_CHANGED');
+      if(!context || typeof context !== 'object') throw fail('PERFIL_CONTEXT_INVALID');
+      const config = context?.beta;
+      if(!config?.enabled || !Array.isArray(config.offices) || !config.offices.map(office).includes(requestedPc)){
+        mode = 'legacy'; legacyReason = 'config'; identityCapable = false; return false;
+      }
+      if(!requestedPc || !root.panelAPI?.rpc) throw fail('PERFIL_CLIENT_UNAVAILABLE');
+      const capHealth = root.NodoSalud?.begin('CAPACIDADES');
+      const rawCap = await root.panelAPI.rpc('nodo_beta_capacidades_v1', {p_pc_codigo:requestedPc,p_build:config.build,p_activate:false});
+      capHealth?.reply(rawCap?.error);
+      const result = decode(rawCap);
+      if(!current(version,requestedPc)) throw fail('PERFIL_CONTEXT_CHANGED');
+      if(office(result.scope?.pc_codigo) !== requestedPc || !Array.isArray(result.capabilities)){
+        capHealth?.record('DATA','ERROR','PERFIL_SCOPE_MISMATCH');
+        throw fail('PERFIL_SCOPE_MISMATCH');
+      }
+      capHealth?.record('DATA','OK','CAPACIDADES_PERFIL_OK');
+      mode = ['perfil.summary.v1','perfil.detail.v1'].every(c=>result.capabilities.includes(c)) ? 'beta' : 'legacy';
+      legacyReason = mode === 'legacy' ? 'capabilities' : '';
+      identityCapable = mode === 'beta' && result.capabilities.includes('perfil.identity.v1');
+      return mode === 'beta';
+    })();
+    negotiation = pending;
+    try{ return await pending; }
+    finally{ if(negotiation === pending) negotiation = null; }
+  }
+  function getEntry(usuario){
+    sync();
+    const key = user(usuario);
+    if(!key) throw fail('PERFIL_INVALID_USER');
+    if(!entries.has(key)) entries.set(key,{usuario:key,pc:scope,resumen:null,agente:null,detalleTotal:null,agenteTotal:null,
+      rows:[],aliases:[],loaded:false,hasMore:false,cursor:null,
+      identidad:[],identidadTotal:null,identidadLoaded:false,identidadHasMore:false,identidadCursor:null,localesDisponibles:false,
+      loading:false,error:'',updated:0,flight:null,health:null});
+    return entries.get(key);
+  }
+  function snapshot(usuario){
+    const entry = getEntry(usuario);
+    return {mode,pc:scope,usuario:entry.usuario,resumen:entry.resumen && {...entry.resumen},agente:entry.agente && {...entry.agente},
+      detalleTotal:entry.detalleTotal,agenteTotal:entry.agenteTotal,rows:entry.rows.slice(),aliases:entry.aliases.slice(),loaded:entry.loaded,
+      hasMore:entry.hasMore,cursor:entry.cursor && {...entry.cursor},
+      identidad:entry.identidad.slice(),identidadTotal:entry.identidadTotal,identidadLoaded:entry.identidadLoaded,
+      identidadHasMore:entry.identidadHasMore,identidadCursor:entry.identidadCursor && {...entry.identidadCursor},
+      localesDisponibles:entry.localesDisponibles,identidadLocalesDisponibles:entry.localesDisponibles,
+      loading:entry.loading,error:entry.error};
+  }
+  function validateScope(data,requestedPc,usuario){
+    if(office(data.scope?.pc_codigo) !== requestedPc || user(data.scope?.usuario) !== usuario ||
+      !Array.isArray(data.scope.pc_codigos) || !data.scope.pc_codigos.length || !data.scope.pc_codigos.every(p=>typeof p==='string' && text(p))) throw fail('PERFIL_SCOPE_MISMATCH');
+  }
+  function validateSummary(data,usuario){
+    const r = data.resumen, a = data.agente;
+    const count = value => Number.isSafeInteger(value) && value >= 0;
+    const amount = value => typeof value === 'number' && Number.isFinite(value);
+    if(!r || user(r.usuario) !== usuario || !['totalOps','cargas','retiros'].every(k=>count(r[k])) ||
+      !['montoCargas','montoRetiros','neto'].every(k=>amount(r[k])) || !count(data.detalle_total) || !count(data.agente_total) ||
+      typeof r.requiere_revision !== 'boolean' || ![null,'VINCULO_DECLARADO','RETIRO_CONFIRMADO'].includes(r.cbu_fuente) ||
+      !a || !['totalOps','cargas','retiros'].every(k=>count(a[k])) || !['montoCargas','montoRetiros'].every(k=>amount(a[k]))) throw fail('PERFIL_INVALID_SUMMARY');
+  }
+  function validatePage(data,entry,cursor){
+    const rows = data.rows;
+    if(!Array.isArray(rows) || rows.length > LIMIT || typeof data.has_more !== 'boolean' ||
+      (data.has_more ? !validCursor(data.next_cursor) || !rows.length : data.next_cursor !== null)) throw fail('PERFIL_INVALID_PAGE');
+    const ids = new Set(cursor ? entry.rows.map(row=>row.id) : []);
+    const aliases = data.scope.pc_codigos.map(office);
+    let previous=cursor;
+    for(const row of rows){
+      if(!row || !validId(row.id) || !validDate(row.created_at) || user(row.usuario) !== entry.usuario ||
+        !aliases.includes(office(row.pc_codigo)) || ids.has(row.id)) throw fail('PERFIL_INVALID_PAGE');
+      ids.add(row.id);
+      if(previous && !older(row,previous))throw fail('PERFIL_INVALID_CURSOR');
+      previous=row;
+    }
+    const last = rows[rows.length-1];
+    if(data.has_more && (!equalCursor(data.next_cursor,{id:last.id,created_at:last.created_at}) || equalCursor(data.next_cursor,cursor))) throw fail('PERFIL_INVALID_CURSOR');
+  }
+  function validateIdentityPage(data,entry,cursor){
+    const rows = data.rows;
+    const count = value => Number.isSafeInteger(value) && value >= 0;
+    if(!Array.isArray(rows) || rows.length > LIMIT || !count(data.total) || typeof data.has_more !== 'boolean' ||
+      (data.has_more ? !validObsCursor(data.next_cursor) || !rows.length : data.next_cursor !== null)) throw fail('PERFIL_INVALID_IDENTITY');
+    const ids = new Set(cursor ? entry.identidad.map(row=>row.id) : []);
+    const aliases = data.scope.pc_codigos.map(office);
+    let previous = cursor;
+    for(const row of rows){
+      if(!row || !validObsId(row.id) || !validDate(row.fecha) || user(row.usuario) !== entry.usuario ||
+        !aliases.includes(office(row.pc_codigo)) || !text(row.campo) || !text(row.valor) || !text(row.fuente) || ids.has(row.id)){
+        throw fail('PERFIL_INVALID_IDENTITY');
+      }
+      ids.add(row.id);
+      if(previous && !olderObs(row,previous)) throw fail('PERFIL_INVALID_CURSOR');
+      previous = row;
+    }
+    const last = rows[rows.length-1];
+    if(data.has_more && (!equalObsCursor(data.next_cursor,{id:last.id,fecha:last.fecha}) || equalObsCursor(data.next_cursor,cursor))){
+      throw fail('PERFIL_INVALID_CURSOR');
+    }
+  }
+  function load(usuario,options={}){
+    const entry = getEntry(usuario), version = epoch, requestedPc = scope;
+    if(entry.flight) return entry.flight;
+    if(!options.refresh && !options.more && !options.moreIdentity && entry.loaded && !entry.error && Date.now()-entry.updated < TTL) return Promise.resolve(snapshot(usuario));
+    if(options.more && entry.loaded && !entry.hasMore) return Promise.resolve(snapshot(usuario));
+    if(options.moreIdentity && entry.identidadLoaded && !entry.identidadHasMore) return Promise.resolve(snapshot(usuario));
+    entry.loading = true; entry.error = '';
+    const health = root.NodoSalud?.begin('IDENTIDAD'); entry.health = health;
+    const pending = (async()=>{
+      try{
+        if(!await ready()){ entry.loading = false; return snapshot(usuario); }
+        if(!current(version,requestedPc)) throw fail('PERFIL_CONTEXT_CHANGED');
+        const cursor = options.more && entry.loaded ? entry.cursor : null;
+        const obsCursor = options.moreIdentity && entry.identidadLoaded ? entry.identidadCursor : null;
+        const requests = [];
+        if(options.moreIdentity){
+          if(identityCapable) requests.push(['identity','nodo_beta_perfil_identidad_v1',{p_limit:LIMIT,p_cursor:obsCursor}]);
+        }else{
+          if(!options.more || !entry.resumen) requests.push(['summary','nodo_beta_perfil_v1',{}]);
+          requests.push(['detail','nodo_beta_perfil_detalle_v1',{p_limit:LIMIT,p_cursor:cursor}]);
+          if(identityCapable && !options.more) requests.push(['identity','nodo_beta_perfil_identidad_v1',{p_limit:LIMIT,p_cursor:null}]);
+        }
+        const results = await Promise.allSettled(requests.map(async([kind,fn,args])=>{
+          const response = await root.panelAPI.rpc(fn,{p_pc_codigo:requestedPc,p_usuario:entry.usuario,...args});
+          if(!current(version,requestedPc)) throw fail('PERFIL_CONTEXT_CHANGED');
+          health?.reply(response?.error);
+          const data = decode(response); validateScope(data,requestedPc,entry.usuario);
+          if(kind === 'summary') validateSummary(data,entry.usuario);
+          else if(kind === 'detail') validatePage(data,entry,cursor);
+          else validateIdentityPage(data,entry,obsCursor);
+          return {kind,data};
+        }));
+        if(!current(version,requestedPc)) throw fail('PERFIL_CONTEXT_CHANGED');
+        let error = null;
+        for(const result of results){
+          if(result.status !== 'fulfilled'){ error ||= result.reason; continue; }
+          const {kind,data} = result.value;
+          entry.aliases=data.scope.pc_codigos.map(office);
+          if(kind === 'summary'){
+            entry.resumen = {...data.resumen}; entry.agente = {...data.agente};
+            entry.detalleTotal = data.detalle_total; entry.agenteTotal = data.agente_total;
+          }else if(kind === 'detail'){
+            entry.rows = cursor ? entry.rows.concat(data.rows) : data.rows.slice();
+            entry.loaded = true; entry.hasMore = data.has_more; entry.cursor = data.next_cursor;
+          }else if(kind === 'identity'){
+            entry.identidad = obsCursor ? entry.identidad.concat(data.rows) : data.rows.slice();
+            entry.identidadTotal = data.total; entry.identidadLoaded = true;
+            entry.identidadHasMore = data.has_more; entry.identidadCursor = data.next_cursor;
+            entry.localesDisponibles = data.locales_disponibles === true;
+          }
+        }
+        if(error) throw error;
+        entry.updated = Date.now();
+        health?.record('DATA',entry.resumen?.requiere_revision?'DEGRADED':'OK',entry.resumen?.requiere_revision?'PERFIL_REVISION_PENDING':'PERFIL_VALID');
+      }catch(error){
+        if(!current(version,requestedPc)) throw fail('PERFIL_CONTEXT_CHANGED');
+        if(error?.code === 'BETA_NOT_CONFIGURED' || error?.code === 'BETA_OFFICE_NOT_CONFIGURED'){
+          mode = 'legacy'; legacyReason = 'config'; identityCapable = false;
+        }
+        entry.error = /^PERFIL_[A-Z_]+$/.test(error.code || '') ? error.code : 'PERFIL_READ_FAILED';
+        health?.reply(error); health?.record('DATA','ERROR',entry.error);
+      }finally{
+        if(current(version,requestedPc)){ entry.loading = false; entry.flight = null; }
+      }
+      return snapshot(usuario);
+    })();
+    entry.flight = pending;
+    return pending;
+  }
+  function rendered(usuario){
+    const entry = getEntry(usuario);
+    if(mode === 'beta' && entry.loaded && entry.resumen && !entry.error && !entry.loading) entry.health?.record('RENDER','OK','PERFIL_VISIBLE');
+  }
+  function invalidate(){ epoch++; entries.clear(); negotiation = null; mode = 'pending'; legacyReason = ''; identityCapable = false; }
+  return Object.freeze({ready,load,snapshot,rendered,invalidate});
+});
+(function(root, factory){
+  const api = factory(root);
+  if(typeof module === 'object' && module.exports) module.exports = api;
+  if(root) root.NodoPersistenciaSync = api;
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(root){
+  'use strict';
+
+  const CAP_FN = 'nodo_beta_capacidades_v1';
+  const SYNC_FN = 'nodo_beta_persistencia_sync_v1';
+  const READ_FN = 'nodo_beta_persistencia_leer_v1';
+  const REQUIRED_CAP = 'persistence.local.v1';
+  const ACK_PREFIX = 'nodo_persistencia_ack_v1_';
+  const INST_KEY = 'nodo_persistencia_instalacion_v1';
+
+  function normText(value, max){
+    const text = String(value == null ? '' : value).trim();
+    return max ? text.slice(0, max) : text;
+  }
+
+  function normOffice(value){
+    return normText(value, 24).toUpperCase();
+  }
+
+  function normUser(value){
+    return normText(value, 120).toLowerCase();
+  }
+
+  function safeJsonParse(raw, fallback){
+    try{
+      const parsed = JSON.parse(raw || '');
+      return parsed && typeof parsed === 'object' ? parsed : fallback;
+    }catch(_e){
+      return fallback;
+    }
+  }
+
+  function unwrapRpc(response){
+    if(!response || typeof response !== 'object') return { data: null, error: { code: 'EMPTY_RESPONSE', message: 'Sin respuesta del servidor.' } };
+    if(response.error) return { data: null, error: response.error };
+    const data = Object.prototype.hasOwnProperty.call(response, 'data') ? response.data : response;
+    if(Array.isArray(data) && data.length === 1 && data[0] && typeof data[0] === 'object') return { data: data[0], error: null };
+    return { data, error: null };
+  }
+
+  function create(deps){
+    const cfg = deps || {};
+    const getWindow = function(){ return cfg.window || root || {}; };
+    const getStorage = function(){
+      const w = getWindow();
+      return cfg.storage || w.localStorage || null;
+    };
+    const getPanelApi = function(){
+      const w = getWindow();
+      return cfg.panelAPI || w.panelAPI || null;
+    };
+    const getOffice = function(override){
+      if(override) return normOffice(override);
+      if(typeof cfg.getOffice === 'function') return normOffice(cfg.getOffice());
+      const w = getWindow();
+      return normOffice(w.pcOperativa);
+    };
+    const getInstallation = function(pc){
+      if(cfg.instalacion) return normText(cfg.instalacion, 120).replace(/\s+/g, '-');
+      const storage = getStorage();
+      if(storage){
+        try{
+          const saved = normText(storage.getItem(INST_KEY), 120).replace(/\s+/g, '-');
+          if(saved) return saved;
+          const gen = 'pc-' + (normOffice(pc) || 'NODO').toLowerCase() + '-' + Math.random().toString(36).slice(2, 10);
+          storage.setItem(INST_KEY, gen);
+          return gen;
+        }catch(_e){}
+      }
+      return 'pc-' + (normOffice(pc) || 'nodo').toLowerCase();
+    };
+    const getHealth = function(){
+      const w = getWindow();
+      return cfg.health || w.NodoSalud || null;
+    };
+
+    const capabilityByOffice = new Map();
+
+    function readAckStore(pc){
+      const storage = getStorage();
+      const office = normOffice(pc);
+      if(!storage || !office) return { jugadores: {}, movimientos: {}, cotejos: {}, colas: {} };
+      const parsed = safeJsonParse(storage.getItem(ACK_PREFIX + office), null);
+      return {
+        jugadores: (parsed && parsed.jugadores && typeof parsed.jugadores === 'object') ? parsed.jugadores : {},
+        movimientos: (parsed && parsed.movimientos && typeof parsed.movimientos === 'object') ? parsed.movimientos : {},
+        cotejos: (parsed && parsed.cotejos && typeof parsed.cotejos === 'object') ? parsed.cotejos : {},
+        colas: (parsed && parsed.colas && typeof parsed.colas === 'object') ? parsed.colas : {}
+      };
+    }
+
+    function writeAckStore(pc, ackStore){
+      const storage = getStorage();
+      const office = normOffice(pc);
+      if(!storage || !office || !ackStore) return;
+      try{
+        storage.setItem(ACK_PREFIX + office, JSON.stringify(ackStore));
+      }catch(_e){}
+    }
+
+    function signatureOf(item){
+      try{ return JSON.stringify(item); }catch(_e){ return String(Date.now()); }
+    }
+
+    function collectPending(pcOverride){
+      const pc = getOffice(pcOverride);
+      const storage = getStorage();
+      if(!storage || !pc){
+        return { pc, payload: { jugadores: [], movimientos: [], cotejos: [], colas: [] }, signatures: { jugadores: {}, movimientos: {}, cotejos: {}, colas: {} }, total: 0 };
+      }
+      const ack = readAckStore(pc);
+      const signatures = { jugadores: {}, movimientos: {}, cotejos: {}, colas: {} };
+      const jugadores = [];
+
+      function pushJugadorItem(item){
+        if(jugadores.length >= 60) return;
+        const sig = signatureOf(item);
+        if(ack.jugadores[item.source_id] === sig) return;
+        signatures.jugadores[item.source_id] = sig;
+        jugadores.push(item);
+      }
+
+      const jugRaw = safeJsonParse(storage.getItem('nodo_jugadores_local_v2'), {});
+      Object.keys(jugRaw).forEach(function(k){
+        const j = jugRaw[k];
+        if(!j || typeof j !== 'object') return;
+        const usuario = normUser(j.usuario || k);
+        if(!usuario) return;
+        const jPc = normOffice(j.pc_codigo || j.pc || '');
+        if(jPc && jPc !== pc) return;
+
+        Object.keys(j.telefonos || {}).forEach(function(telKey){
+          const tObj = j.telefonos[telKey] || {};
+          const valor = normText(tObj.raw || telKey, 120);
+          if(!valor) return;
+          const sid = 'jug:' + usuario + ':tel:' + valor;
+          pushJugadorItem({
+            source_id: sid,
+            campo: 'telefono',
+            usuario,
+            atributo: 'telefono',
+            valor,
+            fuente: 'local.jugadores',
+            estado: tObj.verificado ? 'VERIFICADO_LOCAL' : 'OBSERVADO_LOCAL',
+            veces: Math.max(Number(tObj.veces) || 1, 1),
+            verificado: !!tObj.verificado,
+            primera_fecha: normText(tObj.primera || j.creado || '', 40) || null,
+            ultima_fecha: normText(tObj.ultima || j.creado || '', 40) || null
+          });
+        });
+
+        Object.keys(j.cbus || {}).forEach(function(cbuKey){
+          const cObj = j.cbus[cbuKey] || {};
+          const valor = normText(cObj.raw || cbuKey, 200);
+          if(!valor) return;
+          const sid = 'jug:' + usuario + ':cbu:' + cbuKey;
+          pushJugadorItem({
+            source_id: sid,
+            campo: 'cbu',
+            usuario,
+            atributo: 'cbu',
+            valor,
+            fuente: 'local.jugadores',
+            estado: cObj.verificado ? 'RETIRO_VERIFICADO_LOCAL' : 'DECLARADO_LOCAL',
+            veces: Math.max(Number(cObj.veces) || 1, 1),
+            verificado: !!cObj.verificado,
+            titular_asociado: normText(cObj.titular || '', 160) || null,
+            primera_fecha: normText(cObj.primera || j.creado || '', 40) || null,
+            ultima_fecha: normText(cObj.ultima || j.creado || '', 40) || null
+          });
+        });
+
+        Object.keys(j.titulares || {}).forEach(function(titKey){
+          const tiObj = j.titulares[titKey] || {};
+          const valor = normText(tiObj.raw || titKey, 200);
+          if(!valor) return;
+          const sid = 'jug:' + usuario + ':tit:' + titKey;
+          pushJugadorItem({
+            source_id: sid,
+            campo: 'nombre',
+            usuario,
+            atributo: 'titular',
+            valor,
+            fuente: 'local.jugadores',
+            estado: 'OBSERVADO_LOCAL',
+            veces: Math.max(Number(tiObj.veces) || 1, 1),
+            verificado: false,
+            primera_fecha: normText(tiObj.primera || j.creado || '', 40) || null,
+            ultima_fecha: normText(tiObj.ultima || j.creado || '', 40) || null
+          });
+        });
+
+        if(Array.isArray(j.bonos)){
+          j.bonos.slice(0, 10).forEach(function(b, idx){
+            if(!b || typeof b !== 'object') return;
+            const fecha = normText(b.fecha || j.creado || '', 40) || null;
+            const pct = Number(b.pct) || 0;
+            const sid = 'jug:' + usuario + ':bono:' + (fecha || idx);
+            pushJugadorItem({
+              source_id: sid,
+              campo: 'bono',
+              usuario,
+              atributo: 'bono',
+              valor: String(pct || b.estado || 'BONO'),
+              fuente: 'local.bonos',
+              estado: normText(b.estado || 'PENDIENTE', 40).toUpperCase(),
+              veces: 1,
+              verificado: String(b.estado || '').toUpperCase() === 'APLICADO',
+              ultima_fecha: fecha,
+              detalle: { pct: pct || null, monto: Number(b.monto) || null }
+            });
+          });
+        }
+      });
+
+      const rechRaw = safeJsonParse(storage.getItem('nodo_titulares_rechazados'), {});
+      Object.keys(rechRaw).forEach(function(k){
+        const entry = rechRaw[k];
+        if(!entry || typeof entry !== 'object') return;
+        const rawUser = normText(entry.usuario || (k.split('|')[0] || ''), 120);
+        const usuario = rawUser === '*' ? '*' : normUser(rawUser);
+        const valor = normText(entry.titular || (k.split('|')[1] || ''), 200);
+        if(!usuario || !valor) return;
+        const sid = 'rech:' + normText(k, 200);
+        pushJugadorItem({
+          source_id: sid,
+          campo: 'nombre',
+          usuario,
+          atributo: 'titular_rechazado',
+          valor,
+          fuente: 'local.titulares_rechazados',
+          estado: usuario === '*' ? 'BLOQUEADO_GLOBAL' : 'BLOQUEADO_USUARIO',
+          veces: 1,
+          verificado: false,
+          ultima_fecha: normText(entry.fecha || '', 40) || null,
+          detalle: { motivo: normText(entry.motivo || '', 160), global: usuario === '*' }
+        });
+      });
+
+      const movRaw = safeJsonParse(storage.getItem('nodo_movimientos_v1'), {});
+      const movimientos = [];
+      Object.keys(movRaw).forEach(function(k){
+        if(movimientos.length >= 50) return;
+        const m = movRaw[k];
+        if(!m || typeof m !== 'object') return;
+        const movKey = normText(m.id != null ? m.id : k, 120);
+        const usuario = normUser(m.usuario);
+        if(!movKey || !usuario) return;
+        const mPc = normOffice(m.pc_codigo || m.pc || '');
+        if(mPc && mPc !== pc) return;
+        let traza = null;
+        try{
+          const trRaw = storage.getItem('nodo_traza_hist_' + movKey);
+          if(trRaw) traza = safeJsonParse(trRaw, null);
+        }catch(_e){}
+        const item = {
+          movimiento_key: movKey,
+          historial_id: /^\d+$/.test(movKey) ? movKey : null,
+          solicitud_id: m.solicitudId != null && /^\d+$/.test(String(m.solicitudId)) ? String(m.solicitudId) : null,
+          chunior_id: m.chuniorId != null ? normText(m.chuniorId, 80) : null,
+          usuario,
+          tipo: normText(m.tipo, 40).toUpperCase(),
+          monto: m.monto != null && Number.isFinite(Number(m.monto)) ? String(Number(m.monto)) : null,
+          estado: normText(m.estado, 40).toUpperCase(),
+          titular: normText(m.titular, 160),
+          destino: normText(m.destino, 160),
+          cbu: normText(m.cbu, 160),
+          obs: normText(m.obs, 240),
+          saldo_pre: m.saldoPre != null && Number.isFinite(Number(m.saldoPre)) ? String(Number(m.saldoPre)) : null,
+          saldo_post: m.saldoPost != null && Number.isFinite(Number(m.saldoPost)) ? String(Number(m.saldoPost)) : null,
+          billetera_nombre: normText(m.billeteraNombre, 120),
+          operador: normText(m.operador, 80),
+          bono_pct: m.bonoPct != null && Number.isFinite(Number(m.bonoPct)) ? String(Number(m.bonoPct)) : null,
+          origen: normText(m.origen, 40).toUpperCase(),
+          notas: normText(m.notas, 500),
+          traza,
+          fecha: normText(m._fecha || m.fecha || '', 40) || null
+        };
+        const sig = signatureOf(item);
+        if(ack.movimientos[movKey] === sig) return;
+        signatures.movimientos[movKey] = sig;
+        movimientos.push(item);
+      });
+
+      const cotejos = [];
+      const altaRes = safeJsonParse(storage.getItem('nodo.cotejo.resueltos'), {});
+      Object.keys(altaRes).forEach(function(clave){
+        if(cotejos.length >= 40) return;
+        const r = altaRes[clave];
+        if(!r || typeof r !== 'object') return;
+        const cotKey = 'alta:' + normText(clave, 180);
+        const parts = String(clave || '').split('|');
+        const item = {
+          cotejo_key: cotKey,
+          tipo_cotejo: 'ALTA_TELEFONO',
+          usuario: normUser(r.usuario),
+          telefono: normText(r.telefono, 40).replace(/\D/g, ''),
+          usuario_declarado: normUser(parts[0] || ''),
+          telefono_declarado: normText(parts[1] || '', 40).replace(/\D/g, ''),
+          estado: 'RESUELTO',
+          fecha: r.cuando ? new Date(Number(r.cuando)).toISOString() : null,
+          detalle: { cuando: r.cuando || null }
+        };
+        const sig = signatureOf(item);
+        if(ack.cotejos[cotKey] === sig) return;
+        signatures.cotejos[cotKey] = sig;
+        cotejos.push(item);
+      });
+
+      try{
+        const totalKeys = typeof storage.length === 'number' ? storage.length : 0;
+        for(let i = 0; i < totalKeys && cotejos.length < 40; i++){
+          const key = storage.key(i);
+          if(!key || key.indexOf('nodo_cotejo_v1_') !== 0) continue;
+          const rawCot = safeJsonParse(storage.getItem(key), null);
+          if(!rawCot || typeof rawCot !== 'object') continue;
+          const turnoId = normText(key.slice('nodo_cotejo_v1_'.length), 120);
+          const cotKey = 'turno:' + turnoId;
+          const item = {
+            cotejo_key: cotKey,
+            tipo_cotejo: 'CONCILIACION_TURNO',
+            turno_id: turnoId,
+            usuario: normUser(rawCot.usuario || ''),
+            estado: normText(rawCot.estado || 'OBSERVADO', 40).toUpperCase(),
+            fecha: normText(rawCot.fecha || '', 40) || null,
+            detalle: rawCot
+          };
+          const sig = signatureOf(item);
+          if(ack.cotejos[cotKey] === sig) continue;
+          signatures.cotejos[cotKey] = sig;
+          cotejos.push(item);
+        }
+      }catch(_e){}
+
+      const colas = [];
+      const chuPend = safeJsonParse(storage.getItem('nodo_chu_pendientes'), []);
+      if(Array.isArray(chuPend)){
+        chuPend.slice(0, 25).forEach(function(entry, idx){
+          const itemId = 'chu:' + normText(entry && (entry.id || entry.solicitudId || entry.historialId || (entry.usuario + '_' + (entry.ts || idx))), 120);
+          const item = {
+            cola_tipo: 'CHUNIOR_PENDIENTE',
+            item_id: itemId,
+            usuario: normUser(entry && entry.usuario),
+            referencia_id: normText(entry && (entry.solicitudId || entry.historialId || entry.id || ''), 80),
+            estado: normText((entry && entry.estado) || 'PENDIENTE', 40).toUpperCase(),
+            motivo: normText(entry && (entry.motivo || entry.error || ''), 200),
+            fecha: normText((entry && (entry.fecha || (entry.ts ? new Date(Number(entry.ts)).toISOString() : ''))) || '', 40) || null
+          };
+          const sig = signatureOf(item);
+          if(ack.colas[itemId] === sig) return;
+          signatures.colas[itemId] = sig;
+          colas.push(item);
+        });
+      }
+
+      const outboxRaw = safeJsonParse(storage.getItem('nodo_chat_outbox_v1'), []);
+      const outboxList = Array.isArray(outboxRaw) ? outboxRaw : Object.values(outboxRaw || {});
+      outboxList.slice(0, 25).forEach(function(entry, idx){
+        if(!entry || typeof entry !== 'object') return;
+        const itemId = 'outbox:' + normText(entry.clientMsgId || entry.id || idx, 120);
+        const item = {
+          cola_tipo: 'CHAT_OUTBOX_ESTADO',
+          item_id: itemId,
+          usuario: normUser(entry.usuario || ''),
+          referencia_id: normText(entry.conversationId || entry.solicitudId || '', 80),
+          estado: normText(entry.status || entry.estado || 'PENDING', 40).toUpperCase(),
+          motivo: normText(entry.lastError || entry.error || '', 200),
+          fecha: normText(entry.createdAt || entry.fecha || '', 40) || null
+        };
+        const sig = signatureOf(item);
+        if(ack.colas[itemId] === sig) return;
+        signatures.colas[itemId] = sig;
+        colas.push(item);
+      });
+
+      const total = jugadores.length + movimientos.length + cotejos.length + colas.length;
+      return {
+        pc,
+        payload: { jugadores, movimientos, cotejos, colas },
+        signatures,
+        total
+      };
+    }
+
+    async function ensureCapability(pc){
+      const office = getOffice(pc);
+      const panelAPI = getPanelApi();
+      if(!office || !panelAPI || typeof panelAPI.rpc !== 'function'){
+        return { mode: 'legacy', reason: 'no_transport' };
+      }
+      const cached = capabilityByOffice.get(office);
+      if(cached && cached.mode === 'beta') return cached;
+
+      let build = 'renderer';
+      if(typeof panelAPI.getContext === 'function'){
+        try{
+          const rawCtx = await panelAPI.getContext();
+          const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
+          if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(office))){
+            return { mode: 'legacy', reason: 'config' };
+          }
+          if(ctx.build) build = normText(ctx.build, 64);
+        }catch(_e){
+          return { mode: 'legacy', reason: 'context_error' };
+        }
+      }
+
+      const capHealth = getHealth()?.begin?.('CAPACIDADES');
+      const raw = await panelAPI.rpc(CAP_FN, {
+        p_pc_codigo: office,
+        p_activate: false
+      });
+      const { data, error } = unwrapRpc(raw);
+      capHealth?.reply?.(error);
+      if(error || !data || data.ok !== true || data.enabled !== true){
+        capHealth?.record?.('DATA', error ? 'ERROR' : 'UNKNOWN', error ? (error.code || 'CAPACIDADES_ERROR') : 'CAPACIDADES_DISABLED');
+        return { mode: 'legacy', reason: error ? (error.code || 'rpc_error') : 'disabled', error };
+      }
+      const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
+      capHealth?.record?.('DATA', 'OK', 'CAPACIDADES_PERSISTENCIA_OK');
+      if(!caps.includes(REQUIRED_CAP)){
+        return { mode: 'legacy', reason: 'capability_missing', capabilities: caps };
+      }
+      const state = { mode: 'beta', capabilities: caps, office, build };
+      capabilityByOffice.set(office, state);
+      return state;
+    }
+
+    async function sync(options){
+      const opts = options || {};
+      const pc = getOffice(opts.pc);
+      const health = getHealth()?.begin?.('CONCILIACION');
+      if(!pc){
+        health?.record?.('DATA', 'UNKNOWN', 'PERSISTENCIA_NO_OFFICE');
+        return { mode: 'legacy', synced: false, reason: 'no_office' };
+      }
+      const cap = await ensureCapability(pc);
+      if(cap.mode !== 'beta'){
+        health?.record?.('CONNECTED', cap.reason === 'rpc_error' ? 'ERROR' : 'UNKNOWN', 'PERSISTENCIA_LEGACY_' + String(cap.reason || 'MODE').toUpperCase());
+        return { mode: 'legacy', synced: false, reason: cap.reason };
+      }
+      const batch = collectPending(pc);
+      if(batch.total === 0 && !opts.forceEmpty){
+        health?.record?.('DATA', 'OK', 'PERSISTENCIA_UP_TO_DATE');
+        return { mode: 'beta', synced: true, empty: true, acceptedTotal: 0 };
+      }
+
+      const panelAPI = getPanelApi();
+      const raw = await panelAPI.rpc(SYNC_FN, {
+        p_pc_codigo: pc,
+        p_instalacion: getInstallation(pc),
+        p_version: normText(cfg.version || cap.build || 'beta-persistencia-v1', 64),
+        p_lote: batch.payload
+      });
+      const { data, error } = unwrapRpc(raw);
+      health?.reply?.(error);
+      if(error || !data || data.ok !== true || normOffice(data.scope && data.scope.pc_codigo) !== pc){
+        health?.record?.('EFFECT', 'ERROR', error ? (error.code || 'PERSISTENCIA_SYNC_FAILED') : 'PERSISTENCIA_INVALID_ACK');
+        return { mode: 'beta', synced: false, error: error || { code: 'PERSISTENCIA_INVALID_ACK', message: 'El servidor no confirmó la recepción.' } };
+      }
+
+      const acked = (data.acknowledged && typeof data.acknowledged === 'object') ? data.acknowledged : {};
+      const store = readAckStore(pc);
+      ['jugadores', 'movimientos', 'cotejos', 'colas'].forEach(function(cat){
+        const ids = Array.isArray(acked[cat]) ? acked[cat] : [];
+        ids.forEach(function(id){
+          const key = normText(id, 256);
+          if(key && batch.signatures[cat] && batch.signatures[cat][key]){
+            store[cat][key] = batch.signatures[cat][key];
+          }
+        });
+      });
+      writeAckStore(pc, store);
+      health?.record?.('DATA', 'OK', 'PERSISTENCIA_PAYLOAD_VALID');
+      health?.record?.('EFFECT', 'OK', 'PERSISTENCIA_SYNC_ACK');
+      return {
+        mode: 'beta',
+        synced: true,
+        acceptedTotal: Number(data.accepted_total) || 0,
+        acknowledged: acked
+      };
+    }
+
+    async function hydrate(options){
+      const opts = options || {};
+      const pc = getOffice(opts.pc);
+      const health = getHealth()?.begin?.('CONCILIACION');
+      if(!pc) return { mode: 'legacy', hydrated: false, reason: 'no_office' };
+      const cap = await ensureCapability(pc);
+      if(cap.mode !== 'beta') return { mode: 'legacy', hydrated: false, reason: cap.reason };
+
+      const panelAPI = getPanelApi();
+      const raw = await panelAPI.rpc(READ_FN, {
+        p_pc_codigo: pc,
+        p_usuario: opts.usuario ? normUser(opts.usuario) : null,
+        p_referencia_id: opts.referenciaId ? normText(opts.referenciaId, 120) : null,
+        p_tipo: normText(opts.tipo || 'TODO', 32).toUpperCase(),
+        p_limit: Number(opts.limit) > 0 ? Math.min(Number(opts.limit), 200) : 100
+      });
+      const { data, error } = unwrapRpc(raw);
+      health?.reply?.(error);
+      if(error || !data || data.ok !== true || normOffice(data.scope && data.scope.pc_codigo) !== pc){
+        health?.record?.('DATA', 'ERROR', error ? (error.code || 'PERSISTENCIA_READ_FAILED') : 'PERSISTENCIA_INVALID_READ');
+        return { mode: 'beta', hydrated: false, error: error || { code: 'PERSISTENCIA_INVALID_READ' } };
+      }
+
+      const storage = getStorage();
+      let mergedJugadores = 0;
+      let mergedMovimientos = 0;
+      let mergedCotejos = 0;
+
+      if(storage){
+        if(Array.isArray(data.jugadores) && data.jugadores.length){
+          const jugMap = safeJsonParse(storage.getItem('nodo_jugadores_local_v2'), {});
+          const rechMap = safeJsonParse(storage.getItem('nodo_titulares_rechazados'), {});
+          data.jugadores.forEach(function(row){
+            if(!row || !row.usuario || !row.valor) return;
+            if(row.atributo === 'titular_rechazado' || row.fuente === 'local.titulares_rechazados'){
+              const k = (row.usuario === '*' ? '*' : normUser(row.usuario)) + '|' + String(row.valor).toLowerCase().trim();
+              if(!rechMap[k]){
+                rechMap[k] = {
+                  usuario: row.usuario,
+                  titular: row.valor,
+                  motivo: (row.detalle && row.detalle.motivo) || row.estado || '',
+                  fecha: row.ultima_fecha || row.updated_at || new Date().toISOString()
+                };
+                mergedJugadores++;
+              }
+              return;
+            }
+            const u = normUser(row.usuario);
+            if(!u || u === '*') return;
+            const cur = jugMap[u] || { usuario: u, pc_codigo: pc, telefonos: {}, cbus: {}, titulares: {}, bonos: [], creado: row.primera_fecha || row.ultima_fecha || new Date().toISOString() };
+            cur.pc_codigo = cur.pc_codigo || pc;
+            if(row.campo === 'telefono'){
+              const tKey = String(row.valor).replace(/\D/g, '');
+              if(tKey && !cur.telefonos[tKey]){
+                cur.telefonos[tKey] = { raw: tKey, veces: Number(row.veces) || 1, verificado: !!row.verificado, primera: row.primera_fecha, ultima: row.ultima_fecha };
+                mergedJugadores++;
+              }
+            }else if(row.campo === 'cbu'){
+              const cKey = String(row.valor).toLowerCase().replace(/[\s.\-]/g, '').trim();
+              if(cKey && !cur.cbus[cKey]){
+                cur.cbus[cKey] = { raw: row.valor, titular: row.titular_asociado || '', veces: Number(row.veces) || 1, verificado: !!row.verificado, primera: row.primera_fecha, ultima: row.ultima_fecha };
+                mergedJugadores++;
+              }
+            }else if(row.campo === 'nombre'){
+              const nKey = String(row.valor).toLowerCase().trim();
+              if(nKey && !cur.titulares[nKey]){
+                cur.titulares[nKey] = { raw: row.valor, veces: Number(row.veces) || 1, primera: row.primera_fecha, ultima: row.ultima_fecha };
+                mergedJugadores++;
+              }
+            }
+            jugMap[u] = cur;
+          });
+          try{
+            storage.setItem('nodo_jugadores_local_v2', JSON.stringify(jugMap));
+            storage.setItem('nodo_titulares_rechazados', JSON.stringify(rechMap));
+          }catch(_e){}
+        }
+
+        if(Array.isArray(data.movimientos) && data.movimientos.length){
+          const movMap = safeJsonParse(storage.getItem('nodo_movimientos_v1'), {});
+          data.movimientos.forEach(function(row){
+            if(!row || !row.movimiento_key || !row.usuario) return;
+            const k = String(row.movimiento_key);
+            if(movMap[k]) return;
+            movMap[k] = {
+              id: row.historial_id != null ? row.historial_id : row.movimiento_key,
+              pc_codigo: pc,
+              usuario: row.usuario,
+              tipo: row.tipo || '',
+              monto: row.monto != null ? Number(row.monto) : 0,
+              estado: row.estado || '',
+              titular: row.titular || '',
+              destino: row.destino || '',
+              cbu: row.cbu || '',
+              obs: row.obs || '',
+              saldoPre: row.saldo_pre != null ? Number(row.saldo_pre) : null,
+              saldoPost: row.saldo_post != null ? Number(row.saldo_post) : null,
+              billeteraNombre: row.billetera_nombre || '',
+              operador: row.operador || '',
+              chuniorId: row.chunior_id || null,
+              solicitudId: row.solicitud_id || null,
+              bonoPct: row.bono_pct != null ? Number(row.bono_pct) : null,
+              origen: row.origen || '',
+              notas: row.notas || '',
+              _fecha: row.fecha || row.updated_at || new Date().toISOString(),
+              _ts: Date.now()
+            };
+            mergedMovimientos++;
+          });
+          try{ storage.setItem('nodo_movimientos_v1', JSON.stringify(movMap)); }catch(_e){}
+        }
+
+        if(Array.isArray(data.cotejos) && data.cotejos.length){
+          const altaRes = safeJsonParse(storage.getItem('nodo.cotejo.resueltos'), {});
+          data.cotejos.forEach(function(row){
+            if(!row || row.tipo_cotejo !== 'ALTA_TELEFONO') return;
+            const clave = (row.usuario_declarado || row.usuario || '') + '|' + (row.telefono_declarado || row.telefono || '');
+            if(!clave || clave === '|' || altaRes[clave]) return;
+            altaRes[clave] = {
+              usuario: row.usuario || '',
+              telefono: row.telefono || '',
+              cuando: row.fecha ? new Date(row.fecha).getTime() : Date.now()
+            };
+            mergedCotejos++;
+          });
+          try{ storage.setItem('nodo.cotejo.resueltos', JSON.stringify(altaRes)); }catch(_e){}
+        }
+      }
+
+      health?.record?.('DATA', 'OK', 'PERSISTENCIA_READ_OK');
+      return {
+        mode: 'beta',
+        hydrated: true,
+        merged: { jugadores: mergedJugadores, movimientos: mergedMovimientos, cotejos: mergedCotejos },
+        colasObservadas: Array.isArray(data.colas_observadas) ? data.colas_observadas : []
+      };
+    }
+
+    let syncTimer = null;
+    function scheduleSync(delayMs){
+      const w = getWindow();
+      const setTimer = w.setTimeout || setTimeout;
+      const clearTimer = w.clearTimeout || clearTimeout;
+      if(syncTimer){ try{ clearTimer(syncTimer); }catch(_e){} }
+      syncTimer = setTimer(function(){
+        syncTimer = null;
+        try{ void sync(); }catch(_e){}
+      }, Number(delayMs) > 0 ? Number(delayMs) : 4000);
+    }
+
+    return {
+      collectPending,
+      ensureCapability,
+      sync,
+      scheduleSync,
+      hydrate,
+      readAckStore
+    };
+  }
+
+  const defaultInstance = create({ window: root });
+  defaultInstance.create = create;
+  return defaultInstance;
+});
+(function(root, factory){
   if(typeof module === 'object' && module.exports) module.exports = factory();
   else root.NodoRefresh = factory();
 })(globalThis, function(){
@@ -1232,6 +2161,267 @@
   }
   return { create };
 });
+// GENERADO por scripts/auditar-desconexiones.cjs --embed. No editar a mano.
+// Lo consume NodoSalud.show() para que el semáforo muestre también las desconexiones estáticas.
+(function(root){ root.NodoDesconexiones = Object.freeze({"contrato":"nodo.desconexiones.v1","fuente_hash":"d0a7baca3c1c4e24","resumen":{"DEFINICION_PISADA":27,"SIN_REFERENCIAS":28,"LLAMADA_SILENCIOSA":1,"PUENTE_SIN_USO":1,"STORAGE_SOLO_LEIDO":8,"STORAGE_SOLO_ESCRITO":2,"SALUD_RAMA_SOLO_LOCAL":1,"SALUD_RAMA_SIN_USO":1,"LECTOR_EN_CODIGO_MUERTO":23,"CIRCUITO_SIN_SALUD":1},"circuitos":{"total":199,"activos":176,"en_codigo_muerto":23,"observados_directo":46,"observados_compuerta":129,"observados":175,"sin_salud":1},"bitacora":{"total":138,"abiertos":90,"detectados":4},"hallazgos":[["DEFINICION_PISADA","MEDIA","cargarJugadores","renderer/core/jugadores-importacion.js",304],["DEFINICION_PISADA","MEDIA","cargarBilleteras","renderer/core/vistas-y-billeteras.js",112],["DEFINICION_PISADA","MEDIA","cargarChats","renderer/core/vistas-y-billeteras.js",294],["DEFINICION_PISADA","MEDIA","cargarChats","renderer/extensions/portal-chat-unificado.js",82],["DEFINICION_PISADA","MEDIA","cargarChats","renderer/chat/chat-local.js",320],["DEFINICION_PISADA","ALTA","verRetirosParciales","renderer/core/archivo-historial.js",210],["DEFINICION_PISADA","MEDIA","filtrarHistorial","renderer/core/historial-operaciones.js",448],["DEFINICION_PISADA","MEDIA","seleccionarBilletera","renderer/core/lotes-y-solicitudes.js",635],["DEFINICION_PISADA","MEDIA","seleccionarBilletera","renderer/extensions/portal-chat-unificado.js",23],["DEFINICION_PISADA","MEDIA","seleccionarBilletera","renderer/extensions/portal-chat-unificado.js",258],["DEFINICION_PISADA","MEDIA","renderChatList","renderer/core/chat.js",29],["DEFINICION_PISADA","MEDIA","cargarChatActual","renderer/core/chat.js",53],["DEFINICION_PISADA","MEDIA","cargarChatActual","renderer/extensions/portal-chat-unificado.js",112],["DEFINICION_PISADA","MEDIA","cargarChatActual","renderer/extensions/portal-chat-unificado.js",294],["DEFINICION_PISADA","MEDIA","cargarChatActual","renderer/chat/chat-local.js",321],["DEFINICION_PISADA","MEDIA","enviarChat","renderer/core/chat.js",121],["DEFINICION_PISADA","MEDIA","enviarChat","renderer/extensions/portal-chat-unificado.js",142],["DEFINICION_PISADA","MEDIA","enviarChat","renderer/extensions/portal-chat-unificado.js",340],["DEFINICION_PISADA","MEDIA","enviarChat","renderer/chat/chat-local.js",322],["DEFINICION_PISADA","MEDIA","enviarChat","renderer/chat/chat-actualizar-solicitud.js",90],["DEFINICION_PISADA","MEDIA","cancelarVerificacionPanel","renderer/core/navegacion-y-verificaciones.js",82],["DEFINICION_PISADA","MEDIA","reintentarVerificacion","renderer/core/navegacion-y-verificaciones.js",87],["DEFINICION_PISADA","MEDIA","v15AbrirChatCompacto","renderer/extensions/portal-bridge.js",153],["DEFINICION_PISADA","ALTA","v15AbrirChatCompacto","renderer/extensions/portal-chat-unificado.js",167],["DEFINICION_PISADA","MEDIA","wq2SetTab","renderer/chat/chat-local.js",43],["DEFINICION_PISADA","MEDIA","cerrarConsultaWq2","renderer/chat/chat-local.js",282],["DEFINICION_PISADA","MEDIA","nodoValidacionScope","renderer/extensions/validacion-scope.js",216],["LLAMADA_SILENCIOSA","ALTA","ejecutarOperacion","renderer/extensions/piloto.js",31],["STORAGE_SOLO_LEIDO","MEDIA","localStorage:nodo_panel_data_secret","renderer/core/configuracion-y-estado.js",21],["STORAGE_SOLO_LEIDO","MEDIA","localStorage:nodo_push_api_url","renderer/core/configuracion-y-estado.js",26],["STORAGE_SOLO_LEIDO","MEDIA","localStorage:nodo_push_secret","renderer/core/configuracion-y-estado.js",27],["STORAGE_SOLO_LEIDO","MEDIA","localStorage:nodo_plataforma_url","renderer/core/perfil-jugador.js",8],["STORAGE_SOLO_LEIDO","MEDIA","localStorage:panel_v154_landing_pc","renderer/portal/data.js",54],["STORAGE_SOLO_LEIDO","MEDIA","localStorage:panel_pc_operativa","renderer/extensions/billeteras-oficina.js",64],["STORAGE_SOLO_LEIDO","MEDIA","localStorage:nodo_gemini_api_key","renderer/chat/chat-solicitud-preview.js",26],["STORAGE_SOLO_LEIDO","MEDIA","localStorage:nodo_portal_base_url","renderer/extensions/jugadores-crm.js",108],["SALUD_RAMA_SOLO_LOCAL","ALTA","PERSISTENCIA","renderer/runtime/integration-health.js",6],["SALUD_RAMA_SIN_USO","MEDIA","PERSISTENCIA","renderer/runtime/integration-health.js",6],["LECTOR_EN_CODIGO_MUERTO","MEDIA","crearUsuarioPanel","renderer/core/jugadores-importacion.js",53],["LECTOR_EN_CODIGO_MUERTO","MEDIA","importarOperacionesCSV","renderer/core/jugadores-importacion.js",129],["LECTOR_EN_CODIGO_MUERTO","MEDIA","importarCSV","renderer/core/jugadores-importacion.js",240],["LECTOR_EN_CODIGO_MUERTO","MEDIA","cargarJugadores","renderer/core/jugadores-importacion.js",313],["LECTOR_EN_CODIGO_MUERTO","MEDIA","apiPostNoCors","renderer/core/api-y-solicitudes.js",89],["LECTOR_EN_CODIGO_MUERTO","MEDIA","cargarBilleteras","renderer/core/vistas-y-billeteras.js",162],["LECTOR_EN_CODIGO_MUERTO","MEDIA","cargarChats","renderer/core/vistas-y-billeteras.js",307],["LECTOR_EN_CODIGO_MUERTO","MEDIA","abrirEditarBilletera","renderer/core/lotes-y-solicitudes.js",316],["LECTOR_EN_CODIGO_MUERTO","MEDIA","abrirNuevaBilletera","renderer/core/lotes-y-solicitudes.js",343],["LECTOR_EN_CODIGO_MUERTO","MEDIA","seleccionarBilletera","renderer/core/lotes-y-solicitudes.js",655],["LECTOR_EN_CODIGO_MUERTO","MEDIA","cargarChatActual","renderer/core/chat.js",56],["LECTOR_EN_CODIGO_MUERTO","MEDIA","enviarChat","renderer/core/chat.js",130],["CIRCUITO_SIN_SALUD","MEDIA","_cnFalla","renderer/core/caja-negra-panel.js",78],["LECTOR_EN_CODIGO_MUERTO","MEDIA","testBuscar","renderer/core/agentes-cola-y-sesion.js",464],["LECTOR_EN_CODIGO_MUERTO","MEDIA","testCargar","renderer/core/agentes-cola-y-sesion.js",482],["LECTOR_EN_CODIGO_MUERTO","MEDIA","testRetirar","renderer/core/agentes-cola-y-sesion.js",509],["LECTOR_EN_CODIGO_MUERTO","MEDIA","cancelarVerificacionPanel","renderer/core/navegacion-y-verificaciones.js",83],["LECTOR_EN_CODIGO_MUERTO","MEDIA","reintentarVerificacion","renderer/core/navegacion-y-verificaciones.js",88],["LECTOR_EN_CODIGO_MUERTO","MEDIA","chuniorCerrarSesion","renderer/core/chunior-sesion-y-billeteras.js",61],["LECTOR_EN_CODIGO_MUERTO","MEDIA","chuniorNav","renderer/core/chunior-recuperacion-y-transferencias.js",674],["LECTOR_EN_CODIGO_MUERTO","MEDIA","seleccionarBilletera","renderer/extensions/portal-chat-unificado.js",28],["LECTOR_EN_CODIGO_MUERTO","MEDIA","cargarChats","renderer/extensions/portal-chat-unificado.js",85],["LECTOR_EN_CODIGO_MUERTO","MEDIA","cargarChatActual","renderer/extensions/portal-chat-unificado.js",115],["LECTOR_EN_CODIGO_MUERTO","MEDIA","enviarChat","renderer/extensions/portal-chat-unificado.js",148]]}); })(globalThis);
+(function(root,factory){
+  if(typeof module==='object' && module.exports) module.exports={create:factory};
+  else root.NodoSalud=factory(root);
+})(globalThis,function(root){
+  'use strict';
+  const integrations=new Set('CHAT PORTAL TELEMETRIA CAPACIDADES BANDEJA IDENTIDAD PERSISTENCIA HISTORIAL BILLETERAS RETIROS VALIDACION WORKERS AUTOMATISMOS CONCILIACION NEXO ADMIN CONEXION'.split(' '));
+  const stages=new Set(['ALIVE','CONNECTED','DATA','EFFECT','RENDER']);
+  // Ramas que el servidor todavía no acepta: se ven en esta PC pero no viajan. Una sola muestra
+  // rechazada tira el lote entero, y el 1/11 eso dejó mudo a todo el semáforo.
+  const SOLO_LOCAL=new Set(['PERSISTENCIA']);
+  const states=new Set(['OK','DEGRADED','ERROR','IDLE','UNKNOWN']);
+  const FRESH_MS=300000;
+  const samples=new Map(),dirty=new Map(),attempts=new Map();
+  let scope='',epoch=0,flight=null,lastFlush=0,remote=[],remoteReadAt=null,remoteServerAt=null,
+    transport='UNKNOWN',transportCode='',transportAt=null;
+  const pc=()=>String(root.pcOperativa||root.__pcCodigo||'').trim().toUpperCase();
+  function context(){
+    if(scope!==pc()){
+      scope=pc();epoch++;samples.clear();dirty.clear();attempts.clear();remote=[];flight=null;lastFlush=0;
+      transport='UNKNOWN';transportCode='';transportAt=null;remoteReadAt=null;remoteServerAt=null;
+    }
+    return scope;
+  }
+  function record(integration,stage,state,details={}){
+    if(!context() || !integrations.has(integration) || !stages.has(stage) || !states.has(state))return false;
+    const key=integration+'|'+stage,previous=samples.get(key);
+    const bounded=(value,max)=>Number.isFinite(value)?Math.max(0,Math.min(max,value)):0;
+    // Only codes and aggregate measurements cross the bridge. Never messages, URLs or arguments.
+    const code=/^[A-Z0-9_.:-]{1,64}$/.test(details.code||'')?details.code:null;
+    const sample={integration,stage,state,count:Math.min(1000000,(previous?.count||0)+1),
+      errors:Math.min(1000000,(previous?.errors||0)+(state==='ERROR'||state==='DEGRADED'?1:0)),
+      duration_ms:bounded(details.duration_ms,86400000),code,
+      observed_at:new Date(Math.max(Date.now(),Date.parse(previous?.observed_at||'')+1||0)).toISOString()};
+    samples.set(key,sample);dirty.set(key,sample);return true;
+  }
+  function errorCode(error){
+    // Classify locally; the raw error can contain SQL, URLs, player names or tokens.
+    const code=String(error?.code||'').toUpperCase(),message=String(error?.message||error||'').toLowerCase();
+    if(code==='57014'||/statement timeout|canceling statement/.test(message))return 'SERVER_TIMEOUT';
+    if(code==='42501'||code==='PGRST301'||/no_autorizado|permission denied|invalid.*token|unauthorized/.test(message))return 'UNAUTHORIZED';
+    if(code==='PGRST202'||code==='42883')return 'RPC_MISSING';
+    if(/panelapi\.rpc no disponible/.test(message))return 'CLIENT_UNAVAILABLE';
+    if(/fetch failed|failed to fetch|network|econn|socket|load failed|abort|timeout/.test(message))return 'NETWORK';
+    return 'RPC_FAILED';
+  }
+  function begin(integration){
+    const office=context(),version=epoch,started=Date.now(),attempt=(attempts.get(integration)||0)+1;
+    if(integrations.has(integration))attempts.set(integration,attempt);
+    // Starting another operation invalidates its previous success, including a
+    // render that this attempt may never reach. Errors remain unresolved until
+    // that stage supplies new evidence. No invented samples for unobserved stages.
+    for(const [key,previous] of samples){
+      if(previous.integration!==integration || previous.stage==='ALIVE' || previous.state!=='OK')continue;
+      const sample={...previous,state:'UNKNOWN',code:'AWAITING_EVIDENCE',
+        observed_at:new Date(Math.max(started,Date.parse(previous.observed_at)+1)).toISOString()};
+      samples.set(key,sample);dirty.set(key,sample);
+    }
+    // Freshness and telemetry eligibility are different: an absent office disables
+    // record(), but must not cancel a valid legacy read or leave its UI loading.
+    // A real context change still invalidates this attempt, including empty -> office.
+    const current=()=>{context();return scope===office&&epoch===version&&attempts.get(integration)===attempt;};
+    const observe=(stage,state,code)=>current()&&record(integration,stage,state,{code,duration_ms:Date.now()-started});
+    // A newer request or another office must not inherit the outcome of this request.
+    return Object.freeze({current,record:observe,reply(error){
+      if(!error)return observe('CONNECTED','OK');
+      const code=errorCode(error);
+      return observe('CONNECTED',code==='NETWORK'||code==='CLIENT_UNAVAILABLE'?'ERROR':code==='RPC_FAILED'?'DEGRADED':'OK',code);
+    },errorCode});
+  }
+  function snapshot(){
+    context();const now=Date.now();
+    const rows=[...samples.values()].map(s=>{
+      const observed=Date.parse(s.observed_at),clockSkew=!Number.isFinite(observed)||observed>now+60000;
+      const expired=now-observed>FRESH_MS;
+      return {...s,reported_state:s.state,state:expired||clockSkew?'UNKNOWN':s.state,
+        evidence:clockSkew?'CLOCK_SKEW':expired?'STALE':s.code==='AWAITING_EVIDENCE'?'AWAITING_EVIDENCE':'OBSERVED'};
+    });
+    const byStage=new Map(rows.map(r=>[r.integration+'|'+r.stage,r]));
+    // This is evidence for declared branches, NOT a claim of function/circuit
+    // coverage. Missing observations stay visible without producing network data.
+    const coverage=[...integrations].map(integration=>({integration,
+      has_samples:rows.some(r=>r.integration===integration),
+      stages:[...stages].map(stage=>byStage.get(integration+'|'+stage)||
+        {integration,stage,state:'UNKNOWN',reported_state:null,evidence:'NO_SAMPLE',code:null})}));
+    const transportExpired=transport==='OK' && (transportAt===null || now-transportAt>FRESH_MS || now<transportAt);
+    const remoteRows=remote.map(r=>{
+      const received=Date.parse(r.received_at),observed=Date.parse(r.observed_at);
+      const reference=remoteServerAt??remoteReadAt;
+      const elapsed=remoteReadAt===null?Infinity:Math.max(0,now-remoteReadAt);
+      const missing=!Number.isFinite(received)||!Number.isFinite(observed)||reference===null;
+      const clockSkew=!missing&&(received>reference+60000||observed>reference+60000||now<remoteReadAt);
+      const expired=!missing&&(reference-received+elapsed>FRESH_MS||reference-observed+elapsed>FRESH_MS);
+      return {...r,state:missing||clockSkew||expired?'UNKNOWN':r.state,
+        reported_state:r.reported_state??r.state,
+        evidence:missing?'NO_TIMESTAMP':clockSkew?'CLOCK_SKEW':expired?'STALE':'OBSERVED'};
+    });
+    return {pc:scope,transport:transportExpired?'UNKNOWN':transport,reported_transport:transport,
+      code:transportExpired?'HEALTH_TRANSPORT_STALE':transportCode,pending:dirty.size,
+      rows,remote:remoteRows,coverage,coverage_scope:'DECLARED_BRANCHES_ONLY',
+      branches_without_samples:coverage.filter(branch=>!branch.has_samples).map(branch=>branch.integration)};
+  }
+  async function flush(){
+    if(!context())return null;
+    if(flight)return flight;
+    if(lastFlush && Date.now()-lastFlush<30000)return null;
+    const version=epoch,office=scope;
+    lastFlush=Date.now();
+    const pending=(async()=>{
+      try{
+        const config=(await root.panelAPI?.getContext?.())?.beta;
+        if(version!==epoch || office!==pc())return null;
+        if(!config?.enabled || !config.offices?.includes(office)){transport='IDLE';return null;}
+        record('TELEMETRIA','ALIVE','OK');
+        const batch=[...dirty.entries()].filter(([,sample])=>!SOLO_LOCAL.has(sample.integration)).slice(0,32);
+        const response=await root.panelAPI.rpc('nodo_beta_salud_v1',{p_pc_codigo:office,p_muestras:batch.map(([,s])=>s),p_build:config.build});
+        if(version!==epoch || office!==pc())return null;
+        let data=response?.data;
+        if(typeof data==='string'){try{data=JSON.parse(data);}catch(_){data=null;}}
+        if(response?.error || data?.ok!==true || data?.contract!=='nodo.beta.v1' || !Array.isArray(data.rows)){
+          const code=response?.error?.code||response?.error?.message;
+          throw new Error(/^BETA_[A-Z0-9_]{1,64}$/.test(code||'')?code:'BETA_HEALTH_UNCONFIRMED');
+        }
+        for(const [key,sample] of batch)if(dirty.get(key)===sample)dirty.delete(key);
+        remote=data.rows;remoteReadAt=Date.now();
+        remoteServerAt=Number.isFinite(Date.parse(data.server_time))?Date.parse(data.server_time):null;
+        transport='OK';transportAt=remoteReadAt;transportCode='';return snapshot();
+      }catch(e){
+        if(version===epoch && office===pc()){transport='ERROR';transportCode=e.message?.startsWith('BETA_')?e.message:'BETA_HEALTH_FAILED';}
+        return null;
+      }
+    })();
+    flight=pending;
+    try{return await pending;}finally{if(flight===pending)flight=null;}
+  }
+  // Lo que se le muestra a una persona: qué parte del sistema, si anda y qué se cortó, en castellano.
+  // El snapshot sigue teniendo el detalle técnico para el servidor y las pruebas. Telemetría y
+  // capacidades son internas: si fallan se ve como un solo aviso, no como dos filas que nadie entiende.
+  const NOMBRES={CHAT:'Chat',PORTAL:'Portal',BANDEJA:'Solicitudes',IDENTIDAD:'Perfil de jugadores',PERSISTENCIA:'Guardado de datos',
+    HISTORIAL:'Historial',BILLETERAS:'Billeteras',RETIROS:'Lectura de fichas',VALIDACION:'Validaciones',WORKERS:'Tareas de fondo',
+    AUTOMATISMOS:'Automatismos',CONCILIACION:'Control de fichas',NEXO:'Nexo',ADMIN:'Administración',CONEXION:'Conexión'};
+  const MOTIVOS={SERVER_TIMEOUT:'El servidor tardó demasiado',UNAUTHORIZED:'Sin permiso',RPC_MISSING:'Falta actualizar el servidor',
+    CLIENT_UNAVAILABLE:'La aplicación no está conectada',NETWORK:'Sin conexión',FICHAS_SIN_SESION:'Se cayó la sesión de Agentes',
+    FICHAS_ILEGIBLES:'El casino no devolvió el saldo',FICHAS_SIN_RESPUESTA:'El casino no contestó',AGENTE_OCUPADO:'El agente está ocupado',
+    BILLETERAS_LOAD_FAILED:'No se pudieron leer las billeteras',BILLETERA_NO_MARCADA:'No se pudo cambiar la billetera',
+    BILLETERAS_SIN_SINCRONIZAR:'No se pudo sincronizar con Chunior'};
+  const motivo=code=>MOTIVOS[code]||'No respondió bien';
+  function resumen(){
+    const s=snapshot();
+    const partes=s.coverage.filter(branch=>NOMBRES[branch.integration]).map(branch=>{
+      const mala=branch.stages.find(stage=>stage.state==='ERROR'||stage.state==='DEGRADED');
+      return {nombre:NOMBRES[branch.integration],estado:mala?'falla':branch.stages.some(stage=>stage.state==='OK')?'anda':'sin_actividad',
+        detalle:mala?motivo(mala.code):''};
+    });
+    if(s.transport==='ERROR')partes.unshift({nombre:'Aviso al servidor',estado:'falla',detalle:'No se pudo enviar el estado'});
+    return {oficina:s.pc,partes};
+  }
+  function show(){
+    const s=snapshot(),escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const reasons={NO_SAMPLE:'Sin observación',STALE:'Muestra vencida',AWAITING_EVIDENCE:'Nueva operación sin confirmar',
+      NO_TIMESTAMP:'Sin fecha verificable',CLOCK_SKEW:'Fechas incompatibles',OBSERVED:'Observado'};
+    const cell=r=>'<td title="'+escape((reasons[r.evidence]||'Sin confirmar')+(r.code?' · '+r.code:''))+'">'+escape(r.state)+(r.evidence==='NO_SAMPLE'?' · sin muestra':'')+'</td>';
+    const rows=s.coverage.map(branch=>'<tr><td>'+escape(branch.integration)+'</td>'+branch.stages.map(cell).join('')+'</tr>').join('');
+    const remoteRows=s.remote.map(r=>'<tr><td>'+escape(r.installation_id)+'</td><td>'+escape(r.integration)+'</td><td>'+escape(r.stage)+'</td>'+cell(r)+'<td>'+escape(r.last_error_code||'')+'</td><td>'+escape(r.received_at||'')+'</td></tr>').join('');
+    const d=root.NodoDesconexiones;
+    const discHtml=d&&typeof d==='object'?'<h3>Auditoría de desconexiones del script ('+escape(d.fuente_hash||'')+')</h3><p>Circuitos activos: '+escape(d.circuitos?.activos??d.circuitos?.total??0)+' · con salud directa: '+escape(d.circuitos?.observados_directo??d.circuitos?.observados??0)+' · por compuerta: '+escape(d.circuitos?.observados_compuerta??0)+' · en código muerto/pisado: '+escape(d.circuitos?.en_codigo_muerto??0)+'</p>':'';
+    root.abrirModal?.('Diagnóstico de integraciones','<p>Oficina '+escape(s.pc)+' · envío remoto: '+s.transport+' '+escape(s.code)+'</p><p>Ramas declaradas: '+s.coverage.length+' · sin ninguna muestra: '+s.branches_without_samples.length+'. Este diagnóstico no certifica todas las funciones de cada rama.</p><p>UNKNOWN significa falta de evidencia vigente. No todas las etapas aplican a cada operación; un latido no acredita datos ni render.</p><button onclick="NodoSalud.refresh()">Consultar servidor</button><h3>Esta PC: evidencia por rama y etapa</h3><table><tr><th>Integración</th>'+[...stages].map(stage=>'<th>'+stage+'</th>').join('')+'</tr>'+rows+'</table><h3>Última respuesta remota de la oficina</h3><table><tr><th>Instalación</th><th>Integración</th><th>Etapa</th><th>Estado</th><th>Último error</th><th>Recibido</th></tr>'+remoteRows+'</table>'+discHtml,null,'');
+    return s;
+  }
+  async function refresh(){
+    context();lastFlush=0;await flush();return show();
+  }
+  return Object.freeze({record,begin,errorCode,flush,snapshot,show,refresh,resumen,motivo});
+});
+// "Probar ahora" de Estado del sistema: consulta de verdad cada parte y dice cuál se cortó.
+//
+// Juan, 1/11: "tampoco permite correr pruebas". El semáforo sólo anota lo que el panel ya hizo, y que
+// algo se haya usado no prueba que funcione. Cada prueba llama a la función principal de esa parte, la
+// misma que usa la pantalla: lo que se prueba es lo que corre, no una copia.
+//
+// Sólo lee. Ninguna prueba carga, retira, aprueba, escribe mensajes ni marca nada como leído.
+(function(root, factory){
+  if(typeof module === 'object' && module.exports) module.exports = { create: factory };
+  else root.NodoPruebas = factory(root);
+})(globalThis, function(root){
+  'use strict';
+  const TOPE_MS = 25000, VIGENTE_MS = 300000;
+  const resultados = new Map();
+  let enCurso = null;
+  const salud = () => root.NodoSalud;
+
+  // Lo que dejó anotado la función principal al terminar. Sólo cuenta la conexión y los datos: un
+  // cambio que falló antes no dice nada de si ahora se puede leer.
+  function veredicto(rama){
+    const stages = salud().snapshot().coverage.find(b => b.integration === rama)?.stages
+      .filter(s => s.stage === 'CONNECTED' || s.stage === 'DATA') || [];
+    const mala = stages.find(s => s.state === 'ERROR' || s.state === 'DEGRADED');
+    if(mala) return { ok:false, detalle:salud().motivo(mala.code) };
+    return stages.some(s => s.stage === 'DATA' && s.state === 'OK') ? { ok:true } : { ok:false, detalle:'No respondió' };
+  }
+  async function agentes(){
+    if(root._drexGlobalBusy) return { ok:false, detalle:salud().motivo('AGENTE_OCUPADO') };
+    const health = salud().begin('RETIROS');
+    const estado = await root.callDrex('estadoPagina');
+    health.reply(null);
+    if(estado?.needsLogin || estado?.pageError){
+      health.record('DATA', 'ERROR', 'FICHAS_SIN_SESION');
+      return { ok:false, detalle:salud().motivo('FICHAS_SIN_SESION') };
+    }
+    health.record('DATA', 'OK');
+    return { ok:true };
+  }
+  async function controlDeFichas(){
+    const lectura = await root._watchdogLeer();
+    if(lectura?.drexNeedsLogin) return { ok:false, detalle:salud().motivo('FICHAS_SIN_SESION') };
+    return lectura?.drexFichas != null && lectura?.chuniorFichas != null
+      ? { ok:true } : { ok:false, detalle:'No se pudieron leer las fichas de los dos lados' };
+  }
+  const PRUEBAS = [
+    { partes:['Billeteras'], hay:() => typeof root.cargarBilleteras === 'function',
+      // Mira las filas que volvieron: una sincronización en paralelo puede invalidar la muestra.
+      correr:async () => {
+        const filas = await root.cargarBilleteras(false);
+        return filas?.length ? { ok:true } : { ok:false, detalle:salud().motivo('BILLETERAS_LOAD_FAILED') };
+      } },
+    { partes:['Solicitudes'], hay:() => typeof root.cargarSolicitudesPortal === 'function',
+      correr:async () => { await root.cargarSolicitudesPortal(true); return veredicto('BANDEJA'); } },
+    { partes:['Chat'], hay:() => root.NodoBetaChat?.active?.() === true && !!root._chatCanalNuevo,
+      correr:async () => { await root._chatCanalNuevo.cargar(true); return veredicto('CHAT'); } },
+    { partes:['Historial'], hay:() => typeof root.cargarHistorial === 'function',
+      correr:async () => { await root.cargarHistorial(); return veredicto('HISTORIAL'); } },
+    { partes:['Lectura de fichas', 'Automatismos'], hay:() => !!root.ctrlElectron && typeof root.callDrex === 'function', correr:agentes },
+    { partes:['Control de fichas'], hay:() => !!root.ctrlElectron && typeof root._watchdogLeer === 'function', correr:controlDeFichas }
+  ];
+
+  async function correrUna(prueba, alCambiar){
+    alCambiar(prueba.partes[0]);
+    let r, tope;
+    try{
+      r = await Promise.race([prueba.correr(), new Promise((_, no) => { tope = root.setTimeout(() => no(new Error('tope')), TOPE_MS); })]);
+    }catch(_e){ r = { ok:false, detalle:'No respondió' }; }
+    root.clearTimeout(tope);
+    for(const parte of prueba.partes) resultados.set(parte, { ...r, ts:Date.now() });
+  }
+  function correr(alCambiar = () => {}){
+    if(enCurso) return enCurso;
+    enCurso = (async () => {
+      // De a una: comparten el agente y la conexión, y así se ve cuál se cortó.
+      for(const prueba of PRUEBAS) if(prueba.hay()) await correrUna(prueba, alCambiar);
+      return resultados;
+    })().finally(() => { enCurso = null; alCambiar(null); });
+    return enCurso;
+  }
+  function vigente(parte){
+    const r = resultados.get(parte);
+    return r && Date.now() - r.ts < VIGENTE_MS ? r : null;
+  }
+  return Object.freeze({ correr, vigente, ocupado:() => !!enCurso });
+});
 (function(root, factory){
   if(typeof module === 'object' && module.exports) module.exports = factory();
   else root.NodoChatMessage = factory();
@@ -1275,7 +2465,7 @@
     });
     if(m.auto !== undefined || m.AUTO !== undefined || meta.auto !== undefined) out.auto = m.auto ?? m.AUTO ?? meta.auto;
     if(m.auto_caso || meta.auto_caso) out.auto_caso = m.auto_caso || meta.auto_caso;
-    const img = m.imagen_url || m.imagen || m.IMAGEN_URL;
+    const img = m.imagen_url || m.imagen || m.IMAGEN_URL || meta.imagen_url || meta.comprobante_url || m.comprobante_url || m.COMPROBANTE_URL;
     if(img) out.imagen_url = img;
     return out;
   }
@@ -1292,6 +2482,13 @@
     const m = normalize(message);
     return [role(m), m.fecha, m.mensaje, m.imagen_url || ''].join('|');
   }
+  // Textos que el sistema puso en boca del jugador: una solicitud sin mensaje se rellenaba con esto
+  // y quedaba guardado en el hilo con origen USUARIO. El jugador nunca lo escribió (D-130).
+  const FILLER = /^(consulta desde portal( v16)?|\[conversaci[oó]n iniciada por el operador[^\]]*\])$/i;
+  function isFiller(message){
+    const m = normalize(message);
+    return role(m) === 'USUARIO' && !m.imagen_url && FILLER.test(m.mensaje.trim());
+  }
   function merge(existing, incoming){
     const result = Object.assign({}, existing);
     for(const [name,value] of Object.entries(incoming || {})){
@@ -1306,7 +2503,7 @@
     return text.replace(/⟦AYUDA:inicio⟧/g, '[Botón: Ver opciones de ayuda]')
       .replace(/⟦AYUDA:revisar_envio⟧/g, '[Botón: Revisar una transferencia enviada]');
   }
-  return Object.freeze({ role, normalize, author, className, key, merge, visibleText });
+  return Object.freeze({ role, normalize, author, className, key, isFiller, merge, visibleText });
 });
 (function(root, factory){
   if(typeof module === 'object' && module.exports) module.exports = factory();
@@ -1319,27 +2516,43 @@
     const id = ticket?.masterId || ticket?.solicitudId || ticket?.usuario || 'chat';
     return upper(ticket?.usuario || 'usuario') + '_' + String(id).replace(/[^A-Z0-9]/gi, '_');
   }
-  function snapshot(tickets, marks) {
-    const byUser = new Map(), unread = new Map(), signatures = [];
+  // Contrato legacy: una respuesta OPERADOR también corta los pendientes locales.
+  // No acredita un recibo remoto de visto. La beta puede entregar el total ya resuelto.
+  function readCutoff(ticket, marks = {}) {
+    let cutoff = date(marks?.[chatKey(ticket)]);
+    for(const message of ticket?.thread || []) {
+      if(upper(message.origen) === 'OPERADOR') cutoff = Math.max(cutoff, date(message.fecha));
+    }
+    return cutoff;
+  }
+  function unreadForTicket(ticket, marks = {}) {
+    if(!ticket || ticket.cerrado) return 0;
+    // El número que trae el servidor vale también para un chat que todavía nadie aceptó: el total
+    // del servidor lo cuenta, así que la fila tiene que mostrarlo o el total queda sin explicar.
+    if(Number.isSafeInteger(ticket._unreadServidor) && ticket._unreadServidor >= 0) return ticket._unreadServidor;
+    if(!ticket.accepted) return 0;
+    const cutoff = readCutoff(ticket, marks);
+    return (ticket.thread || []).filter(m => upper(m.origen) === 'USUARIO' && date(m.fecha) > cutoff).length;
+  }
+  function snapshot(tickets, marks = {}) {
+    const byUser = new Map(), unread = new Map(), signatures = [], list = [];
     let total = 0, accepted = 0;
     for(const ticket of tickets) {
+      list.push(ticket);
       const name = upper(ticket.usuario);
       if(!byUser.has(name)) byUser.set(name, ticket);
-      let count = 0;
-      if(ticket.accepted) {
-        accepted++;
-        const readAt = date(marks[chatKey(ticket)]);
-        for(const message of ticket.thread || []) {
-          if(upper(message.origen) === 'USUARIO' && date(message.fecha) > readAt) count++;
-        }
-      }
+      const count = unreadForTicket(ticket, marks);
+      if(ticket.accepted && !ticket.cerrado) accepted++;
       unread.set(ticket, count);
       total += count;
       const thread = ticket.thread || [], last = thread[thread.length - 1] || {};
       signatures.push([ticket.usuario, ticket.accepted ? 'A' : 'E', ticket.masterId || ticket.solicitudId || '',
         thread.length, count, last.fecha || '', last.mensaje || ''].join(':'));
     }
-    return { byUser, unread, total, accepted, signature: signatures.join('||') };
+    // `unread` tiene por clave el OBJETO ticket. Quien lo consulte tiene que buscar el ticket en
+    // `tickets` (los mismos objetos de esta pasada): pedirlos de nuevo crea objetos distintos y
+    // `unread.get()` no encuentra nada, que es lo que dejaba las filas sin su globito.
+    return { byUser, unread, tickets: list, total, accepted, signature: signatures.join('||') };
   }
   function create({ getTickets, readMarks, now = Date.now }) {
     let lastTotal = null, lastAt = 0;
@@ -1352,5 +2565,262 @@
     }
     return { read, stableTotal };
   }
-  return { create, snapshot, chatKey };
+  return { create, snapshot, chatKey, readCutoff, unreadForTicket };
+});
+(function(root, factory){
+  if(typeof module === 'object' && module.exports) module.exports = { create: factory };
+  else root.NodoBetaChat = factory(root);
+})(globalThis, function(root){
+  'use strict';
+  const CONTRACT = 'nodo.beta.v1';
+  const REQUIRED = ['chat.list.v1','chat.messages.v1','chat.read.v1'];
+  const upper = value => String(value || '').trim().toUpperCase();
+  const identity = ticket => String(ticket?._chatId || ticket?.chatId || '');
+  const validId = id => /^[1-9]\d{0,18}$/.test(String(id)) && BigInt(id) <= 9223372036854775807n;
+  const now = () => Date.now();
+  const pc = () => upper(root.pcOperativa || root.__pcCodigo || '');
+  let scope = '', generation = 0, config = null, enabled = false, negotiated = false;
+  let negotiation = null, lastTry = 0, leaseAt = 0, error = '', stage = 'IDLE';
+  let overview = null, ackFlight = null, retryTimer = null;
+  const counters = new Map(), pages = new Map(), confirmed = new Set(), retries = new Map(), failures = new Map(), openChats = new Set();
+  const legacyCoverage = new Map();
+  let ackRevision=0;
+  const countRevisions=new Map();
+  let rendered = null;
+  function publish(next, code = '', operation = 'READ'){
+    if(code) root.NodoSalud?.record('CHAT',operation.startsWith('ACK')||operation==='SEND'?'EFFECT':operation==='CONNECTION'?'CONNECTED':'DATA','ERROR',
+      {code:/^[A-Z0-9_.:-]{1,64}$/.test(code)?code:'BETA_OPERATION_FAILED'});
+    if(code) failures.set(operation,code); else failures.delete(operation);
+    error = failures.values().next().value || '';
+    stage = error ? 'ERROR' : legacyCoverage.size ? 'DEGRADED' : next;
+    if(!code && [...failures.keys()].some(k=>k.startsWith('ACK:')))root.NodoSalud?.record('CHAT','EFFECT','DEGRADED',{code:'CHAT_ACK_PENDING'});
+    if(legacyCoverage.size) root.NodoSalud?.record('CHAT','DATA','DEGRADED',{code:'LEGACY_MESSAGE_IDENTITY_UNKNOWN'});
+    root.nodoChatRefreshUnread?.();
+    try { root.dispatchEvent?.(new root.CustomEvent('nodo:beta-chat', { detail: status() })); } catch(_) {}
+    const node = root.document?.getElementById('nodoBetaChatEstado');
+    // Al operador: nada cuando anda, y con un problema una sola línea sin códigos (el código ya va al semáforo).
+    if(node) node.textContent = error ? 'Sin conexión con el chat. Reintentando…' : '';
+  }
+  function reset(nextPc){
+    generation++; scope = nextPc; config = null; enabled = false; negotiated = false;
+    negotiation = null; lastTry = 0; leaseAt = 0; overview = null; rendered = null;
+    counters.clear(); pages.clear(); confirmed.clear(); retries.clear(); failures.clear(); openChats.clear(); legacyCoverage.clear(); ackFlight=null;
+    ackRevision=0;countRevisions.clear();
+    if(retryTimer) root.clearTimeout(retryTimer);
+    retryTimer = null; publish('IDLE');
+  }
+  function checkScope(){ if(scope !== pc()) reset(pc()); return scope; }
+  function status(){ return { contract: CONTRACT, active: negotiated && scope === pc(), enabled, pc: scope, stage, code: error, build: config?.build || '', overview: overview && {...overview},
+    coverage:{unread_scope:'canonical',legacy_conversations_unknown:legacyCoverage.size},
+    pending_ack_chats:[...failures.keys()].filter(k=>k.startsWith('ACK:')).map(k=>k.slice(4)) }; }
+  function current(version,requestedPc){return version===generation && requestedPc===pc();}
+  function observeLegacy(chatId,rows){
+    const unresolved=(rows||[]).filter(m=>['USUARIO','USER','CLIENTE','PORTAL'].includes(upper(m.origen||m.tipo_emisor)) && !validId(m.id)).length;
+    if(unresolved)legacyCoverage.set(String(chatId),{code:'LEGACY_MESSAGE_IDENTITY_UNKNOWN',user_messages:unresolved,unread_scope:'canonical'});
+    else legacyCoverage.delete(String(chatId));
+    // This is a local diagnostic of inspected conversations, never a global
+    // inventory or a count to add to canonical unread messages.
+    while(legacyCoverage.size>256)legacyCoverage.delete(legacyCoverage.keys().next().value);
+  }
+  async function call(fn, params, expected = generation){
+    const requestedPc = scope;
+    const started=now();
+    const stage=fn==='nodo_beta_capacidades_v1'?'CONNECTED':(/leido|enviar/.test(fn)?'EFFECT':'DATA');
+    try{
+    const result = await root.panelAPI.rpc(fn, {...params, p_pc_codigo: requestedPc});
+    if(expected !== generation || requestedPc !== pc()) throw new Error('BETA_CONTEXT_CHANGED');
+    let data = result?.data;
+    if(typeof data === 'string'){ try { data = JSON.parse(data); } catch(_) { data = null; } }
+    if(result?.error || data?.ok !== true || data?.contract !== CONTRACT){
+      throw new Error(result?.error?.code || result?.error?.message || data?.code || 'BETA_RPC_FAILED');
+    }
+    root.NodoSalud?.record('CHAT',stage==='EFFECT'?'CONNECTED':stage,'OK',{duration_ms:now()-started});
+    return data;
+    }catch(e){
+      if(expected===generation && requestedPc===pc()) root.NodoSalud?.record('CHAT',stage,'ERROR',{code:/^BETA_[A-Z0-9_]+$/.test(e.message)?e.message:'BETA_RPC_FAILED',duration_ms:now()-started});
+      throw e;
+    }
+  }
+  async function ready(){
+    if(!checkScope()) return false;
+    if(negotiated) return true;
+    if(negotiation) return negotiation;
+    if(lastTry && now()-lastTry < 30000){
+      if(failures.has('CONNECTION')) throw new Error(failures.get('CONNECTION'));
+      return false;
+    }
+    const version = generation; lastTry = now();
+    negotiation = (async()=>{
+      try {
+        const context = await root.panelAPI?.getContext?.();
+        if(version !== generation || scope !== pc()) throw new Error('BETA_CONTEXT_CHANGED');
+        config = context?.beta;
+        enabled = config?.enabled === true && Array.isArray(config.offices) && config.offices.map(upper).includes(scope);
+        if(!enabled){ publish('LEGACY','','CONNECTION'); return false; }
+        publish('CONNECTING','','CONNECTION');
+        const offer = await call('nodo_beta_capacidades_v1', {p_build: config.build, p_activate: false}, version);
+        if(upper(offer.scope?.pc_codigo) !== scope || !REQUIRED.every(c => offer.capabilities?.includes(c))) throw new Error('BETA_CONTRACT_MISMATCH');
+        negotiated = true;
+        return true;
+      } catch(e) {
+        if(version === generation && scope === pc()) publish('ERROR', e.message,'CONNECTION');
+        // Only an explicitly disabled installation selects legacy. An unavailable
+        // beta contract must not fall through to getters that also mark as read.
+        throw e;
+      }
+      finally { if(version === generation) negotiation = null; }
+    })();
+    return negotiation;
+  }
+  async function activate(){
+    if(leaseAt && now()-leaseAt < 120000) return;
+    const activated = await call('nodo_beta_capacidades_v1', {p_build: config.build, p_activate: true});
+    if(activated.active !== true || activated.build !== config.build) throw new Error('BETA_ACTIVATION_FAILED');
+    leaseAt = now();
+    publish('READY','','CONNECTION');
+  }
+  function setCount(chatId, value){
+    if(!Number.isSafeInteger(value) || value < 0) return;
+    const old = counters.get(String(chatId));
+    counters.set(String(chatId),value);
+    if(overview && old !== undefined && openChats.has(String(chatId))) overview.unread_total = Math.max(0,overview.unread_total + value-old);
+  }
+  async function lista(options = {}){
+    if(!await ready()) return null;
+    const version=generation,requestedPc=scope,countVersion=ackRevision;
+    try {
+      const result = await call('nodo_beta_chat_lista_v1', {
+        p_usuario: options.usuario || null, p_estado: options.estado || null,
+        p_limit: 50, p_before_id: options.beforeId || null
+      });
+      if(!current(version,requestedPc))throw new Error('BETA_CONTEXT_CHANGED');
+      if(!Array.isArray(result.rows) || !Number.isSafeInteger(result.unread_total) || result.unread_total < 0 ||
+        result.rows.some(row=>!row.chat_id || !Number.isSafeInteger(row.sin_leer) || row.sin_leer < 0)) throw new Error('BETA_INVALID_LIST');
+      for(const row of result.rows){
+        const id=String(row.chat_id);
+        if((countRevisions.get(id)||0)<=countVersion)counters.set(id,Number(row.sin_leer));
+        if(['CERRADO','RESUELTA'].includes(upper(row.estado)))openChats.delete(id);else openChats.add(id);
+      }
+      if(!options.usuario && !options.estado && countVersion===ackRevision) overview = { total: result.total, unread_total: result.unread_total };
+      await activate(); // The lease starts after an actual successful read, not only the offer.
+      publish('READY');
+      return result;
+    } catch(e) { if(current(version,requestedPc))publish('ERROR',e.message); throw e; }
+  }
+  async function mensajes(chatId, options = {}){
+    if(!await ready()) return null;
+    const version=generation,requestedPc=scope,countVersion=ackRevision;
+    const key = scope+'|'+chatId+'|'+(options.beforeId || '');
+    if(pages.has(key)) return pages.get(key);
+    const pending = (async()=>{
+      try {
+        const result = await call('nodo_beta_chat_mensajes_v1', {p_chat_id: String(chatId),p_limit: 50,p_before_id: options.beforeId || null});
+        if(!current(version,requestedPc))throw new Error('BETA_CONTEXT_CHANGED');
+        if(String(result.chat_id) !== String(chatId) || !Array.isArray(result.rows) ||
+          result.rows.some(row=>!validId(row.id)) || !Number.isSafeInteger(result.counts?.unread) || result.counts.unread < 0) throw new Error('BETA_INVALID_MESSAGES');
+        if((countRevisions.get(String(chatId))||0)<=countVersion)setCount(chatId,Number(result.counts?.unread));
+        if(!options.beforeId)observeLegacy(chatId,result.legacy_thread);
+        publish('READY'); return result;
+      } catch(e) { if(current(version,requestedPc))publish('ERROR',e.message); throw e; }
+      finally { if(pages.get(key)===pending)pages.delete(key); }
+    })();
+    pages.set(key,pending); return pending;
+  }
+  function visibleIds(view){
+    const doc = root.document;
+    if(!view || scope !== pc() || !negotiated || doc?.hidden || doc?.visibilityState !== 'visible' || doc.hasFocus?.() === false || !doc.body?.classList.contains('nodo-chat-open')) return [];
+    const current = root.__nodoChatCurrentTicket;
+    if(!current?._beta || identity(current) !== view.chatId || current._betaPc !== scope) return [];
+    const ids = new Set();
+    for(const body of view.bodies){
+      if(body.isConnected === false || body.dataset?.betaChatId !== view.chatId || body.dataset?.betaPc !== scope) continue;
+      const clip = body.getBoundingClientRect?.();
+      if(!clip || clip.width <= 0 || clip.height <= 0) continue;
+      const style = root.getComputedStyle?.(body);
+      if(style && (style.visibility === 'hidden' || style.display === 'none')) continue;
+      const top = Math.max(0,clip.top), bottom = Math.min(root.innerHeight || Infinity,clip.bottom);
+      const left = Math.max(0,clip.left), right = Math.min(root.innerWidth || Infinity,clip.right);
+      if(bottom<=top || right<=left) continue;
+      for(const node of body.querySelectorAll('[data-beta-message-id]')){
+        const id = node.dataset.betaMessageId;
+        if(!validId(id) || !view.ids.has(id) || node.dataset.betaRole !== 'USUARIO') continue;
+        const rect = node.getBoundingClientRect();
+        if(rect.height > 0 && rect.width > 0 && rect.bottom > top && rect.top < bottom && rect.right > left && rect.left < right) ids.add(id);
+      }
+    }
+    if(ids.size) root.NodoSalud?.record('CHAT','RENDER','OK');
+    return [...ids];
+  }
+  function receiptKey(chatId,id){ return scope+'|'+chatId+'|'+id; }
+  async function flushVisible(){
+    checkScope();
+    if(ackFlight) return;
+    const view = rendered;
+    const ids = visibleIds(view).filter(id => !confirmed.has(receiptKey(view.chatId,id)) && (retries.get(receiptKey(view.chatId,id)) || 0)<3).slice(0,100);
+    if(!ids.length) return;
+    const version = generation,requestedPc=scope,flight={version,requestedPc};
+    ackFlight=flight;
+    let completed=false;
+    try {
+      const result = await call('nodo_beta_chat_leido_v1', {p_chat_id: view.chatId,p_message_ids: ids},version);
+      if(!current(version,requestedPc))throw new Error('BETA_CONTEXT_CHANGED');
+      const acknowledged = result.acknowledged_ids;
+      if(String(result.chat_id)!==view.chatId || !Array.isArray(acknowledged) ||
+        acknowledged.length!==ids.length || ids.some(id => !acknowledged.map(String).includes(id)) ||
+        !Number.isSafeInteger(result.unread) || result.unread < 0) throw new Error('BETA_ACK_INCOMPLETE');
+      for(const id of ids){ const key=receiptKey(view.chatId,id); confirmed.add(key); retries.delete(key); }
+      while(confirmed.size > 2000) confirmed.delete(confirmed.values().next().value);
+      countRevisions.set(String(view.chatId),++ackRevision);
+      setCount(view.chatId,Number(result.unread));
+      root.NodoSalud?.record('CHAT','EFFECT','OK');
+      publish('READY','','ACK:'+view.chatId);
+      completed=true;
+    } catch(e){
+      if(current(version,requestedPc)){
+        for(const id of ids){ const key=receiptKey(view.chatId,id); retries.set(key,(retries.get(key)||0)+1); }
+        publish('ERROR',e.message,'ACK:'+view.chatId);
+        if(!retryTimer) retryTimer = root.setTimeout(()=>{ retryTimer=null; void flushVisible(); },3000);
+      }
+    } finally {
+      if(ackFlight===flight){
+        ackFlight=null;
+        // A conversation opened while the previous ACK was in flight must not
+        // wait for another poll or scroll before acknowledging its visible IDs.
+        if(rendered!==view || completed && ids.length===100)scheduleVisible();
+      }
+    }
+  }
+  function observeRendered(ticket,bodies,messages){
+    if(!ticket?._beta || ticket._betaPc !== checkScope()) return;
+    const chatId = identity(ticket);
+    const ids = new Set((messages || []).filter(m => upper(m.origen || m.tipo_emisor)==='USUARIO' && validId(m.id)).map(m=>String(m.id)));
+    rendered = {chatId,bodies,ids};
+    for(const body of bodies){
+      body.dataset.betaChatId=chatId; body.dataset.betaPc=scope;
+      if(!body.__nodoBetaScroll){ body.addEventListener('scroll',scheduleVisible,{passive:true}); body.__nodoBetaScroll=true; }
+    }
+    scheduleVisible();
+  }
+  function scheduleVisible(){ root.requestAnimationFrame?.(()=>{ void flushVisible(); }); }
+  async function enviar(chatId,message){
+    if(!await ready()) throw new Error('BETA_NOT_CONNECTED');
+    const version=generation,requestedPc=scope;
+    if(!message.request_id) message.request_id = root.crypto.randomUUID();
+    try {
+      const result=await call('nodo_beta_chat_enviar_v1', {
+        p_chat_id:String(chatId),p_mensaje:String(message.mensaje||''),p_imagen_url:message.imagen_url||null,
+        p_emisor:String(message.operador||'panel'),p_request_id:message.request_id
+      });
+      if(!current(version,requestedPc))throw new Error('BETA_CONTEXT_CHANGED');
+      if(!result.message || !validId(result.message.id)) throw new Error('BETA_SEND_UNCONFIRMED');
+      root.NodoSalud?.record('CHAT','EFFECT','OK');
+      publish('READY','','SEND'); return result.message;
+    } catch(e){if(current(version,requestedPc))publish('ERROR',e.message,'SEND');throw e;}
+  }
+  root.document?.addEventListener?.('visibilitychange',scheduleVisible);
+  root.addEventListener?.('focus',scheduleVisible);
+  return Object.freeze({ready,active:()=>{checkScope();return negotiated;},lista,mensajes,enviar,observeRendered,flushVisible,status,
+    count: chatId=>counters.get(String(chatId)), total:()=>scope===pc()?overview?.unread_total:undefined,
+    legacyDiagnostic:chatId=>{checkScope();const value=legacyCoverage.get(String(chatId));return value?{...value}:null;},
+    retry:()=>{retries.clear();lastTry=0;void flushVisible();}, identity});
 });

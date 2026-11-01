@@ -91,12 +91,12 @@ async function verificarSaldoRetiroOcioso(){
     { const _p = window._retiroSaldoDone[sid] || {intentos:0}; window._retiroSaldoDone[sid] = {confiable:false, intentos:_p.intentos+1, ts:Date.now()}; }
     _wdLock();
     try{
-      const b = await callDrex('buscarUsuario', usuario, { skipBalance:false });
-      if(b && b.exists && typeof b.balance?.value === 'number'){
-        const saldo = b.balance.value;
-        const saldoConfiable = /\d/.test(String(b.balance.raw||'')) && Number.isFinite(saldo); // se leyó DE VERDAD (no un 0 por lectura fallida/lenta)
+      const lectura = await leerFichasJugador(usuario);
+      if(typeof lectura.saldo === 'number'){
+        const saldo = lectura.saldo;
+        const saldoConfiable = lectura.confiable === true; // se leyó DE VERDAD (no un 0 por lectura fallida/lenta)
         const suficiente = saldo + 0.5 >= monto;
-        window._retiroSaldoCheck[usuario.toLowerCase()] = { saldo:saldo, monto:monto, suficiente:suficiente, confiable:saldoConfiable, ts:Date.now(), raw:(b.balance.raw||'').trim() };
+        window._retiroSaldoCheck[usuario.toLowerCase()] = { saldo:saldo, monto:monto, suficiente:suficiente, confiable:saldoConfiable, ts:Date.now(), raw:lectura.raw };
         try{ if(window._retiroSaldoDone && window._retiroSaldoDone[sid]) window._retiroSaldoDone[sid].confiable = saldoConfiable; }catch(_e){} // lectura confiable → no re-escanear este retiro
         try{ if(typeof window.v154pRenderSolicitudesPortalEnInicio==='function') window.v154pRenderSolicitudesPortalEnInicio(); }catch(_e){}
         // Auto-rechazo ANTI-FRAUDE — SOLO el caso INEQUÍVOCO: el usuario NO tiene fichas (saldo ~0).
@@ -109,14 +109,12 @@ async function verificarSaldoRetiroOcioso(){
         if(saldoConfiable && saldo < _PISO_SIN_FICHAS && saldo < monto){
           // 2ª lectura de confirmación: re-entra a Agentes y vuelve a leer. Solo rechazamos si TAMBIÉN
           // la ve casi vacía. Si la 2ª no confirma (o no se pudo leer), NO se rechaza.
-          let confirmado = false, saldo2 = saldo, raw2 = (b.balance.raw||'').trim();
-          try{
-            const b2 = await callDrex('buscarUsuario', usuario, { skipBalance:false });
-            if(b2 && b2.exists && typeof b2.balance?.value === 'number' && /\d/.test(String(b2.balance.raw||''))){
-              saldo2 = b2.balance.value; raw2 = (b2.balance.raw||'').trim();
-              confirmado = Number.isFinite(saldo2) && saldo2 < _PISO_SIN_FICHAS;
-            }
-          }catch(_e){ confirmado = false; }
+          let confirmado = false, saldo2 = saldo, raw2 = lectura.raw;
+          const lectura2 = await leerFichasJugador(usuario);
+          if(lectura2.confiable === true){
+            saldo2 = lectura2.saldo; raw2 = lectura2.raw;
+            confirmado = saldo2 < _PISO_SIN_FICHAS;
+          }
           if(confirmado){
             const sid = objetivo.ID || objetivo.SOLICITUD_ID || objetivo.ID_SOLICITUD;
             const _saldoTxt = (raw2||money(saldo2)).trim();
@@ -135,7 +133,7 @@ async function verificarSaldoRetiroOcioso(){
                 // reclama tres días después.
                 notas:'AUTO-RECHAZO · SIN FICHAS'
                   + ' · pidió '+money(Number(objetivo.MONTO_REAL||objetivo.MONTO_DECLARADO||0))
-                  + ' · saldo leído '+_saldoTxt+' (2 lecturas: "'+((b.balance&&b.balance.raw)||'').trim()+'" y "'+raw2+'")'
+                  + ' · saldo leído '+_saldoTxt+' (2 lecturas: "'+lectura.raw+'" y "'+raw2+'")'
                   + ' · piso '+money(_PISO_SIN_FICHAS)
                   + (objetivo.TITULAR?(' · titular declarado: '+objetivo.TITULAR):'')
                   + ' · se le avisó por el chat'
@@ -144,12 +142,12 @@ async function verificarSaldoRetiroOcioso(){
               toast('❌ Retiro de '+usuario+' rechazado · SIN fichas (saldo '+_saldoTxt+', confirmado x2)', 'red');
             }catch(_e){}
           } else {
-            toast('⚠ '+usuario+': 1ª lectura casi vacía ('+ (b.balance.raw||'').trim() +') NO confirmada en 2ª ('+raw2+') · NO auto-rechazo', 'yellow');
+            toast('⚠ '+usuario+': 1ª lectura casi vacía ('+ lectura.raw +') NO confirmada en 2ª ('+raw2+') · NO auto-rechazo', 'yellow');
           }
         } else if(!saldoConfiable){
           toast('⚠ No pude leer bien el saldo de '+usuario+' — NO auto-rechazo. Revisalo a mano.', 'yellow');
         } else {
-          toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(b.balance.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · tiene fichas pero menos que lo pedido → retiro PARCIAL'), suficiente?'blue':'red');
+          toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(lectura.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · tiene fichas pero menos que lo pedido → retiro PARCIAL'), suficiente?'blue':'red');
         }
       }
     }catch(_e){}
@@ -157,6 +155,121 @@ async function verificarSaldoRetiroOcioso(){
   }catch(_e){}
 }
 window.verificarSaldoRetiroOcioso = verificarSaldoRetiroOcioso;
+
+// ── Fichas de UN jugador, a pedido ──────────────────────────────────────────────────────────
+// El "Ver" de un retiro lee las fichas que tiene el jugador AHORA (Juan, 25/10): es lo que decide si
+// se paga entero, por partes o no se paga. El escaneo de arriba hace lo mismo solo, pero espera a que
+// el agente esté ocioso, sólo mira retiros de las últimas 2 h y lee una vez cada 4 minutos. Esto lo
+// pidió una persona mirando la pantalla: lee ya (esperando unos segundos si el agente está en otra
+// cosa) y deja el resultado donde lo lee el resto del panel (_retiroSaldoCheck), así la tarjeta
+// también muestra "saldo … ✓/⚠".
+//
+// Sólo LEE. No rechaza nada: el auto-rechazo del escaneo sigue siendo cosa del escaneo.
+//
+// La lista de cargas para reintentar no cuenta como "ocupado": es trabajo guardado, no algo que esté
+// usando el agente ahora. Contándola, una carga vieja sin resolver dejaba todas las lecturas en
+// "agente ocupado" para siempre.
+function _fichasAgenteOcupado(){
+  try{
+    if(window._drexGlobalBusy) return true;
+    if(typeof _loteEnCurso!=='undefined' && _loteEnCurso) return true;
+    if(typeof _operacionManualEnCurso!=='undefined' && _operacionManualEnCurso) return true;
+    if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0) return true;
+    if(window._v154pParcialBusy) return true;
+  }catch(_e){}
+  return false;
+}
+window._fichasLeyendo = window._fichasLeyendo || {};
+window.revisarFichasRetiro = function(opciones){
+  const o = opciones || {};
+  const usuario = String(o.usuario || '').trim();
+  if(!usuario) return Promise.resolve({ error: 'Falta el usuario' });
+  if(!window.ctrlElectron) return Promise.resolve({ error: 'Las fichas sólo se pueden leer desde la app de escritorio' });
+  const clave = usuario.toLowerCase();
+  window._retiroSaldoCheck = window._retiroSaldoCheck || {};
+  const previo = window._retiroSaldoCheck[clave];
+  if(!o.forzar && previo && previo.confiable && (Date.now() - previo.ts) < 3*60*1000) return Promise.resolve(previo);
+  // Dos "Ver" seguidos sobre el mismo jugador comparten UNA lectura: el agente es uno solo.
+  if(window._fichasLeyendo[clave]) return window._fichasLeyendo[clave];
+
+  const lectura = (async function(){
+    // El agente puede estar cargando otra cosa: se espera hasta ~20 s a que se libere en vez de
+    // fallar de entrada. Pasado ese tiempo se dice la verdad y queda el botón para reintentar.
+    const limite = Date.now() + 20000;
+    while(_fichasAgenteOcupado() || !_drexGlobalLock('revisar-fichas')){
+      if(Date.now() > limite){
+        window.NodoSalud?.record('RETIROS', 'CONNECTED', 'DEGRADED', { code:'AGENTE_OCUPADO' });
+        return { error: 'El agente está ocupado con otra operación. Probá de nuevo en un momento.', ocupado: true, motivo: 'ocupado' };
+      }
+      await new Promise(function(r){ setTimeout(r, 1500); });
+    }
+    _wdLock();
+    try{
+      const l = await leerFichasJugador(usuario);
+      if(typeof l.saldo !== 'number') return { error: l.error, motivo: l.motivo };
+      const monto = Math.abs(Number(o.monto || 0));
+      const confiable = l.confiable === true;
+      const reg = { saldo:l.saldo, monto:monto, suficiente: l.saldo + 0.5 >= monto, confiable:confiable, ts:Date.now(), raw:l.raw };
+      // Una lectura dudosa se le dice al que mira, pero NO se guarda: la tarjeta de la lista mostraría
+      // "saldo ⚠ no alcanza" con un 0 que en realidad es una lectura fallida.
+      if(confiable){
+        window._retiroSaldoCheck[clave] = reg;
+        // La tarjeta de la lista muestra "saldo … ✓/⚠" con este mismo dato.
+        try{ if(typeof window.v154pRenderSolicitudesPortalEnInicio==='function') window.v154pRenderSolicitudesPortalEnInicio(); }catch(_e){}
+      } else reg.motivo = l.motivo;
+      return reg;
+    }finally{ _wdUnlock(); _drexGlobalUnlock(); }
+  })();
+  window._fichasLeyendo[clave] = lectura;
+  lectura.then(function(){ delete window._fichasLeyendo[clave]; }, function(){ delete window._fichasLeyendo[clave]; });
+  return lectura;
+};
+
+// ── LA lectura de fichas ────────────────────────────────────────────────────────────────────
+// Todo lo que pregunta "cuántas fichas tiene este jugador" sin mover plata pasa por acá: el modal de
+// retiro, el cartel de aprobar, "Ver", el escaneo de fondo, el relevo del watchdog y las cargas para
+// reintentar. Eran cinco copias con cinco criterios: el escaneo podía creerle a una lectura con la
+// sesión caída y el modal decía "no pudimos leer" cuando el jugador no existe en Agentes (Juan, 1/11:
+// "claramente esto esta utilizando otra cosa"). Si el motor se para, se para acá y queda en NodoSalud.
+//
+// Devuelve { saldo, raw, confiable } o { motivo, error }; una lectura dudosa trae las dos cosas.
+// No toma candados: de eso se encarga quien la llama.
+async function leerFichasJugador(usuario){
+  const salud = window.NodoSalud?.begin('RETIROS');
+  let b;
+  try{ b = await callDrex('buscarUsuario', usuario, { skipBalance:false }); }
+  catch(e){
+    salud?.reply(e);
+    return { motivo:'sin_respuesta', error:'El casino no contestó. Probá de nuevo.' };
+  }
+  salud?.reply(null);
+  if(!b){
+    salud?.record('DATA', 'ERROR', 'FICHAS_SIN_RESPUESTA');
+    return { motivo:'sin_respuesta', error:'El casino no contestó. Probá de nuevo.' };
+  }
+  // Sesión caída o página de error NO es "el usuario no existe".
+  if(b.needsLogin || b.pageError){
+    salud?.record('DATA', 'ERROR', 'FICHAS_SIN_SESION');
+    return { motivo:'sesion', error:'Se cayó la sesión de Agentes: entrá de nuevo y volvé a leer' };
+  }
+  if(!b.exists){
+    salud?.record('DATA', 'OK', 'USUARIO_INEXISTENTE');
+    return { motivo:'no_existe', error:'El casino no encuentra al usuario ' + usuario };
+  }
+  if(typeof b.balance?.value !== 'number'){
+    salud?.record('DATA', 'DEGRADED', 'FICHAS_ILEGIBLES');
+    return { motivo:'ilegible', error:'No pude leer el saldo del jugador' };
+  }
+  const saldo = b.balance.value, raw = String(b.balance.raw || '').trim();
+  // Se leyó DE VERDAD (no un 0 por lectura fallida o lenta).
+  if(!/\d/.test(raw) || !Number.isFinite(saldo)){
+    salud?.record('DATA', 'DEGRADED', 'FICHAS_ILEGIBLES');
+    return { saldo:saldo, raw:raw, confiable:false, motivo:'ilegible', error:'No pude leer bien el saldo del jugador' };
+  }
+  salud?.record('DATA', 'OK');
+  return { saldo:saldo, raw:raw, confiable:true };
+}
+window.leerFichasJugador = leerFichasJugador;
 // Trigger conservador cada 90s (gated por TODOS los guards + 5 min por usuario).
 try{ setInterval(function(){ try{ verificarSaldoRetiroOcioso(); }catch(_e){} }, 90000); }catch(_e){}
 

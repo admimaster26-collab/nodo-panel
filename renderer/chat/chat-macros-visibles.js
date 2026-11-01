@@ -66,6 +66,7 @@
   }
   window._chatCargasCache = window._chatCargasCache || {};
   async function _prefetchCargas(u){
+    window.NodoSalud?.begin('CHAT')?.record('DATA','OK','CHAT_MACROS_PREFETCH');
     try{
       if(typeof supabaseClient === 'undefined' || !supabaseClient || typeof pcAliasesHist !== 'function') return;
       const { data, error } = await supabaseClient.from('historial_ops').select('*')

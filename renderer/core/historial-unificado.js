@@ -652,7 +652,9 @@ window.buscarHistorialServidor = async function(){
     }else{
       q = q.ilike("usuario", "%" + texto + "%");
     }
+    const _huHealth = window.NodoSalud?.begin('HISTORIAL');
     const { data, error } = await q;
+    _huHealth?.reply(error);
     if(error) throw error;
     window._histBusquedaServidor = data || [];
     const n = window._histBusquedaServidor.length;

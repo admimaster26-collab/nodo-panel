@@ -186,7 +186,103 @@ window.solOpsHoyRefrescar = async function(){
 };
 try{ setInterval(function(){ try{ window.solOpsHoyRefrescar(); }catch(_e){} }, 60000); }catch(_e){}
 
+function _histFiltrosActivos(){
+  const _w = _histVentana();
+  const out = { periodo: String(window._HIST_PERIODO || 'TURNO').toUpperCase(), desde: _w.desde };
+  const g = function(id){ const el = document.getElementById(id); return el && el.value ? String(el.value).trim() : ''; };
+  if(g('filtHistTipo')) out.tipo = g('filtHistTipo');
+  if(g('filtHistEstado')) out.estado = g('filtHistEstado');
+  if(g('filtHistOrigen')) out.origen = g('filtHistOrigen');
+  if(g('filtHistBilletera')) out.billetera = g('filtHistBilletera');
+  if(g('filtHistUsuario')) out.usuario = g('filtHistUsuario');
+  if(g('filtHistTurno')) out.turno = g('filtHistTurno');
+  if(g('filtHistVista')) out.vista = g('filtHistVista');
+  if(g('filtHistSaldo')) out.saldo = g('filtHistSaldo');
+  if(g('filtHistDesde')) out.desde = g('filtHistDesde');
+  if(g('filtHistHasta')) out.hasta = g('filtHistHasta');
+  if(g('filtHistMontoMin')) out.min = g('filtHistMontoMin');
+  if(g('filtHistMontoMax')) out.max = g('filtHistMontoMax');
+  return out;
+}
+window._histBetaCapCache = window._histBetaCapCache || {};
+async function _histBetaConsultar(cursor){
+  const pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase();
+  if(!pc || !window.panelAPI || typeof window.panelAPI.rpc !== 'function') return { mode: 'legacy' };
+  try{
+    if(typeof window.panelAPI.getContext === 'function'){
+      const rawCtx = await window.panelAPI.getContext();
+      const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
+      if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(pc))) return { mode: 'legacy' };
+    }
+    if(window._histBetaCapCache[pc] !== true){
+      const capRes = await window.panelAPI.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: pc, p_activate: false });
+      const capData = capRes && capRes.data;
+      const caps = (capData && Array.isArray(capData.capabilities)) ? capData.capabilities : [];
+      if(!capData || capData.ok !== true || capData.enabled !== true || !caps.includes('historial.filters.v1')){
+        return { mode: 'legacy' };
+      }
+      window._histBetaCapCache[pc] = true;
+    }
+    const r = await window.panelAPI.rpc('nodo_beta_historial_v1', {
+      p_pc_codigo: pc,
+      p_filtros: _histFiltrosActivos(),
+      p_limit: 200,
+      p_cursor: cursor || null
+    });
+    if(r && r.error){
+      if(r.error.code === 'PGRST202' || r.error.code === '42883') return { mode: 'legacy' };
+      return { mode: 'beta', data: null, error: r.error };
+    }
+    const d = r && r.data;
+    if(!d || d.ok !== true || !Array.isArray(d.rows)){
+      return { mode: 'beta', data: null, error: { code: 'HISTORIAL_INVALID_DATA', message: 'Respuesta beta inválida' } };
+    }
+    return {
+      mode: 'beta',
+      data: d.rows,
+      error: null,
+      totals: d.totals || null,
+      billeteras: Array.isArray(d.billeteras) ? d.billeteras : [],
+      hasMore: d.has_more === true,
+      nextCursor: d.next_cursor || null
+    };
+  }catch(_e){
+    return { mode: 'legacy' };
+  }
+}
+window.cargarMasHistorialBeta = async function(){
+  if(!window._histBetaHasMore || !window._histBetaNextCursor) return;
+  const health = window.NodoSalud?.begin('HISTORIAL');
+  try{
+    const res = await _histBetaConsultar(window._histBetaNextCursor);
+    if(res.mode !== 'beta' || res.error || !Array.isArray(res.data)){
+      health?.reply(res.error);
+      if(res.error) health?.record('DATA', 'ERROR', health.errorCode(res.error));
+      return;
+    }
+    health?.reply(null);
+    health?.record('DATA', 'OK', 'HISTORIAL_PAGE_VALID');
+    const seen = new Set((_historialData || []).map(function(x){ return String(x.id); }));
+    res.data.forEach(function(row){
+      if(row && row.id != null && !seen.has(String(row.id))){
+        seen.add(String(row.id));
+        _historialData.push(row);
+      }
+    });
+    window._historialData = _historialData;
+    window._histBetaTotals = res.totals || window._histBetaTotals;
+    window._histBetaHasMore = res.hasMore;
+    window._histBetaNextCursor = res.nextCursor;
+    filtrarHistorial();
+    health?.record('RENDER', 'OK', 'HISTORIAL_DOM_UPDATED');
+  }catch(e){
+    health?.record('DATA', 'ERROR', health.errorCode(e));
+  }
+};
 async function cargarHistorial(){
+  const health=window.NodoSalud?.begin('HISTORIAL');
+  let healthStage='DATA';
+  try{
   _historialCargado = true;
   const el = document.getElementById("historialTable");
   if(el) el.innerHTML = '<div class="small" style="text-align:center;padding:20px;color:var(--muted)">Cargando...</div>';
@@ -196,6 +292,31 @@ async function cargarHistorial(){
   // Incluimos LANDING/PORTAL para diferenciar claramente operaciones manuales
   // de operaciones que nacen desde solicitudes del portal.
   const _v = _histVentana();
+  const _betaRes = await _histBetaConsultar(null);
+  let data, error;
+  if(_betaRes.mode === 'beta'){
+    data = _betaRes.data;
+    error = _betaRes.error;
+    window._histBetaTotals = _betaRes.totals || null;
+    window._histBetaBilleteras = _betaRes.billeteras || [];
+    window._histBetaHasMore = !!_betaRes.hasMore;
+    window._histBetaNextCursor = _betaRes.nextCursor || null;
+  } else {
+    window._histBetaTotals = null;
+    window._histBetaBilleteras = null;
+    window._histBetaHasMore = false;
+    window._histBetaNextCursor = null;
+    const _legRes = await supabaseClient
+      .from("historial_ops")
+      .select("*")
+      .in("pc_codigo", pcAliasesHist())
+      .gte("created_at", _v.desde)
+      .order("created_at", { ascending: false })
+      .limit(_v.limite);
+    data = _legRes.data;
+    error = _legRes.error;
+  }
+  if(false){
   const { data, error } = await supabaseClient
     .from("historial_ops")
     .select("*")
@@ -203,12 +324,22 @@ async function cargarHistorial(){
     .gte("created_at", _v.desde)
     .order("created_at", { ascending: false })
     .limit(_v.limite);
+  }
 
+  health?.reply(error);
+  if(health && !health.current())return;
   if(error){
+    health?.record('DATA','ERROR',health.errorCode(error));
     if(el) el.innerHTML = '<div class="err-box">Error: '+escapeHtml(error.message||'')+'</div>';
     return;
   }
-  _historialData = data || [];
+  if(!Array.isArray(data) || data.some(row=>!row || typeof row!=='object' || Array.isArray(row) || row.id==null)){
+    health?.record('DATA','ERROR','HISTORIAL_INVALID_DATA');
+    if(el)el.innerHTML='<div class="err-box">El servidor no devolvió un historial válido. Se conserva la copia anterior.</div>';
+    return;
+  }
+  health?.record('DATA','OK','HISTORIAL_LIST_VALID');
+  _historialData = data;
   // Mismo caso: el CRM y el expediente leen window._historialData y siempre les daba undefined.
   try{ window._historialData = _historialData; }catch(_e){}
   try{ window.solOpsHoyRefrescar(); }catch(_e){}
@@ -242,17 +373,25 @@ async function cargarHistorial(){
     }
   }catch(_e){}
 
+  healthStage='RENDER';
   const bilSel = document.getElementById("filtHistBilletera");
   if(bilSel){
-    const bils = [...new Set(_historialData.map(function(h){return h.billetera_nombre;}).filter(Boolean))];
+    const bils = (Array.isArray(window._histBetaBilleteras) && window._histBetaBilleteras.length)
+      ? window._histBetaBilleteras
+      : [...new Set(_historialData.map(function(h){return h.billetera_nombre;}).filter(Boolean))];
     bilSel.innerHTML = '<option value="">Todas las billeteras</option>' +
       bils.map(function(b){ return '<option value="'+escapeHtml(b)+'">'+escapeHtml(b)+'</option>'; }).join('');
   }
   filtrarHistorial();
+  health?.record('RENDER',el && el.innerHTML?'OK':'UNKNOWN',el && el.innerHTML?'HISTORIAL_DOM_UPDATED':'HISTORIAL_DOM_UNAVAILABLE');
   // Refrescar la vista unificada de solicitudes si ya tiene datos cargados
   try{ if(solicitudes.length || _historialData.length) renderHistorialUnificado(); }catch(_e){}
   // Cargar operaciones de agente (CSV) en paralelo → alimentan el CRM/segmentación
   try{ cargarOperacionesAgente(); }catch(_e){}
+  }catch(error){
+    health?.record(healthStage,'ERROR',healthStage==='RENDER'?'HISTORIAL_RENDER_FAILED':health.errorCode(error));
+    throw error;
+  }
 }
 
 // Operaciones de agentes importadas por CSV (admi) → solo alimentan el CRM, no el historial operativo.
@@ -533,6 +672,13 @@ function renderHistorial(lista){
       '</tr>';
   });
   html += '</tbody></table></div>';
+  if(window._histBetaTotals){
+    const _bt = window._histBetaTotals;
+    html = '<div class="small" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;margin-bottom:8px;background:#161b22;border:1px solid #262d3a;border-radius:8px;color:#c9d1d9">'
+      + '<span>📊 <b>Totales en servidor:</b> ' + Number(_bt.total_rows||0) + ' filas · <span style="color:#22c55e">⬆ ' + Number(_bt.cargas||0) + ' (' + money(Number(_bt.monto_cargas||0)) + ')</span> · <span style="color:#fb923c">⬇ ' + Number(_bt.retiros||0) + ' (' + money(Number(_bt.monto_retiros||0)) + ')</span> · Neto <b>' + money(Number(_bt.neto||0)) + '</b></span>'
+      + (window._histBetaHasMore ? '<button class="mini-btn blue" onclick="cargarMasHistorialBeta()">Ver más del servidor</button>' : '<span style="color:#8b949e">Página completa</span>')
+      + '</div>' + html;
+  }
   el.innerHTML = html;
 }
 

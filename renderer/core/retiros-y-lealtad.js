@@ -7,6 +7,7 @@ function _blIsoDay(offset){ const d=new Date(); d.setDate(d.getDate()-(offset||0
 var _BL_H24 = 24*60*60*1000;
 
 async function verificarRetiro24h(usuario) {
+  const health = window.NodoSalud?.begin('RETIROS');
   const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).getTime();
   const ahora   = Date.now();
   const usuarioNorm = normalizar(usuario);
@@ -61,6 +62,7 @@ async function verificarRetiro24h(usuario) {
     }
   }
 
+  health?.record('DATA', 'OK', candidatos.length ? 'RETIRO_24H_MATCH' : 'RETIRO_24H_CLEAR');
   if(!candidatos.length) return { bloqueado: false };
 
   // Tomar el retiro más reciente de cualquier fuente

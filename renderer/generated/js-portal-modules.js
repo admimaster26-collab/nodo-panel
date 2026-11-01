@@ -61,13 +61,19 @@ const api = {};
   }
 
   async function rpc(fn, params){
+    const health = deps.window.NodoSalud?.begin('PORTAL');
     try{
       if(deps.window.panelAPI?.rpc){
-        return await deps.window.panelAPI.rpc(fn, params || {});
+        const res = await deps.window.panelAPI.rpc(fn, params || {});
+        health?.reply(res?.error);
+        if(!res?.error) health?.record('DATA', 'OK', 'PORTAL_RPC_OK');
+        return res;
       }
     }catch(e){
-      return {data:null,error:{message:e.message || String(e)}};
+      health?.reply(e);
+      return {data:null,error:{message:e.message || String(e),code:e.code}};
     }
+    health?.reply({message:"panelAPI.rpc no disponible"});
     return {data:null,error:{message:"panelAPI.rpc no disponible"}};
   }
 
@@ -79,9 +85,12 @@ const api = {};
   function mapSolicitudPortal(s){
     const meta = s.metadata || {};
     const id = s.id || s.ID || s.solicitud_id || "";
+    const compUrl = meta.comprobante_url || meta.imagen_url || s.comprobante_url || s.imagen_url || s.COMPROBANTE_URL || s.IMAGEN_URL || "";
     return {
       ID: id,
       SOLICITUD_ID: id,
+      COMPROBANTE_URL: compUrl,
+      IMAGEN_URL: compUrl,
       FECHA_CREACION: s.created_at || s.FECHA_CREACION || s.fecha,
       FECHA: s.created_at || s.FECHA || s.fecha,
       TIPO_SOLICITUD: String(s.tipo || s.TIPO || "").toUpperCase(),
@@ -269,6 +278,42 @@ const api = {};
   const dependencies = Object.freeze(["V154P","document","esc","estadoCerrado","fecha","money","renderHistorialUnificado","window"]);
   function create(deps){
 const api = {};
+  // Los retiros que se están pagando POR PARTES salen de la lista principal y se agrupan en su
+  // propio botón: son trabajo en curso (a veces por días) y tapaban las solicitudes nuevas.
+  // Al botón 💸 van los retiros CON PROGRESO parcial, estén a medio pagar o ya saldados pero sin
+  // cerrar (esos últimos quedaban tapando la lista principal sin forma de sacarlos).
+  // UN solo criterio, el mismo que usa el modal al abrirse (NodoDomain.parciales.enProceso).
+  // Estaban escritos aparte: el modal decía «saldado» y este filtro lo devolvía a la caja, y al
+  // revés — un retiro ya cobrado entero seguía figurando con «falta $38.907» (D-108).
+  function esParcial(s){
+    try{
+      const dom = deps.window.NodoDomain && deps.window.NodoDomain.parciales;
+      if(!dom) return false;
+      return dom.enProceso(s, {
+        info: deps.window._retiroParcialInfo,
+        cerrado: deps.window._retiroCerradoAMano,
+        estadoCerrado: deps.estadoCerrado,
+        sigueAbierto: deps.window._retiroParcialSigueAbierto
+      });
+    }catch(_e){ return false; }
+  }
+  // Tres lugares: pagándose por partes, TOMADAS (alguien ya las agarró) y sin tocar. Las dos
+  // primeras van al botón 💸 En proceso; la lista principal queda sólo con lo que nadie tocó.
+  // La que está en la cola de carga se queda acá: es donde se ve "2º en la cola" / "Cargando…".
+  function repartir(abiertas){
+    const dom = deps.window.NodoDomain && deps.window.NodoDomain.parciales;
+    if(!dom || !dom.repartirAbiertas) return { parciales: [], tomadas: [], pendientes: (abiertas || []).slice() };
+    return dom.repartirAbiertas(abiertas, {
+      esParcial: esParcial,
+      enCola: function(s){ return !!(deps.window._colaCargaEstado || {})[String(s.ID || s.SOLICITUD_ID || '')]; }
+    });
+  }
+  // Lo que nadie tocó, de cualquier lista de solicitudes abiertas. Es la misma cuenta de la lista
+  // de Inicio, y la usan el cartel amarillo y el número del menú: si cada uno contaba a su manera,
+  // el menú decía 5 y la lista mostraba 2.
+  api.nodoSolicitudesSinTocar = function(abiertas){
+    try{ return repartir(abiertas).pendientes; }catch(_e){ return (abiertas || []).slice(); }
+  };
   function renderSolicitudesPortalEnInicio(){
     const box = deps.document.getElementById("tablaSolicitudesInicio");
     if(!box) return;
@@ -276,41 +321,22 @@ const api = {};
     const all = (deps.V154P.solicitudes || []).slice();
     // INICIO: solo muestra CARGA y RETIRO pendientes. SOPORTE va al chat inbox, no acá.
     const abiertas = all.filter(s => (!deps.estadoCerrado(s.ESTADO) || (deps.window._retiroParcialSigueAbierto && deps.window._retiroParcialSigueAbierto(s))) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
-    // Los retiros que se están pagando POR PARTES salen de la lista principal y se agrupan en su
-    // propio botón: son trabajo en curso (a veces por días) y tapaban las solicitudes nuevas.
-    // Al botón 💸 van los retiros CON PROGRESO parcial, estén a medio pagar o ya saldados pero sin
-    // cerrar (esos últimos quedaban tapando la lista principal sin forma de sacarlos).
-    // UN solo criterio, el mismo que usa el modal al abrirse (NodoDomain.parciales.enProceso).
-    // Estaban escritos aparte: el modal decía «saldado» y este filtro lo devolvía a la caja, y al
-    // revés — un retiro ya cobrado entero seguía figurando con «falta $38.907» (D-108).
-    const _esParc = function(s){
-      try{
-        const dom = deps.window.NodoDomain && deps.window.NodoDomain.parciales;
-        if(!dom) return false;
-        return dom.enProceso(s, {
-          info: deps.window._retiroParcialInfo,
-          cerrado: deps.window._retiroCerradoAMano,
-          estadoCerrado: deps.estadoCerrado,
-          sigueAbierto: deps.window._retiroParcialSigueAbierto
-        });
-      }catch(_e){ return false; }
-    };
-    const parciales = [], pendientes = [];
-    for(const solicitud of abiertas){
-      (_esParc(solicitud) ? parciales : pendientes).push(solicitud);
-    }
+    const _rep = repartir(abiertas);
+    const parciales = _rep.parciales, tomadas = _rep.tomadas, pendientes = _rep.pendientes;
     deps.window._parcialesEnProceso = parciales;
+    deps.window._tomadasEnProceso = tomadas;
+    const _enProceso = parciales.length + tomadas.length;
     try{
       const bp = deps.document.getElementById("btnParcialesEnProceso");
       const bc = deps.document.getElementById("btnParcialesCount");
-      if(bc) bc.textContent = String(parciales.length);
-      if(bp) bp.style.display = parciales.length ? "" : "none";
+      if(bc) bc.textContent = String(_enProceso);
+      if(bp) bp.style.display = _enProceso ? "" : "none";
       // El mismo botón en el centro de control, que trae sólo el turno actual: un parcial de ayer no
       // aparecía en ningún lado ("tenía una parte para el retiro parcial, no sé por qué no aparece más").
       const bcc = deps.document.getElementById("btnParcialesCC");
       const bccN = deps.document.getElementById("btnParcialesCCCount");
-      if(bccN) bccN.textContent = String(parciales.length);
-      if(bcc) bcc.style.display = parciales.length ? "" : "none";
+      if(bccN) bccN.textContent = String(_enProceso);
+      if(bcc) bcc.style.display = _enProceso ? "" : "none";
     }catch(_e){}
     const visibles = pendientes.slice(0,8);
     // Un mismo jugador con DOS solicitudes abiertas del mismo tipo. El portal lo permitía (se está
@@ -439,6 +465,8 @@ const api = {};
              + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id},true)">Ver</button>`)
           : ((tomada ? `<button class="v154p-btn yellow" disabled>Tomada</button>`
                      : `<button class="v154p-btn yellow" onclick="v154pTomarSolicitud(${id})">Tomar</button>`)
+             // Desde la lista, Aprobar abre el cartel con el monto ya seleccionado para cotejar antes
+             // de aprobar. Aprobar de una es sólo adentro de "Ver", donde ya se revisó todo (Juan, 1/11).
              + `<button class="v154p-btn green" onclick="v154pCrearJobSolicitud(${id})">Aprobar</button>`
              + (_esRet ? `<button class="v154p-btn blue" onclick="v154pRegistrarParcial(${id})">💸 Parcial</button>` : "")
              + `<button class="v154p-btn" onclick="v154pDetalleSolicitud(${id},true)">Ver</button>`
@@ -546,6 +574,16 @@ api.verDesfasaje = function(){
   const dependencies = Object.freeze(["V154P","_portalAutoRechazar","_v154pAvisoDesfasaje","alert","cargarAlertasRetiro","document","esc","getCanal","mapSolicitudPortal","money","normArr","operador","renderInicio","renderSolicitudesPortalCompleto","renderSolicitudesPortalEnInicio","rpc","setTimeout","solicitudes","toast","verificarSolicitudes","window"]);
   function create(deps){
 const api = {};
+// A successful transport is not evidence that the server supplied a usable list.
+// Match the legacy envelopes accepted by data.normArr, without turning null/errors into [].
+function _listaSolicitudesValida(data){
+  const options=[data,data?.data,data?.data?.data,data?.mensaje,data?.mensajes,data?.chats,
+    data?.solicitudes,data?.items,data?.rows];
+  let rows=options.find(Array.isArray);
+  if(!rows && data && typeof data==='object' && Object.keys(data).length && Object.keys(data).every(k=>/^\d+$/.test(k)))rows=Object.values(data);
+  return !!rows && rows.every(row=>row && typeof row==='object' && !Array.isArray(row)
+    && (row.id!=null || row.ID!=null || row.solicitud_id!=null));
+}
 // Leer la bandeja no reintentaba NADA, mientras que escribir (actualizarSolicitudPortal) ya
 // reintenta 3 veces ante fallos de red, por "la mirror con proxy que pestañea". En una oficina con
 // la red inestable eso deja la bandeja congelada: el operador ve "Esta lista está desactualizada",
@@ -664,18 +702,62 @@ async function cargarSolicitudesPortal(silencioso=false){
       return {ok:true, skipped:true, reason:"solicitudes_loading"};
     }
     deps.V154P.solicitudesLoading = true;
+    const health=deps.window.NodoSalud?.begin('BANDEJA');
+    let healthStage='DATA';
     try{
       const canal = await deps.getCanal();
       // Sólo se insiste ante fallos de RED. Si el servidor contesta y rechaza, insistir no arregla
       // nada y sólo demora el aviso.
       let r = null;
-      for(let intento = 1; intento <= 3; intento++){
+      const _pApi = deps.window && deps.window.panelAPI;
+      let _useBetaBandeja = false;
+      if(_pApi && typeof _pApi.rpc === 'function' && canal){
+        try{
+          deps.V154P._bandejaCapCache = deps.V154P._bandejaCapCache || {};
+          const _pcUp = String(canal).trim().toUpperCase();
+          if(typeof _pApi.getContext === 'function'){
+            const _rawCtx = await _pApi.getContext();
+            const _ctx = (_rawCtx && _rawCtx.beta) ? _rawCtx.beta : _rawCtx;
+            if(_ctx && _ctx.enabled === true && (!Array.isArray(_ctx.offices) || _ctx.offices.includes(_pcUp))){
+              if(deps.V154P._bandejaCapCache[_pcUp] === undefined){
+                const _capRes = await _pApi.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: _pcUp, p_activate: false });
+                const _capData = _capRes && _capRes.data;
+                const _caps = (_capData && Array.isArray(_capData.capabilities)) ? _capData.capabilities : [];
+                deps.V154P._bandejaCapCache[_pcUp] = !!(_capData && _capData.ok === true && _capData.enabled === true && _caps.includes('bandeja.queue.v1'));
+              }
+              _useBetaBandeja = deps.V154P._bandejaCapCache[_pcUp] === true;
+            }
+          }
+        }catch(_e){ _useBetaBandeja = false; }
+      }
+      if(_useBetaBandeja){
+        const _br = await _pApi.rpc('nodo_beta_bandeja_v1', { p_pc_codigo: String(canal).trim().toUpperCase(), p_filtros: {}, p_limit: 100, p_cursor: null });
+        if(_br && !_br.error && _br.data && _br.data.ok === true && Array.isArray(_br.data.operativas)){
+          deps.V154P.bandejaTotales = _br.data.totales || null;
+          deps.V154P.bandejaHasMore = !!_br.data.has_more;
+          deps.V154P.bandejaNextCursor = _br.data.next_cursor || null;
+          r = { data: _br.data.operativas, error: null };
+          health?.reply(null);
+        } else if(_br && _br.error && (_br.error.code === 'PGRST202' || _br.error.code === '42883')){
+          _useBetaBandeja = false;
+        } else if(_br){
+          r = _br;
+          health?.reply(r?.error);
+        }
+      }
+      for(let intento = 1; !_useBetaBandeja && intento <= 3; intento++){
         r = await deps.rpc("panel_v15_5_listar_solicitudes_portal", {p_pc_codigo: canal});
+        health?.reply(r?.error);
         if(!r?.error || !_esErrorDeRed(r.error)) break;
         if(intento < 3) await new Promise(res => deps.setTimeout(res, 500 * intento));
       }
 
+      if(health && !health.current())return {error:{code:'STALE_OFFICE',message:'La oficina cambió durante la consulta.'}};
+      if(!r?.error && !_listaSolicitudesValida(r?.data)){
+        r={data:null,error:{code:'BANDEJA_INVALID_DATA',message:'El servidor no devolvió una lista válida de solicitudes.'}};
+      }
       if(r?.error){
+        health?.record('DATA','ERROR',r.error.code==='BANDEJA_INVALID_DATA'?'BANDEJA_INVALID_DATA':health.errorCode(r.error));
         const msg = r.error.message || JSON.stringify(r.error);
         const box = deps.document.getElementById("tablaSolicitudesInicio");
         if(box && !deps.V154P.solicitudesLastHtml){
@@ -704,6 +786,7 @@ async function cargarSolicitudesPortal(silencioso=false){
       try{ deps._v154pAvisoDesfasaje(null); }catch(_e){}
 
       const _nuevas = deps.normArr(r.data).map(deps.mapSolicitudPortal);
+      health?.record('DATA','OK','BANDEJA_LIST_VALID');
 
       // Medir ACÁ y no al dibujar: lo que se quiere saber es cuánto tardó el sistema en traer el
       // mensaje, no cuánto tardó el operador en abrir la conversación. Va a la consola de la PC,
@@ -777,8 +860,12 @@ async function cargarSolicitudesPortal(silencioso=false){
         }
       }catch(_e){}
       // Actualizamos stats generales, pero la caja de inicio queda en manos del render portal.
+      healthStage='RENDER';
       try{ if(typeof deps.renderInicio === "function") deps.renderInicio(); }catch(e){}
       deps.renderSolicitudesPortalEnInicio();
+      const healthBox=deps.document.getElementById('tablaSolicitudesInicio');
+      health?.record('RENDER',healthBox && healthBox.innerHTML && healthBox.innerHTML===deps.V154P.solicitudesLastHtml?'OK':'UNKNOWN',
+        healthBox && healthBox.innerHTML && healthBox.innerHTML===deps.V154P.solicitudesLastHtml?'BANDEJA_DOM_UPDATED':'BANDEJA_DOM_UNCONFIRMED');
       // Si entró una carga con un retiro a medio pagar, ese parcial se cierra solo (Juan, 26/9).
       // Va después del render para no demorar la pantalla, y sin await: si falla, no arrastra nada.
       try{ if(deps.window.cerrarParcialesPorCarga) deps.window.cerrarParcialesPorCarga(); }catch(_e){}
@@ -804,6 +891,9 @@ async function cargarSolicitudesPortal(silencioso=false){
         }
       }catch(_e){}
       return r;
+    }catch(error){
+      health?.record(healthStage,'ERROR',healthStage==='RENDER'?'BANDEJA_RENDER_FAILED':health.errorCode(error));
+      throw error;
     }finally{
       deps.V154P.solicitudesLoading = false;
       if(deps.V154P.solicitudesQueued){
@@ -1690,11 +1780,14 @@ function _rv2ActualizarBotonAprobar(){
 function _rv2Veredicto(){
   const st=deps.withdrawalState.current; if(!st) return null;
   const tot=_rv2TotalSel(), falta=Math.max(0, st.objetivo-tot);
+  if(st.saldoReal==null && st.saldoFallo==='no_existe')
+    return {n:'mal', c:'#f87171', ico:'🚫', tit:'ESTE USUARIO NO ESTÁ EN AGENTES', reintentar:true,
+      det:'Buscamos a '+deps.escapeHtml(st.usuario)+' y no aparece. Revisá el nombre antes de pagar.'};
   if(st.saldoReal==null && st.saldoFallo)
-    return {n:'espera', c:'#8b949e', ico:'❓', tit:'NO PUDIMOS LEER SUS FICHAS',
-      det: st.saldoFallo==='ocupado' ? 'Hay otra operación en curso. Podés pagar igual, pero a ciegas.'
-         : st.saldoFallo==='sesion'  ? 'Se cayó la sesión de Agentes. Tocá Pagar: se abre el login y sigo desde acá.'
-                                     : 'No se pudo leer el saldo en Agentes. Podés pagar igual, pero a ciegas.'};
+    return {n:'espera', c:'#f59e0b', ico:'❓', tit:'NO PUDIMOS LEER SUS FICHAS', reintentar:true,
+      det: st.saldoFallo==='ocupado' ? 'Hay otra operación en curso. Esperá un momento y reintentá.'
+         : st.saldoFallo==='sesion'  ? 'Se cayó la sesión de Agentes. Tocá Reintentar: se abre el login y sigo desde acá.'
+                                     : 'El casino no devolvió el saldo. Reintentá antes de pagar.'};
   if(st.saldoReal==null)
     return {n:'espera', c:'#8b949e', ico:'⏳', tit:'LEYENDO LAS FICHAS DEL USUARIO', det:'Un segundo…'};
   if(st.saldoReal<=0.5)
@@ -1735,8 +1828,10 @@ function _rv2VeredictoHtml(){
   const v=_rv2Veredicto(); if(!v) return '';
   const st=deps.withdrawalState.current;
   return '<div style="border-radius:12px;padding:12px 14px;border:1.5px solid '+v.c+'55;background:'+v.c+'12">'
+    + '<div style="font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#8b949e;margin-bottom:3px">Cotejo de fichas</div>'
     + '<div style="font-size:14px;font-weight:900;color:'+v.c+';letter-spacing:.02em">'+v.ico+' '+v.tit+'</div>'
     + '<div style="font-size:13px;color:#e6edf3;margin-top:3px">'+v.det+'</div>'
+    + (v.reintentar ? '<button class="mini-btn" style="margin-top:8px;background:#21262d;border:1px solid #30363d;color:#e6edf3;font-weight:800;font-size:12px" onclick="_rv2ReleerFichas()">🔄 Reintentar</button>' : '')
     + (v.sug ? '<button class="mini-btn" style="margin-top:8px;background:#ea580c;color:#fff;font-weight:800;font-size:12px" onclick="_rv2AjustarASaldo('+v.sug.monto+')">'
         + (v.sug.motivo==='ceros' ? ('✔ Le sobró un cero — pagar '+deps.money(v.sug.monto)) : ('✔ Pagarle todo lo que tiene · '+deps.money(v.sug.monto)))
         + '</button>' : '')
@@ -1872,7 +1967,6 @@ function _rv2Render(){
     +     '<div id="rv2Resumen">'+_rv2ResumenPago()+'</div>'
     +   '</div>'
     + '</div>'
-    + cbuHtml
     // En modo PARCIAL este campo es lo que FALTA pagar y va bloqueado. Editable, se prestaba a un
     // error grave: el operador ponía acá "lo que pago ahora" (ej. 25.000 de un retiro de 50.000) y
     // el cierre tomaba ese número como TOTAL del retiro → lo daba por PAGADO con la mitad. Lo que
@@ -1926,6 +2020,7 @@ function _rv2Render(){
   function create(deps){
 const api = {};
 async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, restante, montoTotal, saldoPost, desde){
+  deps.window.NodoSalud?.begin('RETIROS')?.record('EFFECT','OK','RETIRO_PARCIAL_NOTIFY');
   if(!deps.window.panelAPI || !deps.window.panelAPI.rpc || !solicitudId) return { ok:false, detail:'sin panelAPI/id' };
   const op = (deps.window.operador && (deps.window.operador.usuario||deps.window.operador.nombre)) || 'panel';
   const sid = Number(solicitudId);
@@ -1973,47 +2068,32 @@ async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, 
 }
 api.notificarRetiroParcialPortal = notificarRetiroParcialPortal;
 
-async function _rv2LeerSaldo(intento){
-  const st = deps.withdrawalState.current; if(!st || !deps.window.ctrlElectron) return;
+// Las fichas del modal salen de la misma lectura que "Ver" y la tarjeta de la lista: espera al agente
+// si está ocupado y deja el resultado donde lo lee el resto del panel. Antes este modal tenía su
+// propia copia y fallaba distinto que todo lo demás.
+async function _rv2LeerSaldo(){
+  const st = deps.withdrawalState.current; if(!st) return;
   const pintar=function(){ try{ deps._rv2PintarVeredicto(); deps._rv2ActualizarBotonAprobar(); }catch(_e){} };
-  // El agente puede estar tomado por otra operación justo cuando abrís el modal. Antes se
-  // intentaba UNA vez, quedaba en "no pudimos leer sus fichas" y ahí moría — y como _rv2Aprobar
-  // sólo valida el saldo si pudo leerlo, el retiro salía SIN chequear las fichas. Ahora reintenta.
-  intento = Number(intento||0);
-  if(!deps._drexGlobalLock('rv2-saldo')){
-    if(intento < 6 && deps.withdrawalState.current===st){
-      st.saldoFallo='ocupado'; pintar();
-      deps.setTimeout(function(){ if(deps.withdrawalState.current===st) _rv2LeerSaldo(intento+1); }, 2500);
-      return;
-    }
-    st.saldoFallo='ocupado'; pintar(); return;
-  }
-  deps._wdLock();
-  try{
-    const b = await deps.callDrex('buscarUsuario', st.usuario, { skipBalance:false });
-    // Sólo se cree un saldo LEÍDO de verdad: con dígitos en el texto y sin la sesión caída. Con la
-    // sesión inválida el casino deja la lista de fondo y el modal del saldo no abre bien: el preload
-    // devolvía 0 y el modal decía "NO TIENE FICHAS · $0" con el jugador teniendo $35.020.
-    const _raw = String((b && b.balance && b.balance.raw) || '');
-    const _confiable = !!(b && b.exists && !b.needsLogin && !b.pageError
-      && typeof b.balance?.value === 'number' && Number.isFinite(b.balance.value) && /\d/.test(_raw));
-    if(_confiable){
-      st.saldoReal = b.balance.value; st.saldoFallo = null;
-      // Y que la tarjeta de pendientes también lo sepa: de ahí sale el atajo "Retirar lo que tiene",
-      // que dependía sólo del escaneo en segundo plano y después de recargar no aparecía.
-      try{
-        deps.window._retiroSaldoCheck = deps.window._retiroSaldoCheck || {};
-        const _m = Number(st.objetivo || st.declarado || 0);
-        deps.window._retiroSaldoCheck[String(st.usuario).toLowerCase()] = {
-          saldo: b.balance.value, monto: _m, suficiente: b.balance.value + 0.5 >= _m,
-          confiable: true, ts: Date.now(), raw: _raw.trim() };
-      }catch(_e){}
-    } else {
-      st.saldoFallo = (b && (b.needsLogin || b.pageError)) ? 'sesion' : 'ilegible';
-    }
-  }catch(_e){ st.saldoFallo='ilegible'; }
-  finally{ deps._wdUnlock(); deps._drexGlobalUnlock(); pintar(); }
+  st.saldoFallo = null; pintar();
+  let r = null;
+  try{ r = await deps.window.revisarFichasRetiro({ usuario:st.usuario, monto:st.objetivo||st.declarado, forzar:true }); }
+  catch(_e){}
+  if(deps.withdrawalState.current!==st) return;
+  // Sólo se cree un saldo LEÍDO de verdad: un 0 por sesión caída decía "NO TIENE FICHAS" con el
+  // jugador teniendo $35.020.
+  if(r && r.confiable===true){ st.saldoReal = r.saldo; st.saldoFallo = null; }
+  else { st.saldoFallo = (r && r.motivo) || 'ilegible'; }
+  pintar();
 }
+// Botón "Reintentar" del cotejo de fichas. Con la sesión caída, primero se entra de nuevo.
+api._rv2ReleerFichas = async function(){
+  const st = deps.withdrawalState.current; if(!st) return;
+  if(st.saldoFallo==='sesion'){
+    let ok = false; try{ ok = await deps.ensureDrexSession(); }catch(_e){}
+    if(!ok || deps.withdrawalState.current!==st) return;
+  }
+  await _rv2LeerSaldo();
+};
 
 // APROBAR: valida, extrae las fichas UPFRONT (para que no se las jueguen) y pasa a
 // la fase de confirmar cada transferencia.
@@ -2037,14 +2117,14 @@ api._rv2Aprobar = async function(){
   // en silencio (la condición pedía saldoReal!=null) y el retiro salía sin verificar nada.
   if(st.saldoReal==null){
     deps.toast('Leyendo las fichas de '+st.usuario+' antes de pagar…','blue');
-    try{ await _rv2LeerSaldo(99); }catch(_e){}          // 99 = sin reintentos, es el último tiro
+    try{ await _rv2LeerSaldo(); }catch(_e){}
     // Se cayó la sesión (PCs con poca actividad): se abre el login y, al entrar, se vuelve a leer
     // y se sigue. Antes decía "reabrí el retiro" y había que arrancar todo de nuevo.
     if(st.saldoReal==null && st.saldoFallo==='sesion'){
       deps.toast('Se cayó la sesión de Agentes · entrá y sigo con el retiro','yellow');
       let _okSes = false; try{ _okSes = await deps.ensureDrexSession(); }catch(_e){}
       if(!_okSes || deps.withdrawalState.current!==st) return;
-      try{ await _rv2LeerSaldo(99); }catch(_e){}
+      try{ await _rv2LeerSaldo(); }catch(_e){}
     }
   }
   if(st.saldoReal==null){
@@ -2234,7 +2314,7 @@ api._rv2Aprobar = async function(){
     try{ deps.toast('⚠ Se pagó pero NO se cerró la solicitud · anotalo', 'red'); }catch(_e){}
     try{ deps.alert('⚠️ El retiro SE PAGÓ pero falló el cierre.\n\n' + _d
       + '\n\nLa plata ya salió y la solicitud quedó con el estado anterior.'
-      + '\nAnotalo y cerralo desde 💸 Parciales.'); }catch(_e){}
+      + '\nAnotalo y cerralo desde 💸 En proceso.'); }catch(_e){}
   }
 };
 
@@ -2333,7 +2413,7 @@ const _rv2FinalizarInterno = async function(stCapturado){
     try{ deps._trazaPaso('Se perdió el estado del retiro antes de cerrarlo', 'err'); }catch(_e){}
     try{ deps.alert('⚠️ Se perdió el estado del retiro justo antes de cerrarlo.\n\n'
       + 'Si ya transferiste, la plata salió y la solicitud NO se actualizó.'
-      + '\nRevisá el historial y cerrala desde 💸 Parciales.'); }catch(_e){}
+      + '\nRevisá el historial y cerrala desde 💸 En proceso.'); }catch(_e){}
     return;
   }
   try{ deps._trazaPaso('Cerrando la solicitud...'); }catch(_e){}
@@ -2474,12 +2554,12 @@ const _rv2FinalizarInterno = async function(stCapturado){
       try{ deps.toast('⚠ El retiro se pagó pero la solicitud quedó con el estado anterior','red'); }catch(_e){}
       try{ deps.alert('⚠️ Se pagó '+deps.money(total)+', pero la solicitud NO pasó a '+_estadoFinal+'.\n\n'
         + 'Va a seguir figurando con el estado viejo (por eso a veces un retiro ya saldado queda "en proceso").\n\n'
-        + 'Cerralo desde el botón 💸 Parciales cuando puedas.'); }catch(_e){}
+        + 'Cerralo desde el botón 💸 En proceso cuando puedas.'); }catch(_e){}
     }
   }catch(e){
     try{ deps.toast('⚠ El retiro se pagó pero falló actualizar la solicitud · revisalo','red'); }catch(_e){}
     try{ deps.alert('⚠️ El retiro se pagó ('+deps.money(total)+') pero falló actualizar la solicitud:\n\n'
-      + ((e&&e.message)||String(e)) + '\n\nQuedó con el estado anterior — revisalo en 💸 Parciales.'); }catch(_e){}
+      + ((e&&e.message)||String(e)) + '\n\nQuedó con el estado anterior — revisalo en 💸 En proceso.'); }catch(_e){}
   }
   try{
     const msg = completo
@@ -2627,6 +2707,7 @@ const api = {};
           <div id="portalJobVinculo" style="margin-top:8px;padding-top:8px;border-top:1px solid #243049;font-size:13px"></div>
           <div id="portalJobPromo" style="margin-top:8px"></div>
           <div id="portalJobAlertas" style="margin-top:6px"></div>
+          <div id="portalJobFichas" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #243049;font-size:13px"></div>
         </div>
 
         </div><!-- /portalJobScroll -->
@@ -2758,6 +2839,7 @@ const api = {};
     el.innerHTML = '<span style="color:#64748b">Vínculo usuario/teléfono:</span> <span style="color:#94a3b8">consultando…</span>';
     try{
       const pcs = (typeof deps.pcAliasesHist==='function') ? deps.pcAliasesHist() : [String(deps.pcOperativa||'')];
+      deps.window.NodoSalud?.begin('IDENTIDAD')?.record('DATA','OK','PORTAL_VINCULO_READ');
       const { data } = await deps.supabaseClient.from('usuarios_portal_vinculos')
         .select('id,estado_vinculo,telefono_canon,fuente')
         .in('pc_codigo', pcs).eq('usuario', u).limit(1);
@@ -2865,6 +2947,7 @@ const api = {};
     if(btn){ btn.disabled=false; btn.style.opacity=''; btn.textContent='Aprobar'; }
     // Botón "Parcial" solo en RETIROS (unifica: desde el mismo modal se puede aprobar completo o parcial).
     const _pb=deps.document.getElementById('portalJobParcialBtn'); if(_pb) _pb.style.display = _esRetiroJob ? '' : 'none';
+    try{ api.portalJobRevisarFichas(); }catch(_e){}
     el.style.display = 'block';
     deps.setTimeout(()=>{ const inp = deps.document.getElementById('portalJobMontoAprobado'); if(inp){ inp.focus(); inp.select(); } }, 80);
   };
@@ -2914,20 +2997,105 @@ const api = {};
   // La nota lleva SOLO lo que no está en las columnas de la tabla. El monto ya se ve en su columna
   // y la billetera en la suya: repetirlos hacía que la línea de detalle fuera casi toda ruido, y
   // lo único que se quería leer —el titular, el alias del cliente— quedaba enterrado al final.
-  api.v154pCrearJobSolicitud = async function(id){
-    // Si el retiro YA tiene un parcial en curso (pagado>0 y < total), "Aprobar" NO debe hacer un
-    // retiro COMPLETO: eso marcaría PAGADA ignorando lo ya pagado (y sin tocar metadata.retiro_parcial),
-    // cerrando el retiro con saldo real pendiente. En ese caso, redirigimos al flujo Parcial por lo que
-    // falta → el cierre lo decide SOLO la RPC del parcial cuando pagado>=total.
+  // Si el retiro YA tiene un parcial en curso (pagado>0 y < total), "Aprobar" NO debe hacer un
+  // retiro COMPLETO: eso marcaría PAGADA ignorando lo ya pagado (y sin tocar metadata.retiro_parcial),
+  // cerrando el retiro con saldo real pendiente. En ese caso, redirigimos al flujo Parcial por lo que
+  // falta → el cierre lo decide SOLO la RPC del parcial cuando pagado>=total.
+  // Devuelve true si redirigió (y entonces el que llama no sigue).
+  function _irAParcialSiCorresponde(id){
     try{
       const s = (deps.V154P.solicitudes||[]).find(x=>Number(x.ID||x.SOLICITUD_ID)===Number(id));
       if(s && deps.window._retiroParcialSigueAbierto && deps.window._retiroParcialSigueAbierto(s)){
         const pp = deps.window._retiroParcialInfo(s);
         try{ deps.toast('Este retiro tiene un parcial en curso · pagado '+deps.money(pp.pagado)+' de '+deps.money(pp.total)+'. Abro "Parcial" por lo que falta ('+deps.money(pp.restante)+').','yellow'); }catch(_e){}
-        if(typeof deps.window.v154pRegistrarParcial==='function'){ deps.window.v154pRegistrarParcial(id); return; }
+        if(typeof deps.window.v154pRegistrarParcial==='function'){ deps.window.v154pRegistrarParcial(id); return true; }
       }
     }catch(_e){}
+    return false;
+  }
+
+  // Abre el cartel de aprobar: para cuando hay que cambiar el monto, la billetera o dejar una
+  // observación. El botón "Aprobar" común ya no pasa por acá (ver v154pAprobarSolicitud).
+  api.v154pCrearJobSolicitud = async function(id){
+    if(_irAParcialSiCorresponde(id)) return;
     return deps.window.abrirModalPortalSolicitud(id);
+  };
+
+  // El bono de primer ingreso de este usuario, sin dibujar nada: lo mismo que lee el cartel
+  // (portalRenderPromo) pero como dato. Devuelve null si no le toca ninguno.
+  async function portalPromoDe(usuario){
+    const u = String(usuario||'').trim();
+    if(!u) return null;
+    try{
+      const r = await deps.supabaseClient.rpc('panel_promo_primer_ingreso',{p_secret:deps.window.PANEL_DATA_SECRET,p_pc_codigo:(deps.pcOperativa||deps.window.pcOperativa||''),p_usuario:u});
+      const d = (r && r.data) || {};
+      if(!d.primer_ingreso || !d.promo_activa || !(Number(d.bono_pct)>0)) return null;
+      return {
+        pct: Number(d.bono_pct)||0,
+        max: Number(d.bono_max)||0,
+        billeteraId: String(d.promo_billetera_id||''),
+        // La cuenta donde cobra ya recibió el bono con otro usuario: el cartel deja el tilde
+        // APAGADO para que sea una decisión y no el default.
+        compartida: !!d.cuenta_compartida,
+        otros: Number(d.otros_con_bono)||0
+      };
+    }catch(e){ console.warn('[promo]', e); return null; }
+  }
+
+  // APROBAR DE UNA. El operador ya miró el expediente: acá no se le pide nada más. Se usa lo que el
+  // propio cartel proponía de entrada —el monto declarado, la billetera donde entró la plata y el
+  // bono si le toca— y se encola igual que cuando se confirmaba desde el cartel (misma cola, que
+  // además no deja encolar dos veces la misma solicitud).
+  //
+  // Hay UN caso en que el cartel se abre igual: el bono con cuenta compartida. Es una decisión que
+  // el sistema dejó explícitamente en manos del operador (puede ser familia), y no se puede tomar
+  // después: el bono viaja en la misma operación que la carga.
+  const _aprobando = new Set();
+  api.v154pAprobarSolicitud = async function(id){
+    const nid = Number(id);
+    if(!nid || _aprobando.has(nid)) return;                    // doble clic: una sola vez
+    _aprobando.add(nid);
+    try{
+      if(_irAParcialSiCorresponde(nid)) return;
+      const s = portalSolicitudById(nid);
+      if(!s) return deps.alert('Solicitud no encontrada');
+      try{ await deps.cargarBilleteras(false); }catch(_e){}
+
+      const usuario = s.USUARIO || '';
+      const tipo = String(s.TIPO || s.TIPO_SOLICITUD || 'CARGA').toUpperCase();
+      const montoAprobado = Math.abs(Number(s.MONTO_REAL || s.MONTO_DECLARADO || 0));
+      const bil = portalBilleteraPreferida(s);
+      // Sin monto o sin billetera no hay nada que proponer: ahí SÍ hace falta el cartel.
+      if(!usuario || !montoAprobado || !bil || !bil.ID_BILLETERA){
+        try{ deps.toast('Falta el monto o la billetera: completalo en el cartel.', 'yellow'); }catch(_e){}
+        return deps.window.abrirModalPortalSolicitud(nid);
+      }
+
+      let promo = null;
+      if(tipo === 'CARGA'){
+        promo = await portalPromoDe(usuario);
+        if(promo && promo.compartida){
+          try{ deps.toast('Hay que decidir el bono: esa cuenta ya cobró el bono con '+promo.otros+' usuario'+(promo.otros===1?'':'s')+' más.', 'yellow'); }catch(_e){}
+          return deps.window.abrirModalPortalSolicitud(nid);
+        }
+      }
+
+      try{ if(deps.window.cerrarExpedienteSolicitud) deps.window.cerrarExpedienteSolicitud(); }catch(_e){}
+      return Promise.resolve(deps.ejecutarSolicitudPortalSimple({
+        id: nid, solicitud: s, usuario, tipo, montoAprobado,
+        bilId: bil.ID_BILLETERA,
+        titular: s.TITULAR || s.NOMBRE_COMPLETO || '',
+        destino: s.DESTINO || s.BILLETERA_NOMBRE || '',
+        cbu: s.CBU || s.CVU || s.CBU_ALIAS || '',
+        obs: '',
+        bonoAplicar: !!promo, bonoPct: promo ? promo.pct : 0, bonoMax: promo ? promo.max : 0,
+        promoBilleteraId: promo ? promo.billeteraId : ''
+      })).catch(function(e){ console.error('portal job error:', e); deps.toast('Portal con error: '+(e.message||''), 'red'); });
+    } finally {
+      // Se suelta recién cuando el clic ya hizo su efecto (encolado, o cartel abierto): así dos
+      // clics seguidos no se pisan, pero tampoco queda trabada para siempre si algo falla.
+      deps.setTimeout(function(){ _aprobando.delete(nid); }, 1500);
+    }
   };
 
   let _expedienteActualData = null;
@@ -2939,7 +3107,7 @@ const api = {};
     el.id = 'modalExpedienteOverlay';
     el.className = 'expediente-overlay hidden';
     el.innerHTML = `
-      <div class="expediente-drawer" onclick="event.stopPropagation()">
+      <div class="expediente-drawer" data-ocupa-derecha onclick="event.stopPropagation()">
         <div class="expediente-head">
           <div style="display:flex;align-items:center;gap:12px;min-width:0">
             <div id="expedienteTipoIco" class="expediente-ico">📋</div>
@@ -2952,7 +3120,7 @@ const api = {};
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-            <button class="mini-btn gray" type="button" onclick="copiarResumenExpediente()" title="Copiar ficha / resumen para soporte o WhatsApp">📋 Copiar ficha</button>
+            <button class="mini-btn gray" type="button" onclick="copiarResumenExpediente()" title="Copia los datos de esta operación (jugador, monto, estado, billetera y titular) listos para pegar en el chat o en WhatsApp">📋 Copiar datos</button>
             <button class="expediente-close-btn" type="button" onclick="cerrarExpedienteSolicitud()" title="Cerrar (Esc)">✕</button>
           </div>
         </div>
@@ -2971,7 +3139,21 @@ const api = {};
     const el = deps.document.getElementById('modalExpedienteOverlay');
     if(el) el.classList.add('hidden');
     _expedienteActualData = null;
+    _anclarCartel();
   };
+
+  // El cartel de versión vive arriba a la derecha, que es justo donde se abre el cajón del
+  // expediente: lo pisaba y tapaba el título. Se corre hacia el costado mientras el cajón esté
+  // abierto y vuelve cuando se cierra (la cuenta la hace _updaterAnclar, en core/actualizaciones.js).
+  function _anclarCartel(){
+    try{
+      const f = deps.window && deps.window._updaterAnclar;
+      if(typeof f !== 'function') return;
+      f();
+      // El cajón entra deslizándose (.24 s): se vuelve a medir cuando ya llegó a su lugar.
+      deps.setTimeout(f, 320);
+    }catch(_e){}
+  }
 
   deps.window.cerrarExpedienteSolicitud = api.cerrarExpedienteSolicitud;
 
@@ -3018,7 +3200,7 @@ const api = {};
 
     // Por nodoCopiar: recupera el foco antes de copiar (el panel puede estar operando en la
     // ventana del backoffice) y, si aun así no puede, muestra el texto en vez de perderlo.
-    try{ deps.window.nodoCopiar(txt, { etiqueta: '✓ Ficha copiada' }); }
+    try{ deps.window.nodoCopiar(txt, { etiqueta: '✓ Datos de la operación copiados' }); }
     catch(_e){ deps.toast('No se pudo copiar automáticamente', 'yellow'); }
   };
 
@@ -3234,6 +3416,9 @@ const api = {};
     // el N de Chunior. El badge verde ya las contaba como cerradas: quedaban las dos cosas
     // contradiciendose en la misma ficha.
     const abierta = !['ACREDITADA', 'PAGADA', 'APROBADA', 'RECHAZADA', 'CANCELADA', 'OK', 'COMPLETADA', 'REVERTIDA'].includes(estado);
+    // Un retiro del portal que todavía no se pagó: al abrir el expediente se leen las fichas del
+    // jugador (ver revisarFichasExpediente). En las cargas, los manuales y los ya cerrados no aplica.
+    _expedienteActualData.fichasPendientes = !!(esRetiro && abierta && !esManual && usuario);
 
     // 1. Cabecera y Botones de Acción
     let actionsHtml = '';
@@ -3247,11 +3432,18 @@ const api = {};
       if(!tomada){
         actionsHtml += `<button class="mini-btn yellow" type="button" onclick="window.v154pTomarSolicitud && window.v154pTomarSolicitud(${id})">Tomar</button>`;
       }
-      actionsHtml += `<button class="mini-btn green" type="button" onclick="window.v154pCrearJobSolicitud && window.v154pCrearJobSolicitud(${id})">✓ Aprobar</button>`;
+      // Aprobar aprueba DE UNA: acá ya está todo el expediente a la vista. Para cambiar el monto,
+      // la billetera o dejar una observación está el botón de al lado.
+      actionsHtml += `<button class="mini-btn green" type="button" onclick="window.v154pAprobarSolicitud && window.v154pAprobarSolicitud(${id})">✓ Aprobar</button>`;
+      actionsHtml += `<button class="mini-btn" type="button" onclick="window.v154pCrearJobSolicitud && window.v154pCrearJobSolicitud(${id})" title="Aprobar cambiando el monto, la billetera o dejando una observación">✎ Otro monto</button>`;
       if(esRetiro){
         actionsHtml += `<button class="mini-btn purple" type="button" onclick="window.v154pRegistrarParcial && window.v154pRegistrarParcial(${id})">💸 Parcial</button>`;
       }
       actionsHtml += `<button class="mini-btn red" type="button" onclick="window.v154pRechazarSolicitud && window.v154pRechazarSolicitud(${id})">✕ Rechazar</button>`;
+      // Tomada por error, o el que la tomó se fue: vuelve a la lista de pendientes para que otro la agarre.
+      if(tomada){
+        actionsHtml += `<button class="mini-btn" type="button" onclick="window.v154pSoltarSolicitud && window.v154pSoltarSolicitud(${id})" title="La devuelve a la lista de pendientes para que otro operador la tome">↩ Soltar</button>`;
+      }
     } else if(esRechazo){
       actionsHtml = `
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -3352,8 +3544,8 @@ const api = {};
         <button type="button" class="sol-comm-btn" onclick="window.abrirPerfilJugador && window.abrirPerfilJugador('${esc(usuario)}')" title="Ver historial y perfil CRM del jugador">
           <span>👤</span> Ficha CRM
         </button>
-        <button type="button" class="sol-comm-btn" onclick="copiarResumenExpediente()" title="Copiar ficha de la operación al portapapeles">
-          <span>📋</span> Copiar Ficha
+        <button type="button" class="sol-comm-btn" onclick="copiarResumenExpediente()" title="Copia los datos de esta operación (jugador, monto, estado, billetera y titular) listos para pegar en el chat o en WhatsApp">
+          <span>📋</span> Copiar datos de la operación
         </button>
       </div>
 
@@ -3558,7 +3750,13 @@ ${stepperHtml}
               </div>
             </div>
 
-            ${(esCarga || esRetiro) ? `
+            ${(_expedienteActualData.fichasPendientes && _partesRetiro <= 1 && saldoPre == null && saldoPost == null) ? `
+              <div class="sol-cotejo-row">
+                <span class="sol-cotejo-lbl">Fichas del jugador:</span>
+                <div class="sol-cotejo-val">
+                  <span data-fichas="1">${fichasHtml(fichasEnCache(usuario), montoDecl)}</span>
+                </div>
+              </div>` : (esCarga || esRetiro) ? `
               <div class="sol-cotejo-row">
                 <span class="sol-cotejo-lbl">Saldos en casino:</span>
                 <div class="sol-cotejo-val">
@@ -3614,6 +3812,88 @@ ${stepperHtml}
     return html;
   };
 
+  // ── Fichas del jugador, en el expediente de un RETIRO ───────────────────────────────────────
+  // "Ver" en un retiro tiene que decir cuántas fichas tiene el jugador AHORA: es lo que decide si se
+  // paga entero, por partes o no se paga (Juan, 25/10). Se lee del casino al abrir, sin tocar nada.
+  // La lectura la hace revisarFichasRetiro (core/chunior-recuperacion-y-transferencias.js), la misma
+  // que usa el escaneo en segundo plano y que alimenta el "saldo … ✓/⚠" de la tarjeta.
+  const _FICHAS_VIVA_MS = 3 * 60 * 1000;           // una lectura de hace menos de 3 min se reusa
+  function fichasEnCache(usuario){
+    try{
+      const c = (deps.window._retiroSaldoCheck || {})[String(usuario||'').toLowerCase()];
+      return (c && c.ts && (Date.now() - c.ts) < _FICHAS_VIVA_MS) ? c : null;
+    }catch(_e){ return null; }
+  }
+  function fichasHtml(r, monto, releer){
+    const boton = function(texto){
+      return '<button type="button" class="sol-copy-btn" onclick="' + (releer || 'expedienteRevisarFichas') + '(true)" title="Vuelve a consultar el saldo en el casino">🔄 ' + texto + '</button>';
+    };
+    const _btnFichas = boton('Volver a leer');
+    if(!r) return '<span style="color:#64748b">Leyendo las fichas…</span>';
+    if(r.confiable === false) return '<span style="color:#f59e0b">No pude leer bien el saldo</span> ' + _btnFichas;
+    if(r.error) return '<span style="color:#f59e0b">' + esc(r.error) + '</span> ' + boton('Reintentar');
+    const pidio = Math.abs(Number(monto || 0));
+    const saldo = Number(r.saldo || 0);
+    const alcanza = saldo + 0.5 >= pidio;
+    const color = alcanza ? '#34d399' : '#f87171';
+    return '<b style="color:' + color + ';font-size:13px">' + esc(r.raw || fmtMoney(saldo)) + '</b> '
+      + '<span style="color:' + color + '">' + (alcanza
+          ? '✓ alcanza para lo que pidió (' + fmtMoney(pidio) + ')'
+          : (saldo >= 0.5
+              ? '⚠ no alcanza para ' + fmtMoney(pidio) + ' · se puede pagar por partes'
+              : '⚠ sin fichas para retirar')) + '</span> ' + _btnFichas;
+  }
+  function _pintarFichas(html){
+    try{
+      const nodos = deps.document.querySelectorAll ? deps.document.querySelectorAll('[data-fichas]') : [];
+      Array.prototype.forEach.call(nodos, function(n){ n.innerHTML = html; });
+    }catch(_e){}
+  }
+  api.revisarFichasExpediente = async function(forzar){
+    const d = _expedienteActualData;
+    if(!d || !d.fichasPendientes) return null;
+    const leer = deps.window && deps.window.revisarFichasRetiro;
+    if(typeof leer !== 'function') return null;
+    const monto = Math.abs(Number(d.montoDeclarado || 0));
+    const previa = forzar ? null : fichasEnCache(d.usuario);
+    if(previa){ _pintarFichas(fichasHtml(previa, monto)); return previa; }
+    _pintarFichas(fichasHtml(null, monto));
+    let r;
+    try{ r = await leer({ usuario: d.usuario, solicitudId: d.id, monto: monto, forzar: !!forzar }); }
+    catch(_e){ r = { error: 'No se pudieron leer las fichas. Probá de nuevo.' }; }
+    // Mientras leía, el operador pudo cerrar el expediente o abrir otro: no se pisa lo que ve ahora.
+    if(!_expedienteActualData || String(_expedienteActualData.id) !== String(d.id)) return r;
+    _pintarFichas(fichasHtml(r, monto));
+    return r;
+  };
+  if(deps.window) deps.window.expedienteRevisarFichas = function(forzar){ return api.revisarFichasExpediente(!!forzar); };
+
+  // El cartel de aprobar un retiro coteja las fichas igual que "Ver": misma lectura, mismo texto y
+  // botón de reintento. Antes no mostraba ninguna y se aprobaba sin saber si las tenía.
+  api.portalJobRevisarFichas = async function(forzar){
+    const modal = deps.document.getElementById('portalJobModal');
+    const box = deps.document.getElementById('portalJobFichas');
+    if(!modal || !box) return null;
+    const id = modal.dataset.solicitudId;
+    const s = portalSolicitudById(Number(id));
+    const esRetiro = !!s && String(s.TIPO || s.TIPO_SOLICITUD || '').toUpperCase() === 'RETIRO';
+    box.style.display = esRetiro ? '' : 'none';
+    if(!esRetiro) return null;
+    const monto = Math.abs(Number(s.MONTO_REAL || s.MONTO_DECLARADO || 0));
+    const pintar = function(r){
+      box.innerHTML = '<span style="color:#64748b">Cotejo de fichas:</span> ' + fichasHtml(r, monto, 'portalJobRevisarFichas');
+    };
+    const previa = forzar ? null : fichasEnCache(s.USUARIO);
+    if(previa){ pintar(previa); return previa; }
+    pintar(null);
+    let r;
+    try{ r = await deps.window.revisarFichasRetiro({ usuario: s.USUARIO, solicitudId: id, monto: monto, forzar: !!forzar }); }
+    catch(_e){ r = { error: 'No se pudieron leer las fichas. Probá de nuevo.' }; }
+    // Mientras leía, el operador pudo pasar a otra solicitud: no se pisa lo que ve ahora.
+    if(modal.dataset.solicitudId === id) pintar(r);
+    return r;
+  };
+
   api.mostrarExpedienteEnPane = function(idOrObj){
     const html = api.construirDossierCompletoHtml(idOrObj);
     const pane = deps.document.getElementById('solicitudesDossierPane');
@@ -3636,6 +3916,10 @@ ${stepperHtml}
       }
       modalEl.classList.remove('hidden');
     }
+    _anclarCartel();
+    // Si es un retiro abierto, "Ver" también revisa las fichas del jugador. Sin await: el expediente
+    // ya está a la vista y la lectura se pinta cuando llega.
+    try{ api.revisarFichasExpediente(); }catch(_e){}
   };
 
   api.v154pDetalleSolicitud = api.abrirExpedienteSolicitud;
@@ -3732,6 +4016,7 @@ const api = {};
   }
 
   async function portalUpdateHistorial(id, patch){
+    deps.window.NodoSalud?.begin('PORTAL')?.record('EFFECT','OK','PORTAL_HIST_UPDATE');
     if(!id) return;
     try{ await deps.supabaseClient.from('historial_ops').update(patch).eq('id', id); }
     catch(e){ console.warn('portal historial update falló:', e); }
@@ -4346,8 +4631,16 @@ const api = {};
 
   async function cargarChatsPortal(silencioso=false){
     const canal = await deps.getCanal();
-    let r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
-    if(r?.error || !deps.normArr(r?.data).length){
+    let r;
+    const beta = deps.window.NodoBetaChat;
+    let betaActive=false,betaError=false;
+    try{betaActive=beta && await beta.ready();}
+    catch(e){betaError=true;r={data:null,error:{message:e.message}};}
+    if(betaActive){
+      try { r={data:await deps.window._chatCanalNuevo.cargar(),error:null}; }
+      catch(e) { r={data:null,error:{message:e.message}}; }
+    }else if(!betaError) r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
+    if(!betaActive && !betaError && (r?.error || !deps.normArr(r?.data).length)){
       const fb = await deps.rpc("panel_v154_plus_listar_chat_sesiones", {p_pc_codigo: canal});
       if(!fb?.error) r = fb;
     }
@@ -4369,7 +4662,7 @@ const api = {};
     // con 0 — casi siempre es un timeout/vacío transitorio de la RPC (no "0 sin leer" real). Mantenemos
     // lo último bueno. Un 0 legítimo (todo leído) igual pasa: ahí la RPC devuelve las sesiones con SIN_LEER=0
     // (array NO vacío), así que este guard no se activa.
-    if(!(_nuevosChats.length === 0 && Array.isArray(deps.V154P.chats) && deps.V154P.chats.length > 0)){
+    if(betaActive || !(_nuevosChats.length === 0 && Array.isArray(deps.V154P.chats) && deps.V154P.chats.length > 0)){
       deps.V154P.chats = _nuevosChats;
       deps.window.chats = deps.V154P.chats.slice();
       try{ deps.chats = deps.V154P.chats.slice(); }catch(_e){}
@@ -4389,8 +4682,7 @@ const api = {};
       const count = deps.V154P.chats.filter(c => String(c.ESTADO || "").toUpperCase() !== "CERRADO").length;
       const badge = deps.document.getElementById("v15ChatCount");
       if(badge) badge.textContent = String(count);
-      const stat = deps.document.getElementById("statChats");
-      if(stat) stat.textContent = String(deps.V154P.chats.reduce((a,c)=>a+Number(c.SIN_LEER||0),0));
+      deps.window.nodoChatRefreshUnread?.();
     }catch(e){}
 
     return r;
@@ -4401,13 +4693,26 @@ const api = {};
     if(!chatId) return;
 
     deps.V154P.chatActual = String(chatId);
-    let r = await deps.rpc("panel_core_get_chat_mensajes_json", {p_chat_id: String(chatId)});
-    if(r?.error || !deps.normArr(r.data).length){
+    let r;
+    const beta = deps.window.NodoBetaChat;
+    let betaActive=false,betaError=false;
+    try{betaActive=beta && await beta.ready();}
+    catch(e){betaError=true;r={data:null,error:{message:e.message}};}
+    if(betaActive){
+      const current=deps.window.__nodoChatCurrentTicket;
+      // A stale five-second timer must not fetch or mark a previous conversation.
+      if(!current?._beta || String(current._chatId)!==String(chatId)) return;
+      try { r={data:await deps.window._chatCanalNuevo.mensajesDe(String(chatId)),error:null}; }
+      catch(e) { r={data:null,error:{message:e.message}}; }
+      if(String(deps.window.__nodoChatCurrentTicket?._chatId)!==String(chatId)) return;
+    }else if(!betaError) r = await deps.rpc("panel_core_get_chat_mensajes_json", {p_chat_id: String(chatId)});
+    if(!betaActive && !betaError && (r?.error || !deps.normArr(r.data).length)){
       const fb = await deps.rpc("panel_v154_plus_get_chat_mensajes", {p_chat_id: String(chatId)});
       if(!fb?.error) r = fb;
     }
 
     if(r?.error){
+      if(betaActive || betaError) return r; // Keep the last confirmed page; the beta status exposes the error.
       const msg = r.error.message || JSON.stringify(r.error);
       const b1 = deps.document.getElementById("chatBody");
       const b2 = deps.document.getElementById("v15ChatBody");

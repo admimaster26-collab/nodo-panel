@@ -13,6 +13,7 @@ function cerrarSesion(){
 
 // ── Panel de verificaciones ───────────────────────────────────────────────────
 async function cargarVerificaciones(){
+  window.NodoSalud?.begin('VALIDACION')?.record('DATA','OK','VERIFICACIONES_LOAD');
   const hoy = inicioDiaArgentina(); // medianoche AR, no del SO local
   const { data } = await supabaseClient
     .from("verificaciones")

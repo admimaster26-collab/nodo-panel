@@ -136,7 +136,69 @@ function _perfilCss(){
   .pj-day::after{content:'';flex:1;height:1px;background:#21262d}`;
   document.head.appendChild(st);
 }
-window.cerrarPerfilJugador = function(){ const o=document.getElementById('perfilJugadorOverlay'); if(o) o.remove(); };
+function _pjOficina(){ return String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase(); }
+function _pjUsuario(usuario){ return String(usuario||'').trim().toLowerCase(); }
+function _pjClave(usuario){ return JSON.stringify([_pjOficina(),_pjUsuario(usuario)]); }
+function _pjDeOficina(row){
+  const pc = String(row && (row.pc_codigo || row.pc) || '').trim().toUpperCase();
+  const scopeAliases=row && row.usuario && window.NodoPerfilConsulta ? window.NodoPerfilConsulta.snapshot(row.usuario).aliases : null;
+  const aliases = scopeAliases && scopeAliases.length ? scopeAliases : (_pjOficina() && typeof pcAliasesHist==='function' ? pcAliasesHist() : [_pjOficina()]);
+  return !!pc && aliases.map(function(p){ return String(p).trim().toUpperCase(); }).includes(pc);
+}
+function _pjVistaVigente(vista){ return !!vista && window.__perfilVista===vista && vista.pc===_pjOficina(); }
+function _pjEstado(usuario){ return window.NodoPerfilConsulta ? window.NodoPerfilConsulta.snapshot(usuario) : {mode:'legacy',rows:[],loading:false,error:''}; }
+function _pjTextoAccion(value){ return escapeHtml(JSON.stringify(String(value||''))); }
+window.cerrarPerfilJugador = function(){
+  window.__perfilVista = null; window.__perfilJugadorAbierto = null;
+  const o=document.getElementById('perfilJugadorOverlay'); if(o) o.remove();
+};
+window.pjPerfilConsultar = async function(mas,refrescar){
+  const vista=window.__perfilVista;
+  if(!_pjVistaVigente(vista)){ cerrarPerfilJugador(); return; }
+  if(!window.NodoPerfilConsulta){ await _pjCargarLegacy(vista,refrescar); return; }
+  const pending=window.NodoPerfilConsulta.load(vista.usuario,{more:!!mas,refresh:!!refrescar});
+  window.abrirPerfilJugador(vista.usuario,vista);
+  try{
+    const result=await pending;
+    if(!_pjVistaVigente(vista)) return;
+    window.abrirPerfilJugador(vista.usuario,vista);
+    if(result.mode==='legacy') await _pjCargarLegacy(vista,refrescar);
+  }catch(_e){ /* Una respuesta de otra oficina nunca repinta esta vista. */ }
+};
+window._pjLegacyCrmCache = window._pjLegacyCrmCache || {};
+window.pjPerfilMasIdentidad = async function(){
+  const vista=window.__perfilVista;
+  if(!_pjVistaVigente(vista)){ cerrarPerfilJugador(); return; }
+  if(!window.NodoPerfilConsulta) return;
+  const pending=window.NodoPerfilConsulta.load(vista.usuario,{moreIdentity:true});
+  window.abrirPerfilJugador(vista.usuario,vista);
+  try{
+    await pending;
+    if(!_pjVistaVigente(vista)) return;
+    window.abrirPerfilJugador(vista.usuario,vista);
+  }catch(_e){}
+};
+async function _pjCargarLegacy(vista,refrescar){
+  if(!_pjVistaVigente(vista)) return;
+  const key=_pjClave(vista.usuario);
+  if(!vista.pc){ vista.legacyError=true; window.abrirPerfilJugador(vista.usuario,vista); return; }
+  const version=vista.legacyVersion=(vista.legacyVersion||0)+1;
+  const actual=function(){return _pjVistaVigente(vista) && vista.legacyVersion===version;};
+  vista.legacyError=false;
+  if(refrescar){ delete window._arbolFullCache[key]; delete window._pjLegacyCrmCache[key]; }
+  const tasks=[window.cargarArbolCompletoUsuario(vista.usuario)];
+  if(!window._pjLegacyCrmCache[key]) tasks.push((async function(){
+    try{
+      const r=await supabaseClient.rpc('panel_crm_perfil_v1',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:vista.pc,p_query:null,p_usuario:vista.usuario,p_limit:1});
+      if(!actual())return;
+      const j=r && !r.error && r.data && r.data.ok!==false && (r.data.jugadores||[])[0];
+      if(j && _pjUsuario(j.usuario)===_pjUsuario(vista.usuario)) window._pjLegacyCrmCache[key]=j;
+      else if(!r || r.error || !r.data || r.data.ok===false || !Array.isArray(r.data.jugadores)) vista.legacyError=true;
+    }catch(_e){ if(actual())vista.legacyError=true; }
+  })());
+  await Promise.allSettled(tasks);
+  if(actual()) window.abrirPerfilJugador(vista.usuario,vista);
+}
 
 // ── Ficha del usuario desde Supabase (RPC panel_usuario_ficha) ────────────────
 // Trae el teléfono VIGENTE (usuarios_portal_vinculos), los teléfonos ANTERIORES y las
@@ -145,18 +207,21 @@ window.cerrarPerfilJugador = function(){ const o=document.getElementById('perfil
 // Un usuario tiene UN teléfono vigente; los demás son historia, para verificar antes de validar.
 async function _pjCargarFicha(usuario){
   const uLow = String(usuario||'').trim().toLowerCase();
+  const vista=window.__perfilVista, pc=_pjOficina();
   const box = document.getElementById('pjFichaBox'); if(!box) return;
   let d = null;
   try{
-    const r = await supabaseClient.rpc('panel_usuario_ficha', { p_usuario: usuario, p_pc_codigos: null, p_secret: window.PANEL_DATA_SECRET });
+    if(!pc) throw new Error('PERFIL_OFFICE_REQUIRED');
+    const r = await supabaseClient.rpc('panel_usuario_ficha', { p_usuario: usuario, p_pc_codigos: typeof pcAliasesHist==='function'?pcAliasesHist():[pc], p_secret: window.PANEL_DATA_SECRET });
     if(r && !r.error) d = (typeof r.data === 'string') ? JSON.parse(r.data) : r.data;
   }catch(_e){}
   // El perfil pudo cerrarse o cambiar de usuario mientras respondía.
   const box2 = document.getElementById('pjFichaBox');
-  if(!box2 || window.__perfilJugadorAbierto !== uLow) return;
+  if(!box2 || window.__perfilJugadorAbierto !== uLow || pc!==_pjOficina() || (vista && !_pjVistaVigente(vista))) return;
   if(!d || d.ok !== true){
     box2.innerHTML = '<h4>📱 Teléfonos y validaciones</h4>'
-      + '<div class="small" style="color:#8b949e">Sin datos. Si nunca corriste el SQL de <b>panel_usuario_ficha</b>, esta ficha queda vacía.</div>';
+      + '<div class="small" style="color:#fbbf24">No se pudo consultar la ficha. <button class="mini-btn gray" onclick="_pjCargarFicha('+_pjTextoAccion(usuario)+')">Reintentar</button></div>';
+    if(vista) vista.fichaHtml=box2.innerHTML;
     return;
   }
   const E = escapeHtml;
@@ -222,25 +287,64 @@ async function _pjCargarFicha(usuario){
   }
 
   box2.innerHTML = h;
+  if(vista) vista.fichaHtml=h;
 }
 window._pjCargarFicha = _pjCargarFicha;
 
-window.abrirPerfilJugador = function(usuario){
+window.pjPerfilDetalle = function(id,usuario,solicitudId,esLocal){
+  if(!_pjVistaVigente(window.__perfilVista)){ cerrarPerfilJugador(); return; }
+  cerrarPerfilJugador();
+  if(!esLocal){ window.verDetalleMovimiento(id,usuario,solicitudId); return; }
+  const pair=Object.entries(_movStoreAll()).find(function(p){ const m=p[1]; return String(m.id==null?p[0]:m.id)===String(id) && _pjUsuario(m.usuario)===_pjUsuario(usuario); });
+  const row=pair && pair[1];
+  if(!row) return;
+  const labels={tipo:'Tipo',monto:'Monto',estado:'Estado',titular:'Titular',cbu:'CBU / Alias',destino:'Destino',obs:'Observaciones',saldoPre:'Saldo antes',saldoPost:'Saldo después',billeteraNombre:'Billetera',operador:'Operador',chuniorId:'Nº Chunior',bonoPct:'Bono %',_fecha:'Fecha',notas:'Notas'};
+  const fields=Object.keys(labels).filter(function(k){ return row[k]!=null && row[k]!==''; }).map(function(k){ return '<div class="pj-field"><span>'+labels[k]+'</span><b>'+escapeHtml(String(row[k]))+'</b></div>'; }).join('');
+  abrirModal('Detalle local · '+escapeHtml(usuario),'<p>Datos locales '+((row.pc_codigo || row.pc)?'de la oficina '+escapeHtml(row.pc_codigo || row.pc):'sin oficina identificada')+'. No integran el resumen del servidor.</p>'+fields,null,'');
+};
+function _pjActividadHtml(ops,usuario,esLocal){
+  let tl='', diaPrev='';
+  const esc=escapeHtml;
+  ops.forEach(function(o){
+    const d=new Date(o.fecha || '');
+    const diaK=isNaN(d)?'Fecha no registrada':d.toLocaleDateString('es-AR',{weekday:'long',day:'2-digit',month:'2-digit'});
+    if(diaK!==diaPrev){ tl+='<div class="pj-day">'+esc(diaK)+'</div>'; diaPrev=diaK; }
+    const hora=isNaN(d)?'—':String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+    const t=String(o.tipo||'').toUpperCase(), eOk=['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'].includes(String(o.estado||'').toUpperCase());
+    const destTxt=String(o.cbu||o.destino||'').trim();
+    tl+='<div class="pj-tl-row" onclick="pjPerfilDetalle('+_pjTextoAccion(o.id)+','+_pjTextoAccion(usuario)+','+_pjTextoAccion(o.solicitudId)+','+!!esLocal+')">'
+      + '<div class="pj-tl-hora"><b>'+hora+'</b><span>'+(isNaN(d)?'':String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'))+'</span></div>'
+      + '<div style="min-width:0;flex:1"><div style="display:flex;justify-content:space-between;gap:8px"><span style="font-weight:800">'+(t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•')+' '+esc(t||'—')+' '+(eOk?'<span style="color:#22c55e">✅</span>':esc(o.estado||''))+'</span>'
+      + '<b style="color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</b></div>'
+      + (destTxt?'<div class="pj-mono small" style="color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ '+esc(destTxt)+'</div>':'')
+      + '<div class="small" style="color:#8b949e">'+(o.titular?'👤 '+esc(o.titular)+' · ':'')+(o.chuniorId?'Nº '+esc(String(o.chuniorId))+' · ':'')+(o.operador?'op:'+esc(o.operador):'')+'</div></div></div>';
+  });
+  return tl;
+}
+
+window.abrirPerfilJugador = function(usuario,vistaPrevia){
   const u = String(usuario||'').trim(); if(!u) return;
+  if(vistaPrevia && !_pjVistaVigente(vistaPrevia)) return;
+  if(!vistaPrevia) cerrarPerfilJugador();
+  const vista= vistaPrevia || {usuario:u,pc:_pjOficina()};
+  window.__perfilVista=vista;
   _perfilCss();
   const uLow = u.toLowerCase();
   const esc = escapeHtml;
-  const local = _jugStoreAll()[uLow] || {};
-  // Desde que el CRM abre vacío (v1.1.70) _crmJugadoresData sólo tiene datos si el
-  // operador pidió "Cargar lista". El perfil se abre igual desde el buscador, así que
-  // hay que mirar también lo que trajo la búsqueda del servidor (_crmBuscados): ahí
-  // vienen turno, última carga, score y segmento calculados sobre TODAS las operaciones.
-  // Sin esto el perfil mostraba "—" en turno y última carga teniendo el dato a mano.
-  const crm = (window._crmJugadoresData||[]).find(function(x){ return String(x.usuario||'').toLowerCase()===uLow; })
-           || (window._crmBuscados||{})[uLow]
-           || (window._crmWtkBuscados||{})[uLow] || {};
+  const localGuardado = _jugStoreAll()[uLow] || {};
+  const local = !(localGuardado.pc_codigo || localGuardado.pc) || _pjDeOficina(localGuardado) ? localGuardado : {};
+  const estado=_pjEstado(u), beta=estado.mode!=='legacy';
+  const legacyCache=window._arbolFullCache[_pjClave(u)];
+  const consultaError=estado.error || (!beta && ((legacyCache && legacyCache.__error) || vista.legacyError));
+  const localSinOficina=!(local.pc_codigo || local.pc) && Object.keys(local).length>0;
+  // Cada resumen pertenece al usuario y la oficina consultados. Las cachés globales
+  // del buscador no tienen ese contrato y no se incorporan a esta ficha.
+  const crm = beta ? (estado.resumen || {}) : (window._pjLegacyCrmCache[_pjClave(u)] || {});
+  const requiereRevision=beta && crm.requiere_revision===true;
   const fl = (window._crmFlags||{})[uLow] || {};
-  const ops = (typeof arbolUsuario==='function') ? arbolUsuario(u) : [];
+  const ops = beta ? _pjUnirOperaciones(u,estado.rows||[],false) : arbolUsuario(u);
+  const localesSinOficina=_pjLocalesSinOficina(u,ops);
+  const localesOficina=beta?_pjLocalesDeOficina(u,ops):[];
   const uEsc = u.replace(/'/g,"\\'");
 
   // ── carril izquierdo (identidad / instrumentos / bonos / resumen) ──
@@ -248,21 +352,13 @@ window.abrirPerfilJugador = function(usuario){
   const cbus = Object.values(local.cbus||{});
   const tits = Object.values(local.titulares||{});
   const bonos = Array.isArray(local.bonos)?local.bonos.slice().reverse():[];
-  // Respaldo desde el CRM (vínculo de whaticket): si el usuario nunca operó/validó en ESTA máquina,
-  // la base local no tiene su teléfono/titular, pero el CRM sí lo trae del registro (panel_crm_vinculos).
-  // Fallback WTK: si el jugador está en _crmJugadoresData (por ops/CSV) pero SIN titular/teléfono,
-  // lo completamos con lo que trajo la búsqueda de whaticket (_crmWtkBuscados), que sí lo tiene.
-  // Antes el lookup se quedaba con el item de ops (sin titular) → mostraba "sin datos" aunque lo
-  // hubieras encontrado JUSTO buscando por ese titular.
-  // _crmBuscados lo llena el buscador del CRM (panel_crm_perfil_v1): trae teléfono,
-  // titular y el perfil calculado sobre TODAS las operaciones. _crmWtkBuscados es el
-  // buscador viejo, queda de respaldo.
-  const _crmWtk = (window._crmBuscados||{})[uLow] || (window._crmWtkBuscados||{})[uLow] || {};
+  // La identidad de servidor completa los datos que esta máquina no conoce.
+  const _crmWtk = crm;
   const crmTel = String(crm.telefono || _crmWtk.telefono || '').replace(/\D/g,'');
   const crmTit = String(crm.titular || _crmWtk.titular || '').trim();
   const crmEst = String(crm.estadoVinculo || _crmWtk.estadoVinculo || '').trim().toUpperCase();
   const railIdent =
-      '<div class="pj-card"><h4>👤 Identidad</h4>'
+      '<div class="pj-card"><h4>👤 Identidad'+(localSinOficina?' · datos locales':'')+'</h4>'
     + (tits.length
         ? tits.map(function(t){
             // Bloqueo de titular: la acción que le faltaba a la auditoría de multicuenta.
@@ -291,8 +387,10 @@ window.abrirPerfilJugador = function(usuario){
   // cuentas propias — eso es normal). 🚨 = el titular de ESE instrumento no coincide con los
   // titulares conocidos del usuario (posible cuenta ajena). Tocá uno para copiarlo.
   const titsSet = tits.map(function(t){ return String(t.raw).toLowerCase().trim(); });
+  const cbuTitulo=beta ? (crm.cbu_fuente==='RETIRO_CONFIRMADO'?'Tomado de un retiro confirmado':crm.cbu_fuente==='VINCULO_DECLARADO'?'Destino declarado en el vínculo':'Destino registrado; procedencia sin confirmar') : 'Tomado del último retiro pagado';
+  const cbuLeyenda=beta ? (crm.cbu_fuente==='RETIRO_CONFIRMADO'?'de un retiro confirmado':crm.cbu_fuente==='VINCULO_DECLARADO'?'declarado en el vínculo · no acredita un pago':'procedencia sin confirmar') : 'del último retiro';
   const railInstr =
-      '<div class="pj-card"><h4>💳 Instrumentos de retiro (todos)</h4>'
+      '<div class="pj-card"><h4>💳 Instrumentos de retiro'+(localSinOficina?' · datos locales':'')+'</h4>'
     + (cbus.length?cbus.slice().sort(function(a,b){ return String(b.ultima||'').localeCompare(String(a.ultima||'')); }).map(function(c){
         const ajeno = c.titular && titsSet.length && titsSet.indexOf(String(c.titular).toLowerCase().trim())===-1;
         return '<div style="padding:4px 0;border-bottom:1px dashed #21262d;cursor:pointer" title="Tocá para copiar" data-valor="'+esc(c.raw)+'" onclick="event.stopPropagation();portalCopiarCbu(this)">'
@@ -305,45 +403,43 @@ window.abrirPerfilJugador = function(usuario){
       // servidor. La base local es POR MÁQUINA: si el retiro lo pagó otro turno u otra PC,
       // acá no hay nada aunque el usuario tenga destino conocido.
       : (_crmWtk.cbu
-          ? '<div style="padding:4px 0" title="Tomado del último retiro pagado">'
+          ? '<div style="padding:4px 0" title="'+esc(cbuTitulo)+'">'
             + '<div class="pj-mono" style="font-size:12px;font-weight:700;color:#e6edf3">'+esc(_crmWtk.cbu)+'</div>'
-            + '<div class="small" style="color:#8b949e">'+(crmTit?esc(crmTit)+' · ':'')+'del último retiro</div></div>'
+            + '<div class="small" style="color:#8b949e">'+(crmTit?esc(crmTit)+' · ':'')+esc(cbuLeyenda)+'</div></div>'
           : '<div class="small" style="color:#5a6474">Sin destinos registrados aún.</div>'))
     + '</div>';
   const railBonos =
-      '<div class="pj-card"><h4>🎁 Bonos</h4>'
+      '<div class="pj-card"><h4>🎁 Bonos'+(localSinOficina?' · datos locales':'')+'</h4>'
     + (bonos.length?bonos.slice(0,5).map(function(b){ const ap=b.estado==='APLICADO'; return '<div class="pj-field"><span class="k">'+esc(formatFecha(b.fecha||''))+'</span><span class="v" style="color:'+(ap?'#22c55e':'#f5c518')+'">'+(ap?'🎁 aplicado':'⏳ pendiente')+(b.pct?(' '+b.pct+'%'):'')+'</span></div>'; }).join(''):'<div class="small" style="color:#5a6474">Sin bonos registrados.</div>')
     + '</div>';
-  let totC=0, totR=0; ops.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+  let totC=0, totR=0;
+  if(!beta) ops.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
   const railResumen =
-      '<div class="pj-card"><h4>📊 Resumen</h4>'
-    + '<div class="pj-field"><span class="k">Cargas</span><span class="v" style="color:#22c55e">'+(crm.cargas!=null?crm.cargas:'—')+' · '+money(crm.montoCargas||totC)+'</span></div>'
-    + '<div class="pj-field"><span class="k">Retiros</span><span class="v" style="color:#fb923c">'+(crm.retiros!=null?crm.retiros:'—')+' · '+money(crm.montoRetiros||totR)+'</span></div>'
-    + '<div class="pj-field"><span class="k">Neto</span><span class="v" style="color:'+((crm.neto||totC-totR)>=0?'#22c55e':'#ef4444')+'">'+money(crm.neto!=null?crm.neto:(totC-totR))+'</span></div>'
+      '<div class="pj-card"><h4>📊 '+(beta?'Resumen del historial':'Resumen disponible')+'</h4>'
+    + (requiereRevision?'<div class="small" style="color:#fbbf24;margin-bottom:8px">Reversiones pendientes de cotejo. Los importes del resumen están pendientes de confirmación.</div>':'')
+    + ((beta && !estado.resumen) || (!beta && !Object.keys(crm).length && (!legacyCache || !legacyCache.__loaded)) ? '<div class="small">'+(consultaError?'No se pudo consultar el resumen.':'Consultando resumen…')+'</div>' :
+      '<div class="pj-field"><span class="k">'+(beta?'Cargas confirmadas':'Cargas')+'</span><span class="v" style="color:#22c55e">'+(crm.cargas!=null?crm.cargas:'—')+' · '+(requiereRevision?'importe pendiente':money(crm.montoCargas!=null?crm.montoCargas:totC))+'</span></div>'
+    + '<div class="pj-field"><span class="k">'+(beta?'Retiros confirmados':'Retiros')+'</span><span class="v" style="color:#fb923c">'+(crm.retiros!=null?crm.retiros:'—')+' · '+(requiereRevision?'importe pendiente':money(crm.montoRetiros!=null?crm.montoRetiros:totR))+'</span></div>'
+    + '<div class="pj-field"><span class="k">Neto</span><span class="v" style="color:'+(requiereRevision?'#fbbf24':(crm.neto!=null?crm.neto:totC-totR)>=0?'#22c55e':'#ef4444')+'">'+(requiereRevision?'Pendiente de cotejo':money(crm.neto!=null?crm.neto:(totC-totR)))+'</span></div>'
     + '<div class="pj-field"><span class="k">Turno frecuente</span><span class="v">'+esc(crm.turnoFrecuente||'—')+'</span></div>'
-    + '<div class="pj-field"><span class="k">Última carga</span><span class="v">'+(crm.ultimaCarga?esc(new Date(crm.ultimaCarga).toLocaleDateString('es-AR')):'—')+'</span></div>'
-    + '</div>';
+    + (beta && crm.errores!=null?'<div class="pj-field"><span class="k">Registros no confirmados</span><span class="v">'+esc(String(crm.errores))+'</span></div>':'')
+    + '<div class="pj-field"><span class="k">Última carga</span><span class="v">'+(crm.ultimaCarga?esc(new Date(crm.ultimaCarga).toLocaleDateString('es-AR')):'—')+'</span></div>')
+    + (estado.error?'<div class="small" style="color:#fbbf24">No se pudo actualizar toda la consulta. Se conserva lo recibido.</div>':'')
+    + '</div>'
+    + (beta && estado.agente ? '<div class="pj-card"><h4>Importación del agente</h4>'
+      + '<div class="pj-field"><span class="k">Cargas</span><span class="v">'+estado.agente.cargas+' · '+money(estado.agente.montoCargas)+'</span></div>'
+      + '<div class="pj-field"><span class="k">Retiros</span><span class="v">'+estado.agente.retiros+' · '+money(estado.agente.montoRetiros)+'</span></div>'
+      + '<div class="small" style="color:#8b949e">Totales importados por separado; pueden coincidir con operaciones del historial.</div></div>':'');
 
   // ── timeline (derecha): operaciones agrupadas por día, hora protagonista ──
-  let tl='', diaPrev='';
-  ops.forEach(function(o){
-    const d = new Date(o.fecha);
-    const diaK = isNaN(d)?'—':d.toLocaleDateString('es-AR',{weekday:'long',day:'2-digit',month:'2-digit'});
-    if(diaK!==diaPrev){ tl += '<div class="pj-day">'+esc(diaK)+'</div>'; diaPrev=diaK; }
-    const hora = isNaN(d)?'—':String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
-    const t = String(o.tipo||'').toUpperCase();
-    const eOk = ['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'].includes(String(o.estado||'').toUpperCase());
-    const destTxt = String(o.cbu||o.destino||'').trim();
-    tl += '<div class="pj-tl-row" onclick="cerrarPerfilJugador();verDetalleMovimiento(\''+esc(String(o.id||''))+'\',\''+uEsc+'\')">'
-      + '<div class="pj-tl-hora"><b>'+hora+'</b><span>'+(isNaN(d)?'':String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'))+'</span></div>'
-      + '<div style="min-width:0;flex:1">'
-      +   '<div style="display:flex;justify-content:space-between;gap:8px"><span style="font-weight:800">'+(t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•')+' '+esc(t||'—')+' '+(eOk?'<span style="color:#22c55e">✅</span>':String(o.estado||'').toUpperCase()==='ERROR'?'<span style="color:#ef4444">❌</span>':'<span style="color:#8b949e">'+esc(o.estado||'')+'</span>')+'</span>'
-      +   '<b style="color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</b></div>'
-      +   (destTxt?('<div class="pj-mono small" style="color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ '+esc(destTxt)+'</div>'):'')
-      +   '<div class="small" style="color:#8b949e">'+(o.titular?('👤 '+esc(o.titular)+' · '):'')+(o.chuniorId?('Nº '+esc(String(o.chuniorId))+' · '):'')+(o.operador?('op:'+esc(o.operador)):'')+'</div>'
-      + '</div></div>';
-  });
-  if(!tl) tl = '<div class="small" style="color:#8b949e;padding:14px">Sin operaciones registradas para este usuario.</div>';
+  let tl=_pjActividadHtml(ops,u,false);
+  if(!tl) tl='<div class="small" style="color:#8b949e;padding:14px">'+(consultaError?'No se pudo consultar la actividad.':!(beta?estado.loaded:legacyCache && legacyCache.__loaded)?'Consultando actividad…':'Sin operaciones registradas en este historial.')+'</div>';
+  const controles=beta
+    ? '<div class="small" style="color:#8b949e;margin:8px 0">'+(estado.loaded ? ops.length+' operaciones cargadas'+(estado.detalleTotal!=null?' de '+estado.detalleTotal:'')+'. ' : '')+(estado.loading?'Cargando…':'')+'</div>'
+      + (consultaError?'<div class="small" style="color:#fbbf24">No se pudo completar la consulta. <button class="mini-btn gray" onclick="pjPerfilConsultar(false,true)">Reintentar</button></div>':'')
+      + (estado.hasMore?'<button class="mini-btn blue" '+(estado.loading?'disabled':'')+' onclick="pjPerfilConsultar(true,false)">Ver más operaciones</button>':'')
+    : '<div class="small" style="color:#8b949e">Detalle disponible'+(legacyCache && legacyCache.__truncated?' · se alcanzó el límite de 3000 filas; no es el historial completo.':'.')+'</div>'
+      + (consultaError?'<div class="small" style="color:#fbbf24">No se pudo actualizar el historial. <button class="mini-btn gray" onclick="pjPerfilConsultar(false,true)">Reintentar</button></div>':'');
 
   // El chip VIP / TIBIO / FRIO se fue: era una etiqueta de marketing, no un dato para operar.
   const html =
@@ -352,7 +448,7 @@ window.abrirPerfilJugador = function(usuario){
     +     '<div class="pj-avatar">'+esc(u.substring(0,2).toUpperCase())+'</div>'
     +     '<div style="min-width:0;flex:1"><div style="font-size:17px;font-weight:900">'+esc(u)
     +       ' <span title="Push" style="opacity:'+(fl.push?1:.25)+'">🔔</span><span title="App" style="opacity:'+(fl.app?1:.25)+'">📱</span>'+'</div>'
-    +       '<div class="small" style="color:#8b949e">'+ops.length+' operación/es'+'</div></div>'
+    +       '<div class="small" style="color:#8b949e">'+(beta && estado.resumen?estado.resumen.totalOps+' registros en el historial':ops.length+' operaciones disponibles')+'</div></div>'
     +     '<button class="mini-btn yellow" title="Usuario, clave y teléfono para que pueda entrar a la plataforma" onclick="pjDatosIngreso(\''+uEsc+'\')">🔑 Ingreso</button>'
     +     '<button class="mini-btn green" title="Escribirle por el chat del portal, aunque nunca haya escrito" onclick="nodoChatNuevo(\''+uEsc+'\')">💬 Mensaje</button>'
     +     '<button class="mini-btn blue" onclick="crmCopiarPromo(\''+uEsc+'\')">📋 Promo</button>'
@@ -362,142 +458,166 @@ window.abrirPerfilJugador = function(usuario){
     +     '<button class="mini-btn gray" onclick="cerrarPerfilJugador()" style="font-weight:800">✕</button>'
     +   '</div>'
     +   '<div class="pj-body">'
-    +     '<div class="pj-rail">'+railIdent
-    +       '<div class="pj-card" id="pjFichaBox"><h4>📱 Teléfonos y validaciones</h4>'
-    +         '<div class="small" style="color:#8b949e">Cargando ficha…</div></div>'
-    +       railInstr+railBonos+railResumen+'</div>'
+    +     '<div class="pj-rail">'+(localSinOficina?'<div class="small" style="color:#fbbf24;margin-bottom:10px">Datos locales sin oficina identificada. No integran el resumen del servidor.</div>':'')+railIdent
+    +       '<div class="pj-card" id="pjFichaBox">'
+    +         (vista.fichaHtml || '<h4>📱 Teléfonos y validaciones</h4><div class="small" style="color:#8b949e">Cargando ficha…</div>')+'</div>'
+    +       railInstr+railBonos+railResumen
+    +       (beta && (estado.identidadLoaded || (estado.identidad && estado.identidad.length) || estado.identidadError)
+              ? '<div class="pj-card"><h4>🔎 Observaciones de identidad</h4>'
+                + (estado.identidadLocalesDisponibles===false ? '<div class="small" style="color:#8b949e;margin-bottom:6px">Vista de observaciones locales aún no sincronizada en servidor.</div>' : (estado.identidadLocalesDisponibles===true ? '<div class="small" style="color:#22c55e;margin-bottom:6px">Incluye observaciones locales sincronizadas.</div>' : ''))
+                + (estado.identidadError ? '<div class="small" style="color:#fbbf24;margin-bottom:6px">No se pudo completar la consulta de observaciones.</div>' : '')
+                + ((estado.identidad && estado.identidad.length)
+                    ? estado.identidad.slice(0,25).map(function(obs){
+                        const atr = String(obs.atributo||'OBSERVADO').toUpperCase();
+                        const col = atr==='VERIFICADO'?'#22c55e':atr==='DECLARADO'?'#f5c518':'#7dd3fc';
+                        const fTxt = obs.fecha ? new Date(obs.fecha).toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
+                        return '<div style="padding:4px 0;border-bottom:1px dashed #21262d">'
+                          + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11.5px">'
+                          + '<span style="color:#8b949e;text-transform:uppercase;font-weight:800">'+esc(String(obs.campo||''))+'</span>'
+                          + '<span class="pj-mono" style="font-weight:700;color:#e6edf3;overflow:hidden;text-overflow:ellipsis">'+esc(String(obs.valor||''))+'</span></div>'
+                          + '<div class="small" style="display:flex;justify-content:space-between;gap:6px;color:#8b949e">'
+                          + '<span><b style="color:'+col+'">'+esc(atr)+'</b> · '+esc(String(obs.fuente||''))+(obs.estado?' ('+esc(String(obs.estado))+')':'')+'</span>'
+                          + '<span>'+esc(fTxt)+'</span></div></div>';
+                      }).join('')
+                    : '<div class="small" style="color:#5a6474">Sin observaciones adicionales registradas.</div>')
+                + (estado.identidadHasMore ? '<button class="mini-btn blue" style="margin-top:8px" onclick="pjPerfilMasIdentidad()">Ver más observaciones</button>' : '')
+                + '</div>'
+              : '')
+    +     '</div>'
     +     '<div class="pj-main"><div class="pj-day" style="margin-top:0">🕐 Actividad · '+ops.length+' con detalle</div>'
-    +       ((crm.totalOps||0)>ops.length?'<div class="small" style="color:#8b949e;margin:-2px 0 9px">ℹ️ El resumen cuenta '+crm.totalOps+' ops: incluye las importadas del agente (CSV), que llegan como totales SIN fila individual — acá se listan solo las '+ops.length+' operadas/registradas por el panel.</div>':'')
-    +       tl+'</div>'
+    +       tl+controles
+    +       (localesOficina.length?'<div class="pj-day">Detalles locales de esta oficina</div><div class="small" style="color:#8b949e">No figuran en la página cargada; no se agregan a los totales del servidor.</div>'+_pjActividadHtml(localesOficina,u,true):'')
+    +       (localesSinOficina.length?'<div class="pj-day">Datos locales sin oficina identificada</div><div class="small" style="color:#8b949e">Se conservan estos detalles; no integran el resumen del servidor.</div>'+_pjActividadHtml(localesSinOficina,u,true):'')+'</div>'
     +   '</div>'
     + '</div>';
-  cerrarPerfilJugador();
+  const anterior=document.getElementById('perfilJugadorOverlay'); if(anterior) anterior.remove();
   const ov = document.createElement('div');
   ov.id='perfilJugadorOverlay'; ov.innerHTML=html;
   ov.onclick = cerrarPerfilJugador;
+  ov.addEventListener('click',function(event){ if(!_pjVistaVigente(vista)){ event.stopImmediatePropagation(); cerrarPerfilJugador(); } },true);
   document.body.appendChild(ov);
   window.__perfilJugadorAbierto = uLow;
-  try{ _pjCargarFicha(u); }catch(_e){}   // teléfonos (actual + históricos), validaciones y alertas
-  // Historial COMPLETO (día 1 → hoy): trae async TODAS las ops del usuario (más allá de las 200
-  // globales) y re-renderiza el perfil si sigue abierto y en el mismo usuario. Sin loop: el loader
-  // se cachea y en el re-render devuelve hayNuevas=false.
-  try{
-    if(window.cargarArbolCompletoUsuario){
-      window.cargarArbolCompletoUsuario(u, function(hayNuevas){
-        if(hayNuevas && document.getElementById('perfilJugadorOverlay') && window.__perfilJugadorAbierto===uLow){
-          window.abrirPerfilJugador(u);
-        }
-      });
-    }
-  }catch(_e){}
-
-  // El perfil se abre desde muchos lados (buscador, cola de reconexión, dormidos, una
-  // fila del CRM) y no todos dejan al jugador cacheado. Si no lo tenemos, lo pedimos y
-  // se repinta: así el turno, la última carga, el score y el segmento salen siempre,
-  // calculados sobre TODAS las operaciones y no sobre lo que hubiera en memoria.
-  try{
-    if(!crm.turnoFrecuente && !(window._crmBuscados||{})[uLow]){
-      window._crmBuscados = window._crmBuscados || {};
-      window._crmBuscados[uLow] = null;                 // evita pedirlo dos veces
-      supabaseClient.rpc('panel_crm_perfil_v1',{
-        p_secret: window.PANEL_DATA_SECRET,
-        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
-        p_query: null, p_usuario: u, p_limit: 1
-      }).then(function(r){
-        const j = (r && r.data && (r.data.jugadores||[])[0]) || null;
-        if(!j) return;
-        window._crmBuscados[uLow] = j;
-        if(document.getElementById('perfilJugadorOverlay') && window.__perfilJugadorAbierto===uLow){
-          window.abrirPerfilJugador(u);
-        }
-      }).catch(function(){});
-    }
-  }catch(_e){}
+  if(!vistaPrevia) try{ void _pjCargarFicha(u); }catch(_e){}   // teléfonos (actual + históricos), validaciones y alertas
+  if(!vistaPrevia) try{ void _pjCargarFicha(u); }catch(_e){}   // teléfonos (actual + históricos), validaciones y alertas
+  if(!vistaPrevia) try{ void window.NodoPersistenciaSync?.sync?.({ pc: vista.pc }); }catch(_e){}
+  if(!vistaPrevia) void window.pjPerfilConsultar(false,false);
+  else window.NodoPerfilConsulta?.rendered(u);
 };
 
-// Árbol de operaciones de un usuario: merge de Supabase (_historialData) + store local
-// + caché de historial COMPLETO por usuario (window._arbolFullCache, cargado on-demand al
-// abrir el perfil → trae todas las ops del día 1, más allá de las 200 globales de _historialData).
-function arbolUsuario(usuario){
-  const u = normalizar(usuario||'');
+// Las filas disponibles son detalle, nunca la fuente del resumen beta.
+function _pjUnirOperaciones(usuario,rows,incluirLocales){
+  const u = _pjUsuario(usuario);
   if(!u) return [];
-  const out = {};
-  const _full = (window._arbolFullCache && window._arbolFullCache[u]) ? window._arbolFullCache[u] : [];
-  const _base = _full.length ? _full.concat(_historialData||[]) : (_historialData||[]);
-  _base.forEach(function(h){
-    if(normalizar(h.usuario||'')!==u) return;
+  const out = new Map();
+  (rows||[]).forEach(function(h){
+    if(_pjUsuario(h.usuario)!==u || !_pjDeOficina(h)) return;
     const k = String(h.id);
-    out[k] = {
+    const notas=typeof _movParseNotas==='function'?_movParseNotas(h.notas):{};
+    out.set(k,{
       id:h.id, tipo:String(h.tipo||'').toUpperCase(), monto:Number(h.monto||0),
+      usuario:h.usuario,pc_codigo:h.pc_codigo,solicitudId:h.solicitud_id,
+      titular:notas.titular||'',destino:notas.destino||'',cbu:notas.cbu||'',obs:notas.obs||'',
       estado:h.estado||'', saldoPre:h.saldo_pre, saldoPost:h.saldo_post,
       billeteraNombre:h.billetera_nombre||'', operador:h.operador||'',
       chuniorId:h.chunior_movimiento_id||null, notas:h.notas||'',
       fecha:h.created_at, origen:h.origen||'', _local:false
-    };
+    });
   });
   const map = _movStoreAll();
   Object.keys(map).forEach(function(k){
     const m = map[k];
-    if(normalizar(m.usuario||'')!==u) return;
+    if(_pjUsuario(m.usuario)!==u) return;
     const kk = String(m.id!=null?m.id:k);
-    const base = out[kk] || {};
+    const base = out.get(kk) || {};
+    if((m.pc_codigo || m.pc) && !_pjDeOficina(m)) return;
+    if(!base.id && (!incluirLocales || !_pjDeOficina(m))) return;
     const pick = function(a,b){ return (a!==undefined && a!==null && a!=='') ? a : b; };
-    out[kk] = {
-      id: pick(m.id, base.id),
-      tipo: String(pick(m.tipo, base.tipo)||'').toUpperCase(),
-      monto: pick(m.monto, base.monto!=null?base.monto:0),
-      estado: pick(m.estado, base.estado||''),
-      titular:m.titular||'', destino:m.destino||'', cbu:m.cbu||'', obs:m.obs||'',
-      saldoPre: pick(m.saldoPre, base.saldoPre),
-      saldoPost: pick(m.saldoPost, base.saldoPost),
+    out.set(kk,{
+      id: pick(m.id, base.id || k),usuario:m.usuario,pc_codigo:base.pc_codigo || m.pc_codigo || m.pc,
+      solicitudId:pick(m.solicitudId,base.solicitudId),
+      tipo: String(pick(base.tipo, m.tipo)||'').toUpperCase(),
+      monto: pick(base.monto, m.monto!=null?m.monto:0),
+      estado: pick(base.estado, m.estado||''),
+      titular:m.titular||base.titular||'', destino:m.destino||base.destino||'', cbu:m.cbu||base.cbu||'', obs:m.obs||base.obs||'',
+      saldoPre: pick(base.saldoPre, m.saldoPre),
+      saldoPost: pick(base.saldoPost, m.saldoPost),
       billeteraNombre: pick(m.billeteraNombre, base.billeteraNombre||''),
       operador: pick(m.operador, base.operador||''),
       chuniorId: pick(m.chuniorId, base.chuniorId||null),
       bonoPct: m.bonoPct||null,
       notas: pick(m.notas, base.notas||''),
-      fecha: pick(m._fecha, base.fecha), origen: pick(m.origen, base.origen||''),
+      fecha: pick(base.fecha, m._fecha), origen: pick(m.origen, base.origen||''),
       _local: !base.id
-    };
+    });
   });
-  return Object.values(out).sort(function(a,b){ return new Date(b.fecha||0)-new Date(a.fecha||0); });
+  const result=Array.from(out.values());
+  return incluirLocales?result.sort(function(a,b){ return new Date(b.fecha||0)-new Date(a.fecha||0); }):result;
 }
-// Carga ON-DEMAND el historial COMPLETO de UN usuario (todas sus ops de historial_ops de la
-// oficina, día 1 → hoy), más allá de las 200 globales de _historialData. Cachea por usuario.
-// onDone(hayNuevas) se llama al terminar (hayNuevas=true si trajo filas nuevas → re-render).
+function _pjLocalesDeOficina(usuario,ops){
+  const ids=new Set((ops||[]).map(function(row){return String(row.id);}));
+  return Object.entries(_movStoreAll()).filter(function(pair){ const m=pair[1]; return _pjUsuario(m.usuario)===_pjUsuario(usuario) && _pjDeOficina(m) && !ids.has(String(m.id==null?pair[0]:m.id)); })
+    .map(function(pair){ const m=pair[1]; return Object.assign({},m,{id:m.id==null?pair[0]:m.id,fecha:m._fecha||m.fecha}); })
+    .sort(function(a,b){return new Date(b.fecha||0)-new Date(a.fecha||0);});
+}
+function _pjLocalesSinOficina(usuario,ops){
+  const ids=new Set((ops||[]).map(function(row){return String(row.id);}));
+  return Object.entries(_movStoreAll()).filter(function(pair){ const m=pair[1]; return _pjUsuario(m.usuario)===_pjUsuario(usuario) && !(m.pc_codigo || m.pc) && !ids.has(String(m.id==null?pair[0]:m.id)); })
+    .map(function(pair){ const m=pair[1]; return Object.assign({},m,{id:m.id==null?pair[0]:m.id,fecha:m._fecha||m.fecha}); })
+    .sort(function(a,b){return new Date(b.fecha||0)-new Date(a.fecha||0);});
+}
+function arbolUsuario(usuario){
+  if(!_pjUsuario(usuario))return [];
+  const estado=_pjEstado(usuario);
+  if(estado.mode!=='legacy')return _pjUnirOperaciones(usuario,estado.rows||[],false);
+  const cache=window._arbolFullCache[_pjClave(usuario)] || [];
+  return _pjUnirOperaciones(usuario,cache.concat(typeof _historialData!=='undefined'?_historialData:[]),true);
+}
+// Compatibilidad legacy: consulta acotada y explícitamente parcial. La beta usa páginas.
 window._arbolFullCache = window._arbolFullCache || {};
 window.cargarArbolCompletoUsuario = async function(usuario, onDone){
-  const u = normalizar(usuario||''); if(!u){ if(onDone)onDone(false); return; }
-  const cache = window._arbolFullCache[u];
-  if(cache && cache.__loaded){ if(onDone)onDone(false); return; }   // ya cargado, no repetir
-  if(cache && cache.__loading){ if(onDone)onDone(false); return; }
-  window._arbolFullCache[u] = Object.assign(cache||[], {__loading:true});
+  const u = _pjUsuario(usuario), pc=_pjOficina(), key=_pjClave(usuario);
+  if(!u || !pc){ if(onDone)onDone(false); return; }
+  if(window.NodoPerfilConsulta && await window.NodoPerfilConsulta.ready()){
+    const result=await window.NodoPerfilConsulta.load(usuario);
+    if(onDone && pc===_pjOficina())onDone(!result.error && result.rows.length>0);
+    return result;
+  }
+  if(pc!==_pjOficina())return;
+  const cache=window._arbolFullCache[key];
+  if(cache && (cache.__loaded || cache.__loading)){ if(onDone)onDone(false); return; }
+  const rows=window._arbolFullCache[key]=Object.assign(cache||[],{__loading:true,__error:false});
   try{
     const { data, error } = await supabaseClient
       .from("historial_ops").select("*")
       .in("pc_codigo", (typeof pcAliasesHist==='function'?pcAliasesHist():[]))
-      .ilike("usuario", String(usuario||'').trim())   // igualdad case-insensitive (sin comodines)
+      .ilike("usuario", String(usuario||'').trim().replace(/[\\%_]/g,'\\$&'))
       .order("created_at", { ascending:false })
       .limit(3000);
-    if(!error && Array.isArray(data)){
-      data.__loaded = true;
-      window._arbolFullCache[u] = data;
+    if(pc!==_pjOficina() || window._arbolFullCache[key]!==rows)return;
+    if(!error && Array.isArray(data) && data.every(function(row){return _pjUsuario(row.usuario)===u && _pjDeOficina(row);})){
+      Object.assign(data,{__loaded:true,__loading:false,__truncated:data.length===3000});
+      window._arbolFullCache[key] = data;
       if(onDone) onDone(data.length>0);
     } else {
-      window._arbolFullCache[u] = Object.assign([], {__loaded:true});   // marca cargado (vacío) para no reintentar en loop
+      rows.__loading=false; rows.__error=true;
       if(onDone) onDone(false);
     }
   }catch(_e){
-    try{ delete window._arbolFullCache[u]; }catch(__e){}   // permite reintentar en el próximo open
+    if(pc!==_pjOficina() || window._arbolFullCache[key]!==rows)return;
+    rows.__loading=false; rows.__error=true;
     if(onDone) onDone(false);
   }
 };
 window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
   const esc = escapeHtml;
+  const perfilEstado=usuarioArg?_pjEstado(usuarioArg):null;
+  const detalleRows=(perfilEstado && perfilEstado.mode!=='legacy' ? perfilEstado.rows : (window._arbolFullCache[_pjClave(usuarioArg)] || [])).concat(_historialData||[]);
+  const hRow=histId?detalleRows.find(function(x){ return String(x.id)===String(histId) && _pjDeOficina(x) && (!usuarioArg || _pjUsuario(x.usuario)===_pjUsuario(usuarioArg)); }):null;
   // Red por si algo lo llama igual: esta ficha es de plata. Para un cambio de clave o una
   // consulta armaba "Carga · $ 0" con el árbol de otras operaciones abajo, que no tiene
   // nada que ver con la fila que se abrió.
   try{
-    const _h = (_historialData||[]).find(function(x){ return String(x.id)===String(histId); });
+    const _h = hRow;
     const _t = String((_h && _h.tipo) || "").toUpperCase();
     if(_t && ["CARGA","RETIRO","MOV_BILLETERA","CAMBIO_BILLETERA","DEPOSITO_SR",
               "PROPINA","RECARGA_FICHAS"].indexOf(_t) === -1){
@@ -508,7 +628,7 @@ window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
 
   const map = _movStoreAll();
   let mov = histId ? (map[String(histId)] || null) : null;
-  const hRow = histId ? (_historialData||[]).find(function(x){ return String(x.id)===String(histId); }) : null;
+  if(mov && !_pjDeOficina(mov) && !(hRow && _pjUsuario(hRow.usuario)===_pjUsuario(mov.usuario) && !(mov.pc_codigo || mov.pc)))mov=null;
 
   // 4/10 · La fila que tocó el operador manda sobre cualquier cosa guardada.
   //
@@ -616,14 +736,18 @@ window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
           cbuWarnHtml = '<div style="margin-top:6px;padding:7px 10px;border-radius:8px;background:rgba(245,197,24,.12);border:1px solid rgba(245,197,24,.5);color:#fde68a;font-size:12px;font-weight:700">⚠️ Destino NUEVO — nunca cobró en esta cuenta. Confirmá con el usuario.</div>';
         else
           cbuWarnHtml = '<div style="margin-top:5px;font-size:11px;color:#22c55e;font-weight:700">✓ Ya cobró en este destino ×'+_chk.veces+'</div>';
+        window.mostrarDestinosUsuario = window.mostrarDestinosUsuario || function(u){ return window.abrirPerfilJugador && window.abrirPerfilJugador(u); };
         cbuWarnHtml += '<button type="button" class="mini-btn" style="margin-top:6px;font-size:11px;background:#1e293b;color:#93c5fd" onclick="mostrarDestinosUsuario(\''+_uEsc+'\')">📇 Todos los destinos del usuario</button>';
       }
     }catch(_e){}
   }
 
   const arbol = arbolUsuario(usuario);
+  const perfilResumen=_pjEstado(usuario);
+  const resumenServidor=perfilResumen.mode==='beta'?perfilResumen.resumen:null;
   let totC=0, totR=0;
-  arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+  if(resumenServidor){ totC=resumenServidor.montoCargas;totR=resumenServidor.montoRetiros; }
+  else if(perfilResumen.mode==='legacy') arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
   const filasArbol = arbol.map(function(o){
     const t = String(o.tipo||'').toUpperCase();
     const ico = t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•';
@@ -710,12 +834,13 @@ window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
     + rechazoHtml
     + ((esRetiro && hRow && hRow.solicitud_id && window.nodoRetiroHistoriaHtml) ? window.nodoRetiroHistoriaHtml(hRow.solicitud_id, hRow.id) : '')
     + '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;padding:8px 11px;background:#161b22;border-radius:9px;font-size:12px">'
-    +   '<span>📊 <b>'+arbol.length+'</b> operación/es</span>'
-    +   '<span style="color:#22c55e">⬆️ '+money(totC)+'</span>'
+    +   '<span>📊 <b>'+(resumenServidor?resumenServidor.totalOps:arbol.length)+'</b> '+(resumenServidor?'registros en el historial':'operaciones disponibles')+'</span>'
+    +   (resumenServidor && resumenServidor.requiere_revision?'<span style="color:#fbbf24">Reversiones pendientes de cotejo. Importes del resumen pendientes.</span>':resumenServidor || perfilResumen.mode==='legacy'?'<span style="color:#22c55e">⬆️ '+money(totC)+'</span>'
     +   '<span style="color:#fb923c">⬇️ '+money(totR)+'</span>'
-    +   '<span style="color:#e6edf3">neto <b>'+money(totC-totR)+'</b></span>'
+    +   '<span style="color:#e6edf3">neto <b>'+money(resumenServidor?resumenServidor.neto:totC-totR)+'</b></span>':'<span>Resumen sin consultar</span>')
     + '</div>'
-    + '<div style="font-weight:800;margin:12px 0 2px;color:#c9d1d9">🌳 Árbol de operaciones de '+esc(usuario)+'</div>'
+    + '<div style="font-weight:800;margin:12px 0 2px;color:#c9d1d9">🌳 Detalle cargado de '+esc(usuario)+' · '+arbol.length+' operaciones</div>'
+    + '<button class="mini-btn blue" onclick="cerrarModal();abrirPerfilJugador('+_pjTextoAccion(usuario)+')">Ver perfil y más operaciones</button>'
     + filasArbol
     + '</div>';
 

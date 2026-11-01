@@ -68,6 +68,7 @@ window.guardarMovimientoLocal = function guardarMovimientoLocal(rec){
       _fecha: rec.fecha || prev._fecha || new Date().toISOString()
     };
     _movStoreSave(map);
+    try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
     // Auto-alimenta la base local de JUGADORES (CBUs/titulares) desde cada movimiento.
     try{
       const _m = map[key];

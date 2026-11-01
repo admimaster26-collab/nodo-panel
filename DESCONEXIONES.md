@@ -3953,3 +3953,88 @@ Se incorpora como camino R25 al paquete `documentacion-servidor-2026-10-10`, sin
 movimientos. No duplica un hallazgo con otro número: amplía los consumidores de D-120 y la
 traza de D-48. No significa que todos esos efectos deban aplicarse sin definir primero el
 contrato de esos botones. El plan exige incluirlos en la revisión de la autoridad financiera.
+
+### 21/10 · Revalidación de D-103/D-117/D-127/D-128 para el proyecto de organización
+
+Corte local `6b5aa99`. Ya existe caja negra local reutilizable en
+`renderer/domain/caja-negra.js` y `renderer/core/caja-negra-panel.js`; no corresponde
+volver a describir toda observación como inexistente. Sigue pendiente un diagnóstico
+remoto que demuestre conexión, respuesta válida, efecto y presentación por instalación.
+`panel_registrar_actividad` se llama sin comprobar su error/resultado en
+`renderer/core/configuracion-y-estado.js:48-73`; actividad reciente no prueba salud.
+La medición local de latencia no prueba render ni cubre por sí sola el chat nuevo.
+
+La revisión estática de Whaticket conserva los falsos positivos documentados; este corte
+no repitió sus pruebas aisladas ni una comprobación funcional en producción. El catálogo
+agregado del servidor del 21/10 sigue sin los objetos propuestos de `nodo_fallas`, con
+seis cron activos. No se actualizaron los conteos comerciales históricos de D-128 ni se
+los presenta como cifras actuales.
+
+El nuevo mapa y plan están en [PROYECTO_SERVIDOR_NODO](../PROYECTO_SERVIDOR_NODO/README.md).
+Incluyen inventario local, contraste de firmas del servidor, salud/retención, contratos
+compatibles, criterios por entrega y un registro breve para continuar. Son documentación
+y diseño: no equivalen a implementación, baseline funcional ni despliegue.
+
+---
+
+## D-129 · Dos cálculos activos discrepan sobre los chats sin leer
+
+**Verificado estáticamente el 2026-10-21, corte `6b5aa99`.**
+`renderer/chat/chat-no-leidos.js:39-54` corta por la mayor fecha entre marca local y
+última respuesta con origen OPERADOR. `renderer/chat/metrics.js:19-24` sólo considera
+la marca local. `chat-estabilidad.js` consume este segundo cálculo y también actualiza
+indicadores; ambos módulos están cargados por la plantilla.
+
+Con un mensaje USUARIO seguido de respuesta OPERADOR y sin marca local, el primer
+cálculo devuelve cero y el segundo cuenta el mensaje. Es una discrepancia de código;
+no se afirma un incidente observado en una oficina durante esta revisión. Además,
+el resumen de `chat-canal-nuevo.js` representa un único último mensaje sintético:
+su longitud no puede reemplazar un total completo de pendientes al paginar.
+
+**Mejora propuesta** — Unificar regla y responsable de los indicadores antes de cambiar
+consultas. P1a conserva la semántica legacy, con fixtures de autores humanos/bot,
+marcas antiguas y mensajes posteriores; no añade llamadas de red. El futuro acuse
+`leido:true` solicitado por Juan será explícito desde NODO y persistido por servidor.
+Portal mostrará visto sólo por mensajes efectivamente visibles confirmados; ni una
+respuesta, un getter legacy o el máximo de una página acreditan lectura de historia omitida.
+
+**Estado** — ABIERTO. Contrato y aceptación en
+[ENTREGA_INTERMEDIA.md](../PROYECTO_SERVIDOR_NODO/ENTREGA_INTERMEDIA.md).
+No se modificó código funcional ni producción.
+
+## D-130 · Mensajes inventados en nombre del jugador: el arreglo del 3/10 quedó a medias
+
+Juan mostró el chat de un jugador: "[Conversación iniciada por el operador juancarlos]" del lado del jugador.
+
+- **Qué pasa:** si el hilo no tiene mensaje del jugador, el panel le inventa uno con `msgSol(s)`: el `mensaje_inicial` o, si no hay, "Consulta desde portal" (`renderer/chat/chat-hilos.js:219-224`, `renderer/chat/chat-actualizar-solicitud.js:22-30`). Al mandar un mensaje se guarda el hilo entero (`chat-hilos.js:678-694`) y el invento queda en la base con `origen: USUARIO`.
+- **De dónde sale la frase con el nombre:** `panel_chat_iniciar` la escribe en `mensaje_inicial` cuando el operador arranca la conversación.
+- **Por qué volvió:** el 3/10 se arregló `nodo_portal_chat_local_accept` en el servidor; este camino del panel quedó igual.
+- **Cuánto (últimos 30 días):** "Consulta desde portal": 5.332 entradas, 4.428 chats, 13 oficinas, 5.123 después del 4/10. Frase con el nombre del operador: 21 chats, 7 oficinas.
+- **Lo que recibe el jugador:** `landing_portal_chat_thread_get` devuelve `mensaje` tal cual (el 3/10 sacó el campo `operador`, no el texto) y el portal lo dibuja con `renderThreadMsg`. Revisado sobre la copia del portal del 3/10.
+- **Arreglo propuesto, pendiente del OK de Juan:** (1) filtrar esas dos frases en `landing_portal_chat_thread_get`, que alcanza a todas las oficinas en el acto y no borra datos; (2) en el panel, dejar de inventar entradas y sacarlas en `uniqThread`, revisando antes los contadores de no leídos; (3) sacar el nombre del `mensaje_inicial` en `panel_chat_iniciar`.
+
+**1/11 · Juan volvió a verlo a las 06:04 con su propia prueba y pidió resolverlo.** Foto de 30 días: 5.692 "Consulta desde portal" en 4.736 chats y 13 oficinas; 26 frases con nombre de operador en 7 oficinas. Todas con `solicitud_id` y sin `tipo`, la forma exacta de la entrada que arma el panel.
+
+- **Panel, en fuentes:** `NodoChatMessage.isFiller` define qué es relleno. `uniqThread` lo descarta, así que no se dibuja ni se vuelve a guardar, y el hilo se limpia cuando el panel lo reescribe. Los contadores quedan bien: una consulta sin mensajes marca 0 nuevos, y el chat vacío avisa que el jugador todavía no escribió.
+- **Servidor, aplicado el 1/11 (migración `20261101100215 d130_chat_sin_relleno`):** además de lo propuesto hacía falta `nodo_beta.hilo_legacy`, el otro lector del jugador. Parche en `servidor/chat-sin-relleno-d130.sql`, vuelta atrás en `servidor/chat-sin-relleno-d130-vuelta-atras.sql`. Ensayado antes en una transacción revertida, sobre 150 chats reales por canal: portal 925 → 756 entradas, beta 976 → 796, 0 restantes y los tres md5 exactos al revertir. Responsable: Juan.
+- **Comprobado después de aplicar:** los tres md5 son los esperados, con los mismos permisos y dueño. Sobre 300 jugadores por portal (1.546 entradas) y 300 sesiones por beta (1.626) no viaja ninguna entrada de relleno. En la solicitud 424257, la prueba de Juan, hay 3 entradas guardadas y el jugador recibe 2.
+- **Comprobado sin cambios:** `chat_mensajes` no contiene estas frases, así que `landing_leer_chat_v2` está limpio. El bot no dispara con la frase del operador: 0 casos en 26. `nodo_chat_whaticket_accept*` conserva el relleno en el código pero tiene 0 llamadas.
+
+**Estado:** CERRADO para el jugador, en todas las oficinas. ABIERTO para el operador: el arreglo del panel está en fuentes, sin commitear ni publicar. Hasta que llegue la versión nueva, los paneles viejos le siguen mostrando la frase al operador, sin nombre en las conversaciones nuevas, y la siguen guardando en el hilo. Lo ya guardado no se borró.
+
+## D-131 · Pantallas que se rompieron entre parches: Aprobar, fichas, menú, chat y semáforo
+
+Juan, 1/11, con capturas. Cada caso, con su causa comprobada:
+
+- **Aprobar:** el 25/10 pidió aprobar de una "después de desplegar eso", hablando de **Ver**. El 27/10 se aplicó a todos los Aprobar y apareció "Otro monto". Ahora la lista de Inicio y En proceso abren el cartel con el monto seleccionado; aprobar de una es sólo adentro de Ver.
+- **Fichas:** cinco copias de la misma lectura. El modal de retiro decía "no pudimos leer" cuando el jugador no existe en Agentes y no tenía reintento; el cartel de aprobar no mostraba fichas; el escaneo de fondo podía creerle a un 0 con la sesión caída y auto-rechazar. Ahora todo pasa por `leerFichasJugador` y una prueba impide volver a copiarla. La lista de cargas para reintentar dejó de contar como "agente ocupado". El CBU del modal se imprimía dos veces desde 1.1.85.
+- **Menú lateral:** al mover Ajustes abajo (25/10) los botones quedaron dentro de un contenedor y el estilo era `.sidebar > .nav-btn`: se perdieron íconos y globitos.
+- **Lista del chat:** botones crudos agregados el 25/10 sin pedido ("Buscar usuario exacto", "Ver todos", "Chat conectado", "Diagnóstico de integraciones"). El buscador de siempre ahora busca solo en el servidor. Ese mismo día los globitos por fila dejaron de pintarse: `snapshot.unread` usa el objeto ticket como clave y cada fila buscaba el ticket en otra copia. Total sin ninguna fila que lo explique.
+- **Contador:** `nodo_beta.contadores` contaba como sin leer lo que el sistema anterior ya había leído (`leido=true` sin `leido_operador_at`) y lo ya contestado. P1: 25 sin leer, 6 reales. El bot y los eventos del sistema no cuentan como contestar.
+- **Semáforo:** el panel sumó PERSISTENCIA el 1/11 y el CHECK del servidor no la acepta: una muestra rechazada tiraba el lote entero desde las 07:52. Ahora esa rama es `SOLO_LOCAL` y una prueba compara la lista del panel con la del servidor. La tabla técnica salió del chat: Estado del sistema vive en Ajustes, en castellano, con "Probar ahora", que llama a las funciones principales y sólo lee. "Funciona" sólo lo dice una prueba: lo usado sin errores dice "Sin fallas". Muchas marcas puestas el 1/11 anotan OK al entrar a la función, antes de saber el resultado: no acreditan nada.
+- **Billeteras:** la carga que corre es la de `extensions/billeteras-oficina.js`, que pisa a la de `core/vistas-y-billeteras.js`. La marca del semáforo estaba en la pisada y por eso la fila decía "Sin actividad": lo encontró "Probar ahora" en la app real. Ahora anota la que corre, y cambiar la billetera del portal y sincronizar con Chunior anotan su resultado real.
+- **Visor:** el botón de agrandar se escondía cuando la imagen entraba en la ventana. Sin barra repetida, abre ajustada a la ventana y hace zoom con rueda, arrastre, doble clic y teclado.
+
+**Detectado y sin tocar:** `scripts/auditar-desconexiones.cjs` marca 18 definiciones pisadas, casi todas del chat viejo. Son código muerto, no corren.
+
+**Estado:** panel en fuentes, sin commitear ni publicar. Servidor: `servidor/chat-contador-d131.sql` **SIN APLICAR**: el clasificador frenó `apply_migration` el 1/11. Ensayado aislado (PGlite 22/22) y, en producción, sólo el cálculo de lectura: da 6. El texto de `chat-contador-d131-vuelta-atras.sql` reproduce el md5 del corte; no se ensayó ejecutándolo en producción. Hasta aplicarlo el contador sigue contando lo viejo en P1, la única oficina con este contrato.

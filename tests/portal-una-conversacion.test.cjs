@@ -35,7 +35,7 @@ function sacar(firma){
 
 // Base falsa que se comporta como la de verdad: crear_solicitud NO devuelve el token (igual que en
 // producción), crear_chat_v2_blindado SÍ, y enviar_mensaje_v2 exige los dos.
-function armar({ chatRota = false } = {}){
+function armar({ chatRota = false, chatAusente = false, envioRoto = false } = {}){
   const llamadas = [];
   let proximaSolicitud = 1000;
   const ctx = {
@@ -58,12 +58,14 @@ function armar({ chatRota = false } = {}){
         return { data: { ok:true, id, solicitud_id:id, estado:'PENDIENTE' } };
       }
       if(nombre === 'landing_chat_abrir_v3'){
+        if(chatAusente)return {error:{code:'PGRST202',message:'landing_chat_abrir_v3 not found'}};
         if(chatRota) return { error: { message: 'no se pudo' } };
         // Tal cual la de produccion: ok, y `nueva` para saber si abrio una o reuso la de ESTA
         // consulta. Nunca la del jugador.
         return { data: { ok: true, chat_id: 77, chat_token: 'tok-77', nueva: true } };
       }
       if(nombre === 'landing_enviar_mensaje_v2'){
+        if(envioRoto)return {error:{code:'TIMEOUT',message:'respuesta perdida'}};
         if(!args.p_chat_id || !args.p_chat_token) return { error:{ message:'Chat no autorizado' } };
         return { data: { ok:true, mensaje:'Mensaje enviado', mensaje_id: 1 } };
       }
@@ -106,12 +108,30 @@ test('el chat se guarda en el telefono: no se pierde al recargar', async () => {
   assert.equal(c.ctx.localStorage.getItem('bet300_chat_token'), 'tok-77');
 });
 
-test('si el canal de chat no responde, el reclamo NO se pierde', async () => {
-  // Red de seguridad mientras el camino nuevo se termina de probar: cae al de siempre y el
-  // mensaje llega igual. El dia que sobre, se saca.
+test('un error ambiguo al abrir conserva el mensaje y no crea otra solicitud', async () => {
   const c = armar({ chatRota: true });
-  await c.ctx.enviarMensajeSoporte('hola');
-  assert.equal(c.creadas(), 1, 'cae al camino viejo, pero llega');
+  const result=await c.ctx.enviarMensajeSoporte('hola');
+  assert.equal(result.ok,false);
+  assert.equal(c.creadas(),0);
+  assert.equal(c.enviados(),0);
+});
+
+test('función de apertura ausente permite una única escritura legacy',async()=>{
+  const c=armar({chatAusente:true});
+  const result=await c.ctx.enviarMensajeSoporte('hola');
+  assert.equal(result.ok,true);assert.equal(c.creadas(),1);assert.equal(c.enviados(),0);
+  assert.equal(result.message_id,null,'un ID de solicitud no identifica un mensaje');
+});
+
+test('timeout tras enviar no repite el mensaje como solicitud',async()=>{
+  const c=armar({envioRoto:true});
+  const result=await c.ctx.enviarMensajeSoporte('hola');
+  assert.equal(result.ok,false);assert.equal(c.enviados(),1);assert.equal(c.creadas(),0);
+});
+
+test('éxito devuelve el ID confirmado para asociar el visto al globo exacto',async()=>{
+  const c=armar();const result=await c.ctx.enviarMensajeSoporte('hola');
+  assert.equal(result.message_id,1);assert.equal(result.chat_id,'77');
 });
 
 test('no se manda nada vacio', async () => {

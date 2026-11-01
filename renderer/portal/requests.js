@@ -8,6 +8,16 @@
   const dependencies = Object.freeze(["V154P","_portalAutoRechazar","_v154pAvisoDesfasaje","alert","cargarAlertasRetiro","document","esc","getCanal","mapSolicitudPortal","money","normArr","operador","renderInicio","renderSolicitudesPortalCompleto","renderSolicitudesPortalEnInicio","rpc","setTimeout","solicitudes","toast","verificarSolicitudes","window"]);
   function create(deps){
 const api = {};
+// A successful transport is not evidence that the server supplied a usable list.
+// Match the legacy envelopes accepted by data.normArr, without turning null/errors into [].
+function _listaSolicitudesValida(data){
+  const options=[data,data?.data,data?.data?.data,data?.mensaje,data?.mensajes,data?.chats,
+    data?.solicitudes,data?.items,data?.rows];
+  let rows=options.find(Array.isArray);
+  if(!rows && data && typeof data==='object' && Object.keys(data).length && Object.keys(data).every(k=>/^\d+$/.test(k)))rows=Object.values(data);
+  return !!rows && rows.every(row=>row && typeof row==='object' && !Array.isArray(row)
+    && (row.id!=null || row.ID!=null || row.solicitud_id!=null));
+}
 // Leer la bandeja no reintentaba NADA, mientras que escribir (actualizarSolicitudPortal) ya
 // reintenta 3 veces ante fallos de red, por "la mirror con proxy que pestañea". En una oficina con
 // la red inestable eso deja la bandeja congelada: el operador ve "Esta lista está desactualizada",
@@ -126,18 +136,62 @@ async function cargarSolicitudesPortal(silencioso=false){
       return {ok:true, skipped:true, reason:"solicitudes_loading"};
     }
     deps.V154P.solicitudesLoading = true;
+    const health=deps.window.NodoSalud?.begin('BANDEJA');
+    let healthStage='DATA';
     try{
       const canal = await deps.getCanal();
       // Sólo se insiste ante fallos de RED. Si el servidor contesta y rechaza, insistir no arregla
       // nada y sólo demora el aviso.
       let r = null;
-      for(let intento = 1; intento <= 3; intento++){
+      const _pApi = deps.window && deps.window.panelAPI;
+      let _useBetaBandeja = false;
+      if(_pApi && typeof _pApi.rpc === 'function' && canal){
+        try{
+          deps.V154P._bandejaCapCache = deps.V154P._bandejaCapCache || {};
+          const _pcUp = String(canal).trim().toUpperCase();
+          if(typeof _pApi.getContext === 'function'){
+            const _rawCtx = await _pApi.getContext();
+            const _ctx = (_rawCtx && _rawCtx.beta) ? _rawCtx.beta : _rawCtx;
+            if(_ctx && _ctx.enabled === true && (!Array.isArray(_ctx.offices) || _ctx.offices.includes(_pcUp))){
+              if(deps.V154P._bandejaCapCache[_pcUp] === undefined){
+                const _capRes = await _pApi.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: _pcUp, p_activate: false });
+                const _capData = _capRes && _capRes.data;
+                const _caps = (_capData && Array.isArray(_capData.capabilities)) ? _capData.capabilities : [];
+                deps.V154P._bandejaCapCache[_pcUp] = !!(_capData && _capData.ok === true && _capData.enabled === true && _caps.includes('bandeja.queue.v1'));
+              }
+              _useBetaBandeja = deps.V154P._bandejaCapCache[_pcUp] === true;
+            }
+          }
+        }catch(_e){ _useBetaBandeja = false; }
+      }
+      if(_useBetaBandeja){
+        const _br = await _pApi.rpc('nodo_beta_bandeja_v1', { p_pc_codigo: String(canal).trim().toUpperCase(), p_filtros: {}, p_limit: 100, p_cursor: null });
+        if(_br && !_br.error && _br.data && _br.data.ok === true && Array.isArray(_br.data.operativas)){
+          deps.V154P.bandejaTotales = _br.data.totales || null;
+          deps.V154P.bandejaHasMore = !!_br.data.has_more;
+          deps.V154P.bandejaNextCursor = _br.data.next_cursor || null;
+          r = { data: _br.data.operativas, error: null };
+          health?.reply(null);
+        } else if(_br && _br.error && (_br.error.code === 'PGRST202' || _br.error.code === '42883')){
+          _useBetaBandeja = false;
+        } else if(_br){
+          r = _br;
+          health?.reply(r?.error);
+        }
+      }
+      for(let intento = 1; !_useBetaBandeja && intento <= 3; intento++){
         r = await deps.rpc("panel_v15_5_listar_solicitudes_portal", {p_pc_codigo: canal});
+        health?.reply(r?.error);
         if(!r?.error || !_esErrorDeRed(r.error)) break;
         if(intento < 3) await new Promise(res => deps.setTimeout(res, 500 * intento));
       }
 
+      if(health && !health.current())return {error:{code:'STALE_OFFICE',message:'La oficina cambió durante la consulta.'}};
+      if(!r?.error && !_listaSolicitudesValida(r?.data)){
+        r={data:null,error:{code:'BANDEJA_INVALID_DATA',message:'El servidor no devolvió una lista válida de solicitudes.'}};
+      }
       if(r?.error){
+        health?.record('DATA','ERROR',r.error.code==='BANDEJA_INVALID_DATA'?'BANDEJA_INVALID_DATA':health.errorCode(r.error));
         const msg = r.error.message || JSON.stringify(r.error);
         const box = deps.document.getElementById("tablaSolicitudesInicio");
         if(box && !deps.V154P.solicitudesLastHtml){
@@ -166,6 +220,7 @@ async function cargarSolicitudesPortal(silencioso=false){
       try{ deps._v154pAvisoDesfasaje(null); }catch(_e){}
 
       const _nuevas = deps.normArr(r.data).map(deps.mapSolicitudPortal);
+      health?.record('DATA','OK','BANDEJA_LIST_VALID');
 
       // Medir ACÁ y no al dibujar: lo que se quiere saber es cuánto tardó el sistema en traer el
       // mensaje, no cuánto tardó el operador en abrir la conversación. Va a la consola de la PC,
@@ -239,8 +294,12 @@ async function cargarSolicitudesPortal(silencioso=false){
         }
       }catch(_e){}
       // Actualizamos stats generales, pero la caja de inicio queda en manos del render portal.
+      healthStage='RENDER';
       try{ if(typeof deps.renderInicio === "function") deps.renderInicio(); }catch(e){}
       deps.renderSolicitudesPortalEnInicio();
+      const healthBox=deps.document.getElementById('tablaSolicitudesInicio');
+      health?.record('RENDER',healthBox && healthBox.innerHTML && healthBox.innerHTML===deps.V154P.solicitudesLastHtml?'OK':'UNKNOWN',
+        healthBox && healthBox.innerHTML && healthBox.innerHTML===deps.V154P.solicitudesLastHtml?'BANDEJA_DOM_UPDATED':'BANDEJA_DOM_UNCONFIRMED');
       // Si entró una carga con un retiro a medio pagar, ese parcial se cierra solo (Juan, 26/9).
       // Va después del render para no demorar la pantalla, y sin await: si falla, no arrastra nada.
       try{ if(deps.window.cerrarParcialesPorCarga) deps.window.cerrarParcialesPorCarga(); }catch(_e){}
@@ -266,6 +325,9 @@ async function cargarSolicitudesPortal(silencioso=false){
         }
       }catch(_e){}
       return r;
+    }catch(error){
+      health?.record(healthStage,'ERROR',healthStage==='RENDER'?'BANDEJA_RENDER_FAILED':health.errorCode(error));
+      throw error;
     }finally{
       deps.V154P.solicitudesLoading = false;
       if(deps.V154P.solicitudesQueued){

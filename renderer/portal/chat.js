@@ -26,8 +26,16 @@ const api = {};
 
   async function cargarChatsPortal(silencioso=false){
     const canal = await deps.getCanal();
-    let r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
-    if(r?.error || !deps.normArr(r?.data).length){
+    let r;
+    const beta = deps.window.NodoBetaChat;
+    let betaActive=false,betaError=false;
+    try{betaActive=beta && await beta.ready();}
+    catch(e){betaError=true;r={data:null,error:{message:e.message}};}
+    if(betaActive){
+      try { r={data:await deps.window._chatCanalNuevo.cargar(),error:null}; }
+      catch(e) { r={data:null,error:{message:e.message}}; }
+    }else if(!betaError) r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
+    if(!betaActive && !betaError && (r?.error || !deps.normArr(r?.data).length)){
       const fb = await deps.rpc("panel_v154_plus_listar_chat_sesiones", {p_pc_codigo: canal});
       if(!fb?.error) r = fb;
     }
@@ -49,7 +57,7 @@ const api = {};
     // con 0 — casi siempre es un timeout/vacío transitorio de la RPC (no "0 sin leer" real). Mantenemos
     // lo último bueno. Un 0 legítimo (todo leído) igual pasa: ahí la RPC devuelve las sesiones con SIN_LEER=0
     // (array NO vacío), así que este guard no se activa.
-    if(!(_nuevosChats.length === 0 && Array.isArray(deps.V154P.chats) && deps.V154P.chats.length > 0)){
+    if(betaActive || !(_nuevosChats.length === 0 && Array.isArray(deps.V154P.chats) && deps.V154P.chats.length > 0)){
       deps.V154P.chats = _nuevosChats;
       deps.window.chats = deps.V154P.chats.slice();
       try{ deps.chats = deps.V154P.chats.slice(); }catch(_e){}
@@ -69,8 +77,7 @@ const api = {};
       const count = deps.V154P.chats.filter(c => String(c.ESTADO || "").toUpperCase() !== "CERRADO").length;
       const badge = deps.document.getElementById("v15ChatCount");
       if(badge) badge.textContent = String(count);
-      const stat = deps.document.getElementById("statChats");
-      if(stat) stat.textContent = String(deps.V154P.chats.reduce((a,c)=>a+Number(c.SIN_LEER||0),0));
+      deps.window.nodoChatRefreshUnread?.();
     }catch(e){}
 
     return r;
@@ -81,13 +88,26 @@ const api = {};
     if(!chatId) return;
 
     deps.V154P.chatActual = String(chatId);
-    let r = await deps.rpc("panel_core_get_chat_mensajes_json", {p_chat_id: String(chatId)});
-    if(r?.error || !deps.normArr(r.data).length){
+    let r;
+    const beta = deps.window.NodoBetaChat;
+    let betaActive=false,betaError=false;
+    try{betaActive=beta && await beta.ready();}
+    catch(e){betaError=true;r={data:null,error:{message:e.message}};}
+    if(betaActive){
+      const current=deps.window.__nodoChatCurrentTicket;
+      // A stale five-second timer must not fetch or mark a previous conversation.
+      if(!current?._beta || String(current._chatId)!==String(chatId)) return;
+      try { r={data:await deps.window._chatCanalNuevo.mensajesDe(String(chatId)),error:null}; }
+      catch(e) { r={data:null,error:{message:e.message}}; }
+      if(String(deps.window.__nodoChatCurrentTicket?._chatId)!==String(chatId)) return;
+    }else if(!betaError) r = await deps.rpc("panel_core_get_chat_mensajes_json", {p_chat_id: String(chatId)});
+    if(!betaActive && !betaError && (r?.error || !deps.normArr(r.data).length)){
       const fb = await deps.rpc("panel_v154_plus_get_chat_mensajes", {p_chat_id: String(chatId)});
       if(!fb?.error) r = fb;
     }
 
     if(r?.error){
+      if(betaActive || betaError) return r; // Keep the last confirmed page; the beta status exposes the error.
       const msg = r.error.message || JSON.stringify(r.error);
       const b1 = deps.document.getElementById("chatBody");
       const b2 = deps.document.getElementById("v15ChatBody");

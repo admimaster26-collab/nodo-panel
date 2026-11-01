@@ -161,10 +161,10 @@
     // Con texto, manda el servidor: score y segmento calculados sobre TODAS las
     // operaciones del usuario, no sobre las 200 que hay en memoria. El RPC devuelve los
     // mismos nombres de campo que arma buildCRM, así que la tabla no cambia.
-    if(qraw.trim().length >= 3) _crmBuscarServidor(qraw.trim(), seg, turn, orden);
+    if(qraw.trim().length >= 3) return _crmBuscarServidor(qraw.trim());
   };
 
-  async function _crmBuscarServidor(q, seg, turn, orden){
+  async function _crmBuscarServidor(q){
     const box=document.getElementById("crmTabla");
     if(box && !window._crmCargado) box.innerHTML='<div class="alert-box">Buscando…</div>';
     try{
@@ -179,16 +179,12 @@
         if(data.error==='BUSQUEDA_CORTA') return;
         throw new Error(data.error);
       }
-      let res=(data&&data.jugadores)||[];
+      const res=data&&data.jugadores;
+      if(!Array.isArray(res))throw new Error('El servidor no devolvió una lista válida de jugadores.');
       // Los guardamos para que el perfil y los botones de la fila los encuentren.
       window._crmBuscados=window._crmBuscados||{};
       res.forEach(function(j){ window._crmBuscados[String(j.usuario).toLowerCase()]=j; });
-      // El filtro por segmento se fue con el segmento.
-      if(turn) res=res.filter(j=>U(j.turnoFrecuente)===turn);
-      if(orden==="ultima") res.sort((a,b)=>(toDate(b.ultimaOperacion)||0)-(toDate(a.ultimaOperacion)||0));
-      else if(orden==="cargas") res.sort((a,b)=>b.montoCargas-a.montoCargas);
-      else if(orden==="neto")   res.sort((a,b)=>b.neto-a.neto);
-      else res.sort((a,b)=>b.score-a.score);
+      // El servidor ya entrega la selección y el orden; conservar su respuesta.
       renderCRMTabla(res);
     }catch(e){
       if(box) box.innerHTML='<div class="err-box" style="padding:10px">No se pudo buscar: '+escapeHtml(e.message||'')+'</div>';
@@ -1186,6 +1182,8 @@ window.crmBuscarDebounce=function(){
     const st = window._crmBusq;
     const caja = document.getElementById("crmResultados");
     if(!caja) return;
+    const health=window.NodoSalud?.begin('IDENTIDAD');
+    try{
 
     // Token en vez de candado booleano: renderCRM repinta la vista varias veces, y con un
     // candado la segunda llamada se salteaba y la respuesta de la primera terminaba escrita en
@@ -1206,11 +1204,20 @@ window.crmBuscarDebounce=function(){
         p_offset: st.pagina * st.cantidad,
         p_secret: window.PANEL_DATA_SECRET
       });
+      health?.reply(error);
+      if(miPedido !== st.pedido || (health && !health.current()))return;
       if(error) throw error;
-      filas = data || [];
+      if(!Array.isArray(data) || data.some(row=>!row || typeof row.usuario!=='string' || !row.usuario.trim()
+        || !Number.isFinite(Number(row.total)) || Number(row.total)<0)){
+        const invalid=new Error('El servidor no devolvió una lista válida de jugadores.');
+        invalid.code='IDENTIDAD_INVALID_DATA';throw invalid;
+      }
+      filas = data;
       st.total = filas.length ? Number(filas[0].total) : 0;
+      health?.record('DATA','OK','IDENTIDAD_LIST_VALID');
     }catch(e){
-      if(miPedido !== st.pedido) return;              // llegó tarde: ya hay otra búsqueda
+      if(miPedido !== st.pedido || (health && !health.current())) return; // llegó tarde: ya hay otra búsqueda
+      health?.record('DATA','ERROR',e.code==='IDENTIDAD_INVALID_DATA'?'IDENTIDAD_INVALID_DATA':health.errorCode(e));
       const box = document.getElementById("crmResultados");
       const msg = String((e && e.message) || e);
       if(box) box.innerHTML = '<div class="alert-box">No se pudo buscar: ' + escapeHtml(msg)
@@ -1222,7 +1229,7 @@ window.crmBuscarDebounce=function(){
     if(miPedido !== st.pedido) return;                // respuesta vieja, la descartamos
     // Se vuelve a buscar la caja: entre el pedido y la respuesta la vista pudo repintarse.
     const box = document.getElementById("crmResultados");
-    if(!box) return;
+    if(!box){health?.record('RENDER','UNKNOWN','IDENTIDAD_DOM_UNAVAILABLE');return;}
 
     // Misma regla al revés: si buscás, se apaga la lista completa.
     const tabla = document.getElementById("crmTabla");
@@ -1235,6 +1242,7 @@ window.crmBuscarDebounce=function(){
       box.innerHTML = '<div class="small" style="padding:14px;color:var(--muted)">'
         + (st.q ? 'Nadie con «' + escapeHtml(st.q) + '».' : 'Sin jugadores para mostrar.')
         + '</div>';
+      health?.record('RENDER','OK','IDENTIDAD_DOM_UPDATED');
       return;
     }
 
@@ -1289,6 +1297,11 @@ window.crmBuscarDebounce=function(){
         }).join("")
       + '</tbody></table></div>'
       + pie;
+    health?.record('RENDER','OK','IDENTIDAD_DOM_UPDATED');
+    }catch(error){
+      health?.record('RENDER','ERROR','IDENTIDAD_RENDER_FAILED');
+      throw error;
+    }
   };
 
   // ── Push, de a un jugador por vez ─────────────────────────────────────────

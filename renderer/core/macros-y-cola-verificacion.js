@@ -1,6 +1,7 @@
 let macrosList = [];
 
 async function cargarMacros(){
+  window.NodoSalud?.begin('WORKERS')?.record('DATA','OK','MACROS_LOAD');
   try {
     const { data } = await supabaseClient.from('macros')
       .select('*')

@@ -66,6 +66,7 @@ window._altaMarcarResuelto=function(usuario,telefono){
     const m=_altaResLeer();
     m[_altaResKey(d.u,d.t)]={ usuario:String(usuario||''), telefono:String(telefono||''), cuando:Date.now() };
     _altaResGuardar(m);
+    try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
   }catch(_e){}
 };
 // El verde no se cree solo: se confirma contra el cotejo recién traído. Si el vínculo se deshizo

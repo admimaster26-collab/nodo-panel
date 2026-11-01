@@ -22,8 +22,52 @@ function _nexoBonoDesc(pct){
 // el sync la mezcla con el archivo local (que trae lo de tiempo real).
 window._nexoOpsCache = window._nexoOpsCache || null;
 window._nexoOpsCacheAt = window._nexoOpsCacheAt || 0;
+window._nexoEstado = window._nexoEstado || { mode: 'legacy', completo: false, analizadas: 0, total: null, corteFecha: null };
+window._nexoCapCache = window._nexoCapCache || {};
+async function _nexoCargarOpsBeta(pc){
+  if(!pc || !window.panelAPI || typeof window.panelAPI.rpc !== 'function') return null;
+  try{
+    if(typeof window.panelAPI.getContext === 'function'){
+      const rawCtx = await window.panelAPI.getContext();
+      const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
+      if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(pc))) return null;
+    }
+    if(window._nexoCapCache[pc] !== true){
+      const capRes = await window.panelAPI.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: pc, p_activate: false });
+      const capData = capRes && capRes.data;
+      const caps = (capData && Array.isArray(capData.capabilities)) ? capData.capabilities : [];
+      if(!capData || capData.ok !== true || capData.enabled !== true || !caps.includes('nexo.export.v1')) return null;
+      window._nexoCapCache[pc] = true;
+    }
+    let todas = [], cursor = null, paginas = 0, total = null, completo = true;
+    while(paginas < 16){
+      const r = await window.panelAPI.rpc('nodo_beta_nexo_export_v1', { p_pc_codigo: pc, p_limit: 500, p_cursor: cursor });
+      if(!r || r.error || !r.data || r.data.ok !== true || !Array.isArray(r.data.rows)) return null;
+      todas = todas.concat(r.data.rows);
+      total = r.data.total != null ? Number(r.data.total) : total;
+      paginas++;
+      if(!r.data.has_more || !r.data.next_cursor){ completo = true; break; }
+      cursor = r.data.next_cursor;
+      completo = false;
+    }
+    const ult = todas.length ? todas[todas.length - 1] : null;
+    window._nexoEstado = { mode: 'beta', completo: completo, analizadas: todas.length, total: total, corteFecha: ult ? ult.created_at : null };
+    return todas;
+  }catch(_e){ return null; }
+}
 async function _nexoCargarOpsCompletas(force){
   const FRESH = 15*60*1000;
+  const health = window.NodoSalud?.begin('NEXO');
+  const pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase();
+  if(!force && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
+  const betaRows = await _nexoCargarOpsBeta(pc);
+  if(Array.isArray(betaRows)){
+    window._nexoOpsCache = betaRows;
+    window._nexoOpsCacheAt = Date.now();
+    health?.reply(null);
+    health?.record('DATA', window._nexoEstado.completo ? 'OK' : 'DEGRADED', window._nexoEstado.completo ? 'NEXO_EXPORT_COMPLETE' : 'NEXO_EXPORT_TRUNCATED');
+    return betaRows;
+  }
   if(!force && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
   try{
     if(typeof supabaseClient==='undefined' || !supabaseClient) return window._nexoOpsCache||[];
@@ -40,7 +84,15 @@ async function _nexoCargarOpsCompletas(force){
       if(data.length < PAG) break;
       desde += PAG;
     }
-    if(todas.length){ window._nexoOpsCache = todas; window._nexoOpsCacheAt = Date.now(); }
+    if(todas.length){
+      window._nexoOpsCache = todas;
+      window._nexoOpsCacheAt = Date.now();
+      const completo = todas.length < MAX;
+      const ult = todas[todas.length - 1];
+      window._nexoEstado = { mode: 'legacy', completo: completo, analizadas: todas.length, total: completo ? todas.length : null, corteFecha: ult ? ult.created_at : null };
+      health?.reply(null);
+      health?.record('DATA', completo ? 'OK' : 'DEGRADED', completo ? 'NEXO_LEGACY_OK' : 'NEXO_LEGACY_TRUNCATED_8000');
+    }
   }catch(_e){}
   return window._nexoOpsCache || [];
 }

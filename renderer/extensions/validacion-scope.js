@@ -203,6 +203,7 @@
         updated_at:new Date().toISOString()
       };
       const r=await supabaseClient.from("validaciones_usuario").insert(row);
+      window.NodoSalud?.begin('VALIDACION')?.reply(r?.error);
       if(r.error)throw r.error;
       try{if(typeof toast==="function")toast("Validación creada en "+pc+": "+usuario,"green")}catch(_e){}
       if(typeof window.cargarVerificaciones==="function")await window.cargarVerificaciones();

@@ -176,6 +176,7 @@ async function _generarAlternativasAlias(base, cantidad){
   }
   // Filtrar los que YA existen en nuestra base local (cualquier oficina, indistinto)
   const unicos = [...new Set(candidatos)];
+  window.NodoSalud?.begin('VALIDACION')?.record('DATA','OK','ALTA_ALIAS_CHECK');
   try {
     const { data } = await supabaseClient
       .from('usuarios')

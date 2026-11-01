@@ -9,6 +9,7 @@
   function create(deps){
 const api = {};
 async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, restante, montoTotal, saldoPost, desde){
+  deps.window.NodoSalud?.begin('RETIROS')?.record('EFFECT','OK','RETIRO_PARCIAL_NOTIFY');
   if(!deps.window.panelAPI || !deps.window.panelAPI.rpc || !solicitudId) return { ok:false, detail:'sin panelAPI/id' };
   const op = (deps.window.operador && (deps.window.operador.usuario||deps.window.operador.nombre)) || 'panel';
   const sid = Number(solicitudId);
@@ -56,47 +57,32 @@ async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, 
 }
 api.notificarRetiroParcialPortal = notificarRetiroParcialPortal;
 
-async function _rv2LeerSaldo(intento){
-  const st = deps.withdrawalState.current; if(!st || !deps.window.ctrlElectron) return;
+// Las fichas del modal salen de la misma lectura que "Ver" y la tarjeta de la lista: espera al agente
+// si está ocupado y deja el resultado donde lo lee el resto del panel. Antes este modal tenía su
+// propia copia y fallaba distinto que todo lo demás.
+async function _rv2LeerSaldo(){
+  const st = deps.withdrawalState.current; if(!st) return;
   const pintar=function(){ try{ deps._rv2PintarVeredicto(); deps._rv2ActualizarBotonAprobar(); }catch(_e){} };
-  // El agente puede estar tomado por otra operación justo cuando abrís el modal. Antes se
-  // intentaba UNA vez, quedaba en "no pudimos leer sus fichas" y ahí moría — y como _rv2Aprobar
-  // sólo valida el saldo si pudo leerlo, el retiro salía SIN chequear las fichas. Ahora reintenta.
-  intento = Number(intento||0);
-  if(!deps._drexGlobalLock('rv2-saldo')){
-    if(intento < 6 && deps.withdrawalState.current===st){
-      st.saldoFallo='ocupado'; pintar();
-      deps.setTimeout(function(){ if(deps.withdrawalState.current===st) _rv2LeerSaldo(intento+1); }, 2500);
-      return;
-    }
-    st.saldoFallo='ocupado'; pintar(); return;
-  }
-  deps._wdLock();
-  try{
-    const b = await deps.callDrex('buscarUsuario', st.usuario, { skipBalance:false });
-    // Sólo se cree un saldo LEÍDO de verdad: con dígitos en el texto y sin la sesión caída. Con la
-    // sesión inválida el casino deja la lista de fondo y el modal del saldo no abre bien: el preload
-    // devolvía 0 y el modal decía "NO TIENE FICHAS · $0" con el jugador teniendo $35.020.
-    const _raw = String((b && b.balance && b.balance.raw) || '');
-    const _confiable = !!(b && b.exists && !b.needsLogin && !b.pageError
-      && typeof b.balance?.value === 'number' && Number.isFinite(b.balance.value) && /\d/.test(_raw));
-    if(_confiable){
-      st.saldoReal = b.balance.value; st.saldoFallo = null;
-      // Y que la tarjeta de pendientes también lo sepa: de ahí sale el atajo "Retirar lo que tiene",
-      // que dependía sólo del escaneo en segundo plano y después de recargar no aparecía.
-      try{
-        deps.window._retiroSaldoCheck = deps.window._retiroSaldoCheck || {};
-        const _m = Number(st.objetivo || st.declarado || 0);
-        deps.window._retiroSaldoCheck[String(st.usuario).toLowerCase()] = {
-          saldo: b.balance.value, monto: _m, suficiente: b.balance.value + 0.5 >= _m,
-          confiable: true, ts: Date.now(), raw: _raw.trim() };
-      }catch(_e){}
-    } else {
-      st.saldoFallo = (b && (b.needsLogin || b.pageError)) ? 'sesion' : 'ilegible';
-    }
-  }catch(_e){ st.saldoFallo='ilegible'; }
-  finally{ deps._wdUnlock(); deps._drexGlobalUnlock(); pintar(); }
+  st.saldoFallo = null; pintar();
+  let r = null;
+  try{ r = await deps.window.revisarFichasRetiro({ usuario:st.usuario, monto:st.objetivo||st.declarado, forzar:true }); }
+  catch(_e){}
+  if(deps.withdrawalState.current!==st) return;
+  // Sólo se cree un saldo LEÍDO de verdad: un 0 por sesión caída decía "NO TIENE FICHAS" con el
+  // jugador teniendo $35.020.
+  if(r && r.confiable===true){ st.saldoReal = r.saldo; st.saldoFallo = null; }
+  else { st.saldoFallo = (r && r.motivo) || 'ilegible'; }
+  pintar();
 }
+// Botón "Reintentar" del cotejo de fichas. Con la sesión caída, primero se entra de nuevo.
+api._rv2ReleerFichas = async function(){
+  const st = deps.withdrawalState.current; if(!st) return;
+  if(st.saldoFallo==='sesion'){
+    let ok = false; try{ ok = await deps.ensureDrexSession(); }catch(_e){}
+    if(!ok || deps.withdrawalState.current!==st) return;
+  }
+  await _rv2LeerSaldo();
+};
 
 // APROBAR: valida, extrae las fichas UPFRONT (para que no se las jueguen) y pasa a
 // la fase de confirmar cada transferencia.
@@ -120,14 +106,14 @@ api._rv2Aprobar = async function(){
   // en silencio (la condición pedía saldoReal!=null) y el retiro salía sin verificar nada.
   if(st.saldoReal==null){
     deps.toast('Leyendo las fichas de '+st.usuario+' antes de pagar…','blue');
-    try{ await _rv2LeerSaldo(99); }catch(_e){}          // 99 = sin reintentos, es el último tiro
+    try{ await _rv2LeerSaldo(); }catch(_e){}
     // Se cayó la sesión (PCs con poca actividad): se abre el login y, al entrar, se vuelve a leer
     // y se sigue. Antes decía "reabrí el retiro" y había que arrancar todo de nuevo.
     if(st.saldoReal==null && st.saldoFallo==='sesion'){
       deps.toast('Se cayó la sesión de Agentes · entrá y sigo con el retiro','yellow');
       let _okSes = false; try{ _okSes = await deps.ensureDrexSession(); }catch(_e){}
       if(!_okSes || deps.withdrawalState.current!==st) return;
-      try{ await _rv2LeerSaldo(99); }catch(_e){}
+      try{ await _rv2LeerSaldo(); }catch(_e){}
     }
   }
   if(st.saldoReal==null){
@@ -317,7 +303,7 @@ api._rv2Aprobar = async function(){
     try{ deps.toast('⚠ Se pagó pero NO se cerró la solicitud · anotalo', 'red'); }catch(_e){}
     try{ deps.alert('⚠️ El retiro SE PAGÓ pero falló el cierre.\n\n' + _d
       + '\n\nLa plata ya salió y la solicitud quedó con el estado anterior.'
-      + '\nAnotalo y cerralo desde 💸 Parciales.'); }catch(_e){}
+      + '\nAnotalo y cerralo desde 💸 En proceso.'); }catch(_e){}
   }
 };
 
@@ -416,7 +402,7 @@ const _rv2FinalizarInterno = async function(stCapturado){
     try{ deps._trazaPaso('Se perdió el estado del retiro antes de cerrarlo', 'err'); }catch(_e){}
     try{ deps.alert('⚠️ Se perdió el estado del retiro justo antes de cerrarlo.\n\n'
       + 'Si ya transferiste, la plata salió y la solicitud NO se actualizó.'
-      + '\nRevisá el historial y cerrala desde 💸 Parciales.'); }catch(_e){}
+      + '\nRevisá el historial y cerrala desde 💸 En proceso.'); }catch(_e){}
     return;
   }
   try{ deps._trazaPaso('Cerrando la solicitud...'); }catch(_e){}
@@ -557,12 +543,12 @@ const _rv2FinalizarInterno = async function(stCapturado){
       try{ deps.toast('⚠ El retiro se pagó pero la solicitud quedó con el estado anterior','red'); }catch(_e){}
       try{ deps.alert('⚠️ Se pagó '+deps.money(total)+', pero la solicitud NO pasó a '+_estadoFinal+'.\n\n'
         + 'Va a seguir figurando con el estado viejo (por eso a veces un retiro ya saldado queda "en proceso").\n\n'
-        + 'Cerralo desde el botón 💸 Parciales cuando puedas.'); }catch(_e){}
+        + 'Cerralo desde el botón 💸 En proceso cuando puedas.'); }catch(_e){}
     }
   }catch(e){
     try{ deps.toast('⚠ El retiro se pagó pero falló actualizar la solicitud · revisalo','red'); }catch(_e){}
     try{ deps.alert('⚠️ El retiro se pagó ('+deps.money(total)+') pero falló actualizar la solicitud:\n\n'
-      + ((e&&e.message)||String(e)) + '\n\nQuedó con el estado anterior — revisalo en 💸 Parciales.'); }catch(_e){}
+      + ((e&&e.message)||String(e)) + '\n\nQuedó con el estado anterior — revisalo en 💸 En proceso.'); }catch(_e){}
   }
   try{
     const msg = completo

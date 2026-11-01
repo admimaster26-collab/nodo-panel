@@ -431,7 +431,9 @@ async function retirarSaldoRapido(usuario, monto){
     return;
   }
 
+  const _autoHealth = window.NodoSalud?.begin('AUTOMATISMOS');
   const r = await callDrex("retirarSaldo", monto);
+  _autoHealth?.record('EFFECT', (r && r.ok === false) ? 'ERROR' : 'OK', (r && r.ok === false) ? 'AUTO_RETIRO_FAILED' : 'AUTO_RETIRO_OK');
   if(r && r.ok === false){ toast("Error: " + (r.message||"falló"), "red"); return; }
 
   // Esto insertaba en la tabla `solicitudes`, muerta desde el 30 de mayo: el retiro salía y no
@@ -613,7 +615,9 @@ async function ejecutarAutoRetiro(id){
   }
 
   toast(`Retirando $${monto.toLocaleString("es-AR")}...`,"blue");
+  const _autoHealth = window.NodoSalud?.begin('AUTOMATISMOS');
   const r = await callDrex("retirarSaldo", monto);
+  _autoHealth?.record('EFFECT', (r && r.ok === false) ? 'ERROR' : 'OK', (r && r.ok === false) ? 'AUTO_RETIRO_FAILED' : 'AUTO_RETIRO_OK');
 
   if(r && r.ok === false){
     await actualizarSolicitudSupabase(id, {

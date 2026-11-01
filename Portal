@@ -465,7 +465,7 @@ const PLATFORM_URL = "https://bet-300.pw";
 // Sello de versión a la vista. Sin esto no hay forma de saber si lo que se abrió es el portal
 // nuevo o la copia vieja que guardó el service worker en el teléfono. Se cambia a mano en cada
 // publicación, junto con la versión del sw.js.
-const PORTAL_VER="v2.1.6 · 21/10";
+const PORTAL_VER="v2.1.7 · 25/10";
 let sb=null;try{if(SUPABASE_ANON_KEY&&!SUPABASE_ANON_KEY.includes("PEGAR_"))sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)}catch(e){console.warn(e)}
 
 const state={
@@ -485,7 +485,7 @@ const state={
   // ve otra billetera y no entiende nada — o peor, cree que transfirió mal.
   pendingBilletera:localStorage.getItem("bet300_pending_billetera")||"",
   seenMsgIds:new Set(),
-  // Globo dibujado de cada mensaje propio, para poder ponerle el tilde cuando lo lean.
+  // Globos identificados por conversación + ID del servidor, nunca por su texto.
   misGlobos:new Map(),
   portalThreadSeen:new Set(JSON.parse(localStorage.getItem("bet300_portal_thread_seen")||"[]")),
   shownTexts:new Set(),
@@ -805,14 +805,15 @@ function addMsg(text,who="bot",imgUrl=null,meta=null){
   const labels={user:"Vos",operator:"Operador",bot:"Bot automático",guide:"Guía automática · opciones",system:"Sistema"};
   const stamp=meta?.fecha||meta?.created_at;
   const time=stamp?(_fechaCorta(stamp)||now()):now();
-  wrap.innerHTML='<div class="bubble">'+cuerpo+imgHtml+(actions?'<div class="chat-help-actions">'+actions+'</div>':"")+'</div><div class="meta">'+labels[who]+" · "+esc(time)+((who==="user")?'<span class="visto" aria-label="enviado">✓</span>':'')+'</div>';
+  wrap.innerHTML='<div class="bubble">'+cuerpo+imgHtml+(actions?'<div class="chat-help-actions">'+actions+'</div>':"")+'</div><div class="meta">'+labels[who]+" · "+esc(time)+((who==="user"&&!meta?.local)?'<span class="visto" aria-label="enviado">✓</span>':'')+'</div>';
   $("messages").appendChild(wrap);scrollChat();
-  // Se guarda con la MISMA clave que usa el dedup de renderThreadMsg, así el poll lo encuentra.
-  if(who==="user"){
-    try{
-      const _k = text ? ("u|"+String(text).substring(0,200)) : ("uimg|"+String(imgUrl||"").substring(0,80));
-      state.misGlobos.set(_k, wrap);
-    }catch(_e){}
+  if(!meta?.local && typeof portalMensajeClave==='function'){
+    portalChatPreparar();
+    const key=portalMensajeClave(meta);
+    if(key){
+      if(who==='user')state.misGlobos.set(key,wrap);
+      if(typeof portalRegistrarGlobo==='function')portalRegistrarGlobo(meta,wrap);
+    }
   }
   return wrap;
 }
@@ -949,59 +950,227 @@ function _infoNavegador(){
 }
 
 // ── Chat poll ─────────────────────────────────────────────────────────────
-function startChatPoll(){stopChatPoll();if(!state.chatId)return;chatPollTimer=setInterval(pollOperatorMessages,5000);}
+// Un coordinador y un vuelo por identidad. La beta recibe la página resuelta y el
+// adaptador legacy del servidor; la oficina antigua conserva sus dos lecturas.
+// Un error ambiguo no dispara otra ruta. Sólo ausencia de función o capacidad
+// explícitamente no disponible permite seleccionar legacy.
+const PORTAL_CHAT_BETA_RPC='landing_beta_chat_leer_v1';
+let portalChatVuelo=null, portalChatHistorialVuelo=null, portalChatContexto='', portalChatRuta='probe';
+let portalChatRevisarEn=0, portalChatCursor=null, portalChatInicializado=false;
+let portalChatGlobos=new Map();
+let portalChatSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
+function portalChatEstado(){return {...portalChatSalud,ruta:portalChatRuta,enCurso:!!portalChatVuelo};}
+function portalChatClave(){return JSON.stringify([state.publicCode||'',state.pcCodigo||'',state.usuario||'',state.telefono||'',state.chatId||'',state.chatToken||'']);}
+function portalChatPreparar(){
+  const key=portalChatClave();
+  if(portalChatContexto!==key){
+    for(const node of portalChatGlobos.values())node.remove();
+    portalChatGlobos=new Map();state.misGlobos=new Map();
+    state.seenMsgIds=new Set();state._threadRendered=new Set();
+    state.shownTexts=new Set();state._opMsgSeen=new Set();
+    portalChatContexto=key;portalChatRuta='probe';portalChatRevisarEn=0;
+    portalChatCursor=null;portalChatInicializado=false;portalChatHistorialVuelo=null;
+    portalChatSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
+    const button=$('chatEarlier');if(button)button.remove();
+  }
+  return key;
+}
+function portalMensajeClave(m){
+  const id=m&&m.id;
+  if(id!=null&&String(id)!=='')return portalChatClave()+'|m:'+String(id);
+  return m&&m.portal_key?portalChatClave()+'|'+String(m.portal_key):'';
+}
+function portalRegistrarGlobo(m,node){
+  const key=portalMensajeClave(m);
+  if(key)portalChatGlobos.set(key,node);
+}
+function portalChatFuncionAusente(error,name){
+  return !!error && ['PGRST202','42883'].includes(String(error.code||''))
+    && String(error.message||'').includes(name);
+}
+function portalChatUsarRuta(route){
+  if(portalChatRuta!==route&&(portalChatRuta==='beta'||route==='beta')){
+    // Cambio de representación: descartar sólo globos remotos, conservar la guía
+    // y reconstruir desde la respuesta autorizada. No unir copias por su texto.
+    for(const node of portalChatGlobos.values())node.remove();
+    portalChatGlobos=new Map();state.misGlobos=new Map();
+    state.seenMsgIds=new Set();state._threadRendered=new Set();state.shownTexts=new Set();state._opMsgSeen=new Set();
+    portalChatInicializado=false;portalChatCursor=null;
+    const button=$('chatEarlier');if(button)button.remove();
+  }
+  portalChatRuta=route;
+}
+function startChatPoll(){
+  if(!state.usuario&&!state.chatId)return;
+  if(!chatPollTimer)chatPollTimer=setInterval(pollPortalConversation,5000);
+}
 function stopChatPoll(){if(chatPollTimer){clearInterval(chatPollTimer);chatPollTimer=null;}}
-async function pollOperatorMessages(){
-  if(!state.chatId||!$("widget")?.classList.contains("open"))return;
-  const res=await rpc("landing_leer_chat_v2",{p_chat_id:Number(state.chatId),p_chat_token:state.chatToken});
-  if(res.error||!Array.isArray(res.data)){_onPollFail();return;}
-  _onPollOk();
-  // El servidor ya manda `leido` por mensaje en esta misma respuesta: no hace falta pedir nada
-  // más. Hoy se pone en true cuando NODO descarga la conversación; cuando el panel mande el
-  // acuse explícito va a significar "el operador lo vio en pantalla". El Portal no cambia: lee
-  // el mismo campo y el tilde se vuelve más honesto solo.
-  try{ marcarVistos(res.data); }catch(_e){}
-  res.data.forEach(m=>{
-    const msgKey=String(m.id||m.created_at||JSON.stringify(m));
-    if(state.seenMsgIds.has(msgKey))return;
-    state.seenMsgIds.add(msgKey);
+function startPortalThreadPoll(){startChatPoll();}
+function stopPortalThreadPoll(){stopChatPoll();}
+function pollOperatorMessages(){return pollPortalConversation();}
+function pollPortalThread(){return pollPortalConversation();}
+
+function portalChatRenderRows(rows,notificar,prepend){
+  const host=$('messages');if(!host)return;
+  const first=host.firstChild&&host.firstChild.id==='chatEarlier'?(host.children[1]||null):host.firstChild;
+  const previousTop=host.scrollTop,previousHeight=host.scrollHeight;
+  for(const m of rows){
+    const key=portalMensajeClave(m);
+    if(!key)continue;
+    const old=portalChatGlobos.get(key);
+    const signature=JSON.stringify([m.tipo_emisor,m.origen,m.emisor,m.auto,m.mensaje,m.texto,m.imagen_url,m.imagen]);
+    if(old&&old._portalSignature===signature)continue;
     const who=chatMessageRole(m);
-    const isOp=who!=="user";
-    const texto=m.mensaje||m.texto||"";
-    if(isOp&&(texto||m.imagen_url)){const tk=(texto||m.imagen_url||"").substring(0,200);if(state.shownTexts.has(tk))return;state.shownTexts.add(tk);incomingOperatorMsg(texto,m.imagen_url||null,m);if(texto)notificarLocal("BET300 · "+(who==="operator"?"Operador":who==="bot"?"Bot automático":"Sistema"),chatHelpMessage(texto,who).text.substring(0,100),"/","bet300-op");}
-  });
+    let text=String(m.mensaje||m.texto||''),ing=null;
+    if(who!=='user')text=text.replace(/⟦INGRESAR:([^⟧]*)⟧/g,function(_all,value){ing=String(value).split('|');return '';}).trim();
+    const img=m.imagen_url||m.imagen||null;
+    if(!text&&!img){if(ing)mostrarBotonIngresar(ing[0],ing[1]);continue;}
+    const node=addMsg(escMsg(text),who,img,m);
+    node._portalSignature=signature;
+    node._portalCanonicalId=m.id==null?'':String(m.id);
+    portalChatGlobos.set(key,node);
+    if(old){host.insertBefore(node,old);old.remove();}
+    else if(node._portalCanonicalId){
+      const id=node._portalCanonicalId;
+      const after=Array.from(host.children).find(n=>n!==node&&n._portalCanonicalId
+        &&(n._portalCanonicalId.length>id.length||(n._portalCanonicalId.length===id.length&&n._portalCanonicalId>id)));
+      if(after)host.insertBefore(node,after);
+    }else if(prepend)host.insertBefore(node,first);
+    if(ing)mostrarBotonIngresar(ing[0],ing[1]);
+    if(!old&&notificar&&who!=='user'&&state.screen!=='chat'){
+      bumpUnread();showOperatorBubble(text,img);
+      if(text)notificarLocal('BET300 · '+(who==='operator'?'Operador':who==='bot'?'Bot automático':'Sistema'),chatHelpMessage(text,who).text.substring(0,100),'/','bet300-op');
+    }
+  }
+  marcarVistos(rows);
+  if(prepend)host.scrollTop=previousTop+(host.scrollHeight-previousHeight);
+}
+function portalChatMostrarAnterior(data,append){
+  if(!append&&portalChatInicializado)return;
+  portalChatCursor=data.has_more?data.next_before_id:null;
+  let button=$('chatEarlier');
+  if(!portalChatCursor){if(button)button.remove();return;}
+  if(!button){
+    button=document.createElement('button');button.id='chatEarlier';button.type='button';
+    button.className='ghost-btn';button.onclick=portalCargarMensajesAnteriores;
+    $('messages').insertBefore(button,$('messages').firstChild);
+  }
+  button.disabled=false;button.textContent='Ver mensajes anteriores';
+}
+async function portalCargarMensajesAnteriores(){
+  if(portalChatRuta!=='beta'||!portalChatCursor||portalChatHistorialVuelo)return;
+  const key=portalChatClave(),cursor=portalChatCursor,button=$('chatEarlier');
+  const flight={key};portalChatHistorialVuelo=flight;if(button)button.disabled=true;
+  try{
+    const res=await rpc(PORTAL_CHAT_BETA_RPC,{p_chat_id:state.chatId,p_chat_token:state.chatToken,p_limit:50,p_before_id:cursor});
+    if(key!==portalChatClave())return;
+    const data=portalChatBetaRespuesta(res);
+    if(!data||!data.available)throw {code:'CAPACIDAD_CAMBIO'};
+    portalChatRenderRows(data.rows,false,true);portalChatMostrarAnterior(data,true);
+  }catch(error){
+    if(key===portalChatClave()){
+      portalChatSalud={...portalChatSalud,estado:'error',ultimoError:String(error&&error.code||'SIN_CONEXION')};
+      if(button){button.disabled=false;button.textContent='Reintentar mensajes anteriores';}
+    }
+  }finally{if(portalChatHistorialVuelo===flight)portalChatHistorialVuelo=null;}
+}
+function portalChatBetaRespuesta(res){
+  if(res&&res.error)throw res.error;
+  let data=res&&res.data;if(typeof data==='string')data=JSON.parse(data);
+  if(data&&data.ok===true&&data.available===false&&data.contract==='legacy')return data;
+  if(!data||data.ok!==true||data.available!==true||data.contract!=='nodo.beta.v1'
+    ||String(data.chat_id)!==String(state.chatId)
+    ||!Array.isArray(data.rows)||!Array.isArray(data.legacy_thread)
+    ||!Array.isArray(data.capabilities)||!data.capabilities.includes('portal.thread.v1')
+    ||!data.capabilities.includes('portal.seen.v1')
+    ||typeof data.has_more!=='boolean'||(data.has_more&&!data.next_before_id))throw {code:'CONTRATO_INVALIDO'};
+  return data;
+}
+async function pollPortalConversation(){
+  if(!state.usuario||!$('widget')?.classList.contains('open'))return;
+  const key=portalChatPreparar();
+  if(portalChatVuelo&&portalChatVuelo.key===key)return portalChatVuelo.promise;
+  const flight={key,promise:null};portalChatVuelo=flight;
+  const current=()=>key===portalChatClave();
+  portalChatSalud={...portalChatSalud,estado:'consultando',ultimoError:null};
+  flight.promise=(async()=>{
+    try{
+      let beta=null;
+      if(state.chatId&&state.chatToken&&(portalChatRuta!=='legacy'||Date.now()>=portalChatRevisarEn)){
+        const res=await rpc(PORTAL_CHAT_BETA_RPC,{p_chat_id:state.chatId,p_chat_token:state.chatToken,p_limit:50,p_before_id:null});
+        if(!current())return;
+        if(portalChatFuncionAusente(res&&res.error,PORTAL_CHAT_BETA_RPC)){
+          portalChatUsarRuta('legacy');portalChatRevisarEn=Infinity;
+        }else{
+          beta=portalChatBetaRespuesta(res);
+          if(beta.available){
+            portalChatUsarRuta('beta');
+            // Si una desconexión dejó más de una página nueva, ofrecer el tramo
+            // intermedio antes de seguir hacia el historial viejo. No saltarlo.
+            const recovery=portalChatInicializado&&beta.rows.length>0
+              &&!beta.rows.some(m=>portalChatGlobos.has(portalMensajeClave(m)));
+            portalChatRenderRows(beta.rows,portalChatInicializado,false);
+            portalChatRenderLegacy(beta.legacy_thread,true);
+            portalChatMostrarAnterior(beta,recovery);portalChatInicializado=true;
+          }else{
+            portalChatUsarRuta('legacy');portalChatRevisarEn=Date.now()+60000;
+          }
+        }
+      }
+      if(!beta||!beta.available){
+        if(state.chatId&&state.chatToken){
+          const res=await rpc('landing_leer_chat_v2',{p_chat_id:state.chatId,p_chat_token:state.chatToken});
+          if(!current())return;
+          if(res.error||!Array.isArray(res.data))throw res.error||{code:'CONTRATO_INVALIDO'};
+          // Legacy no acredita visto, aunque devuelva leido:true por descarga.
+          for(const m of res.data){
+            const msgKey=String(m.id||m.created_at||JSON.stringify(m));
+            if(state.seenMsgIds.has(msgKey))continue;state.seenMsgIds.add(msgKey);
+            const who=chatMessageRole(m),text=m.mensaje||m.texto||'';
+            if(who!=='user'&&(text||m.imagen_url)){
+              const tk=(text||m.imagen_url||'').substring(0,200);
+              if(!state.shownTexts.has(tk)){state.shownTexts.add(tk);incomingOperatorMsg(text,m.imagen_url||null,m);}
+            }
+          }
+        }
+        const res=await rpc('landing_portal_chat_thread_get',{p_usuario:state.usuario,p_public_code:state.publicCode,p_telefono:state.telefono||''});
+        if(!current())return;
+        if(res.error)throw res.error;
+        const data=normalize(res.data)||res.data||{};
+        if(!Array.isArray(data.chat_thread))throw {code:'CONTRATO_INVALIDO'};
+        portalChatRenderLegacy(data.chat_thread);
+      }
+      if(!current())return;
+      _onPollOk();
+      portalChatSalud={estado:'respuesta_confirmada',contrato:portalChatRuta==='beta'?'nodo.beta.v1':'legacy',ultimoExito:new Date().toISOString(),ultimoError:null};
+      if((state.nivelAcceso||'')!=='OK'&&state.telefono){
+        state._revalTick=(state._revalTick||0)+1;
+        if(state._revalTick===1||state._revalTick%3===0)autoChequeoValidacion();
+      }
+    }catch(error){
+      if(current()){
+        _onPollFail();portalChatSalud={...portalChatSalud,estado:'error',ultimoError:String(error&&error.code||'SIN_CONEXION')};
+      }
+    }finally{if(portalChatVuelo===flight)portalChatVuelo=null;}
+  })();
+  return flight.promise;
 }
 
-// Pinta el tilde de visto en los mensajes del jugador. Dos estados, nada más:
-//   ✓  gris    → se envió
-//   ✓✓ celeste → del otro lado ya lo leyeron
-// No inventa: si el servidor no dice nada, queda en gris.
+// Sólo receipt confirmado por el servidor para el ID exacto de esta conversación.
+// Nunca heredar visto desde leido legacy ni buscar un globo por texto repetido.
 function marcarVistos(filas){
-  if(!Array.isArray(filas)||!state.misGlobos||!state.misGlobos.size)return;
+  if(!Array.isArray(filas)||!state.misGlobos)return;
   for(const m of filas){
-    if(chatMessageRole(m)!=="user")continue;
-    if(!(m&&m.leido===true))continue;
-    const _t=m.mensaje||"";
-    const _k=_t?("u|"+String(_t).substring(0,200)):("uimg|"+String(m.imagen_url||"").substring(0,80));
-    const _g=state.misGlobos.get(_k);
-    if(!_g)continue;
-    const _v=_g.querySelector(".visto");
-    if(_v&&!_v.classList.contains("si")){ _v.textContent="✓✓"; _v.classList.add("si"); _v.setAttribute("aria-label","visto"); }
+    if(chatMessageRole(m)!=='user'||m.id==null||m.visto_confirmado!==true)continue;
+    const node=state.misGlobos.get(portalMensajeClave(m));if(!node)continue;
+    const tick=node.querySelector('.visto');
+    if(tick&&!tick.classList.contains('si')){tick.textContent='✓✓';tick.classList.add('si');tick.setAttribute('aria-label','visto');}
   }
 }
 
-// ── Portal metadata thread poll (respuestas desde panel/NODO) ─────────────
+// ── Adaptador de respuestas de oficinas antiguas ─────────────────────────
 function savePortalThreadSeen(){
   try{localStorage.setItem("bet300_portal_thread_seen",JSON.stringify([...state.portalThreadSeen].slice(-400)));}catch(e){}
-}
-function startPortalThreadPoll(){
-  stopPortalThreadPoll();
-  if(!state.usuario)return;
-  portalThreadTimer=setInterval(pollPortalThread,5000);
-  setTimeout(pollPortalThread,900);
-}
-function stopPortalThreadPoll(){
-  if(portalThreadTimer){clearInterval(portalThreadTimer);portalThreadTimer=null;}
 }
 // Re-chequeo silencioso del cotejo: si dio ACCESO, ofrece el botón "Ingresar" en el chat.
 async function autoChequeoValidacion(){
@@ -1049,22 +1218,15 @@ function renderThreadMsg(m, notificar){
     addMsg(rawTexto?escMsg(rawTexto):"","user",imgUrl||null,m);
   }
 }
-async function pollPortalThread(){
-  if(!state.usuario||!$("widget")?.classList.contains("open"))return;
-  // Respaldo: si el operador validó desde el panel pero la marca ⟦INGRESAR⟧ no llegó/no se vio
-  // (p.ej. tras recargar la página), re-chequeamos el cotejo cada ~10s SOLO mientras el usuario
-  // todavía no entró. Al detectar ACCESO, mostramos el botón "Ingresar" igual.
-  if((state.nivelAcceso||"")!=="OK" && state.telefono){
-    state._revalTick=(state._revalTick||0)+1;
-    if(state._revalTick===1 || state._revalTick%3===0){ autoChequeoValidacion(); }
+function portalChatRenderLegacy(thread,resolved){
+  if(!Array.isArray(thread))return;
+  // En beta el servidor asigna identidad y ámbito a cada respuesta legacy.
+  // No volver a filtrar por texto: dos mensajes iguales pueden ser legítimos.
+  if(resolved){
+    portalChatRenderRows(thread.map(m=>({...m,id:null,visto_confirmado:false})),portalChatInicializado,false);
+    return;
   }
-  const res=await rpc("landing_portal_chat_thread_get",{p_usuario:state.usuario,p_public_code:state.publicCode,p_telefono:state.telefono||""});
-  if(res.error){console.warn("[chat_thread]",res.error);_onPollFail();return;}
-  _onPollOk();
-  const d=normalize(res.data)||res.data||{};
-  const thread=Array.isArray(d.chat_thread)?d.chat_thread:[];
   if(!thread.length)return;
-
   // _threadRendered = set de SESIÓN (lo que ya está en el DOM ahora). Al recargar arranca vacío,
   // así que el historial completo se vuelve a pintar. portalThreadSeen (persistido) solo decide si
   // el mensaje es "nuevo" (para notificar) o parte del historial ya visto.
@@ -1075,7 +1237,7 @@ async function pollPortalThread(){
     state._threadRendered.add(key);
     const nuevo=!state.portalThreadSeen.has(key);
     state.portalThreadSeen.add(key);
-    renderThreadMsg(m, nuevo);
+    renderThreadMsg({...m,portal_key:'l:'+key}, nuevo);
   });
   savePortalThreadSeen();
 }
@@ -1509,18 +1671,19 @@ async function cargarResumenHistorial(){
   historialSalud={...historialSalud,estado:'consultando',ultimoError:null};
   vuelo.promise=(async()=>{
     try{
-      let res;
-      if(historialRuta==='beta'){
+      let res,usedRoute=historialRuta;
+      if(usedRoute==='beta'){
         res=await rpc(HISTORIAL_BETA_RPC,{...args,p_zona_horaria:_historialZona()});
         if(_historialFuncionAusente(res&&res.error)){
           historialRuta='legacy';
+          usedRoute='legacy';
           res=await rpc('landing_historial_usuario',args);
         }
       }else res=await rpc('landing_historial_usuario',args);
       if(res&&res.error)throw res.error;
       let data=res&&res.data;
       if(typeof data==='string')data=JSON.parse(data);
-      if(historialRuta==='legacy'){
+      if(usedRoute==='legacy'){
         if(!Array.isArray(data))throw {code:'CONTRATO_INVALIDO'};
         data=_historialLegacy(data);
       }else if(!data || data.ok!==true || data.contract!=='portal.historial.v1'
@@ -1552,8 +1715,26 @@ function _fechaCorta(iso){
     return p(d.getDate())+"/"+p(d.getMonth()+1)+" "+p(d.getHours())+":"+p(d.getMinutes());
   }catch(_e){ return ""; }
 }
-function _estadoBadge(e, canceladaPor){
+function _jsonDe(v){if(typeof v==='string'){try{return JSON.parse(v);}catch(_){return null;}}return v;}
+function _detalleRetiroHistorial(r){
+  if(String(r.tipo||'').toUpperCase()!=='RETIRO')return '';
+  const pagos=_jsonDe(r.pagos),cierre=_jsonDe(r.cierre);
+  let html='<div style="width:100%;font-size:12px;line-height:1.6;color:#c9d3e0">Pediste <b>'+_money(Number(r.monto)||0)+'</b>';
+  if(r.monto_a_pagar!=null && Number(r.monto_a_pagar)!==Number(r.monto))html+=' · a pagar <b>'+_money(Number(r.monto_a_pagar)||0)+'</b>';
+  if(r.motivo_ajuste)html+='<br>'+esc(r.motivo_ajuste);
+  if(Number(r.pagado)>0)html+='<br>Ya te pagamos <b>'+_money(Number(r.pagado))+'</b>';
+  if(Array.isArray(pagos))for(const p of pagos){
+    html+='<br>'+esc(_fechaCorta(p.fecha))+' · '+_money(Number(p.monto)||0)+(p.desde?' · te transfirió '+esc(p.desde):'');
+  }
+  if(cierre && typeof cierre==='object')html+='<br><b>Se cerró: '+esc(cierre.etiqueta||'Retiro cerrado')+'</b>'+(cierre.nota?' · '+esc(cierre.nota):'');
+  return html+'</div>';
+}
+function _estadoBadge(e, canceladaPor, registro){
   const u=String(e||"").toUpperCase();
+  if(String(registro?.tipo||'').toUpperCase()==='RETIRO'){
+    if(_jsonDe(registro.cierre))return '<span style="font-size:11px;color:#8b95a5">Cerrado</span>';
+    if(u==='EN_PROCESO' && Number(registro.pagado)>0)return '<span style="font-size:11px;color:#f5c518">Te lo estamos pagando</span>';
+  }
   // Una que cancelaste vos NO es un rechazo nuestro. Iban las dos en rojo y como "Rechazada",
   // así que cancelar tu propia carga se leía como si te la hubiéramos rechazado.
   if(u==="CANCELADA"){
@@ -1635,7 +1816,7 @@ async function pintarHistorialUsuario(){
       + '<div style="display:flex;align-items:center;gap:10px"><span style="font-size:18px">'+(esRetiro?"🏧":"💳")+'</span>'
       +   '<div><div style="font-weight:800;font-size:14px;color:#e8edf4">'+(esRetiro?"Retiro":"Carga")+'</div>'
       +   '<div style="font-size:11px;color:#8b95a5">'+esc(_fechaCorta(r.fecha))+'</div></div></div>'
-      + '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#e9c25c">'+_money(Number(r.monto)||0)+'</div>'+_estadoBadge(r.estado, r.cancelada_por)+'</div>'+detalle
+      + '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:#e9c25c">'+_money(Number(r.monto)||0)+'</div>'+_estadoBadge(r.estado, r.cancelada_por,r)+'</div>'+detalle+_detalleRetiroHistorial(r)
       + (rech && r.motivo ? '<div style="width:100%;font-size:11.5px;color:#fca5a5;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.25);border-radius:8px;padding:6px 8px;margin-top:2px">🚫 '+esc(r.motivo)+'</div>' : '')
       + '</div>';
   }).join("");
@@ -1647,6 +1828,7 @@ async function pintarHistorialUsuario(){
 // ella manda la solicitud con la anterior. Del lado del panel eso ya se avisa; acá lo tiene
 // que ver ella, que es la que sabe adónde transfirió de verdad.
 function _avisoBilleteraSolicitud(){
+  if(String(state.pendingTipo||"").toUpperCase()==="RETIRO") return "";
   const dela = String(state.pendingBilletera||"").trim();
   if(!dela) return "";
   const b = state.billetera||{};
@@ -2958,6 +3140,8 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
   if(state._sendingSupport)return {ok:false,error:"Esperá a que termine el envío anterior."};
   state._sendingSupport=true;
   const context=[state.publicCode,state.pcCodigo,state.usuario].join("|");
+  let legacySupport=false;
+  const faltaFuncion=(error,name)=>!!error&&['PGRST202','42883'].includes(String(error.code||''))&&String(error.message||'').includes(name);
   try{
 
   // 1) Si todavia no hay conversacion, se abre UNA. landing_chat_abrir_v3 no reutiliza la del
@@ -2979,25 +3163,26 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
         }catch(_e){}
         if(typeof guiaAdoptarConversacion==="function")guiaAdoptarConversacion();
       }else{
-        console.warn("[BET300] no se pudo abrir la conversacion:", (c&&c.motivo)||(ch&&ch.error));
+        if(faltaFuncion(ch&&ch.error,'landing_chat_abrir_v3'))legacySupport=true;
+        else return {ok:false,error:"No pudimos confirmar la conversación. Conservamos el mensaje para que puedas reintentar."};
       }
-    }catch(e){ console.warn("[BET300] no se pudo abrir la conversacion", e); }
+    }catch(_e){return {ok:false,error:"No pudimos confirmar la conversación. Conservamos el mensaje para que puedas reintentar."};}
   }
 
   // 2) El mensaje va al canal de chat.
   let res=null;
   if(state.chatId && state.chatToken){
     res=await rpc("landing_enviar_mensaje_v2",{
-      p_chat_id:Number(state.chatId),p_chat_token:state.chatToken,
+      p_chat_id:state.chatId,p_chat_token:state.chatToken,
       p_emisor:state.usuario,p_mensaje:mensaje,p_imagen_url:imagenUrl||""
     });
   }
 
-  // 3) Si el canal no respondio, el reclamo NO se pierde: se manda como siempre. Es la red de
-  //    seguridad mientras el camino nuevo se termina de probar; el dia que sobre, se saca.
+  // 3) Sólo una función explícitamente ausente habilita la ruta anterior. Un timeout
+  // pudo ocurrir DESPUÉS de guardar: no enviar otro POST que duplique la consulta.
   if(res?.error&&/NO_AUTORIZADO|NO_REGISTRADO|BLOQUEADO|CONFLICTO|no autorizado/i.test(res.error.message||""))return {ok:false,error:"No pudimos validar la conversación. Revisá tus datos de acceso."};
-  if(!res || res.error){
-    console.warn("[BET300] el canal de chat no respondio, va por el camino viejo:", res && res.error);
+  if(faltaFuncion(res&&res.error,'landing_enviar_mensaje_v2'))legacySupport=true;
+  if(legacySupport){
     const bp=billeteraPayloadPlano();
     const payload={usuario:state.usuario,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,tipo:"SOPORTE",...bp,...(imagenUrl?{imagen_url:imagenUrl}:{}),..._marcaDeTiempo()};
     res=await rpc("landing_portal_v16_crear_solicitud",{
@@ -3012,7 +3197,7 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
   if(!confirmado||confirmado.ok!==true)return {ok:false,error:"No pudimos confirmar el envío. Conservamos el mensaje para que puedas reintentar."};
   startChatPoll();
   startPortalThreadPoll();
-  return {ok:true};
+  return {ok:true,message_id:!legacySupport&&(confirmado.mensaje_id||confirmado.message_id)||null,chat_id:state.chatId};
   }catch(_e){return {ok:false,error:"No pudimos conectar. Conservamos el mensaje para que puedas reintentar."};}
   finally{state._sendingSupport=false;}
 }
@@ -3036,7 +3221,8 @@ async function sendFreeMessage(){
   if(!result?.ok){addMsg(esc(result?.error||"No se pudo enviar. Reintentá."),"system");return;}
   if(input.value.trim()===txt)input.value="";
   if(state.composerImage===file)clearComposerImage();
-  addMsg(txt?esc(txt):"📎 Imagen adjunta","user",imgUrl);
+  const meta=result.message_id?{id:String(result.message_id),tipo_emisor:'USUARIO',chat_id:result.chat_id}:null;
+  addMsg(txt?esc(txt):"📎 Imagen adjunta","user",imgUrl,meta);
   if(txt)state.shownTexts.add("u|"+txt.substring(0,200));
   if(imgUrl)state.shownTexts.add("uimg|"+imgUrl.substring(0,80));
   }catch(_e){addMsg("No se pudo enviar. Tu mensaje sigue listo para reintentar.","system");}

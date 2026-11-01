@@ -110,12 +110,15 @@ function _cotejoLsLoad(turno){ try{ return JSON.parse(localStorage.getItem(_cote
 function _cotejoLsSave(turno, st){ try{ localStorage.setItem(_cotejoLsKey(turno), JSON.stringify(st)); }catch(_e){} }
 function _cotejoOp(){ return (window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'; }
 async function _cotejoRpc(fn, params){
+  const health = window.NodoSalud?.begin('CONCILIACION');
   try{
     const r = await supabaseClient.rpc(fn, Object.assign({p_secret:window.PANEL_DATA_SECRET}, params||{}));
+    health?.reply(r.error);
     if(r.error) throw r.error;
     let d=r.data; try{ if(typeof d==='string') d=JSON.parse(d); }catch(_e){}
+    health?.record('DATA', 'OK', 'COTEJO_RPC_OK');
     return d;
-  }catch(e){ console.warn('[cotejo] RPC '+fn+' falló (¿SQL_cotejo_casos.sql aplicado?):', e&&e.message); return null; }
+  }catch(e){ health?.record('DATA', 'ERROR', 'COTEJO_RPC_FAILED'); console.warn('[cotejo] RPC '+fn+' falló (¿SQL_cotejo_casos.sql aplicado?):', e&&e.message); return null; }
 }
 // Editar el MONTO de un movimiento admin de Chunior (reduce un depo s/reclamar al asignar una parte
 // — opción A confirmada) + agrega la nota del caso. Misma mecánica que _anularMovimientoChunior.

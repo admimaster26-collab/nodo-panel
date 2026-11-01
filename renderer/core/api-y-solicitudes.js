@@ -1,8 +1,10 @@
 async function api(data){
+  const _apiHealth=window.NodoSalud?.begin('PORTAL');
   const fd=new FormData();
   Object.keys(data).forEach(k=>fd.append(k,data[k]??""));
   const res=await fetch(API_URL,{method:"POST",body:fd});
   const text=await res.text();
+  _apiHealth?.record('CONNECTED','OK','API_POST_OK');
   try{return JSON.parse(text)}catch(e){console.error(text);return{ok:false,error:"Respuesta inválida de API"}}
 }
 

@@ -45,6 +45,7 @@ const { registerPanelIpc } = require('./main/panel-rpc');
 const { registerNexoIpc } = require('./main/nexo-files');
 const { registerUpdaterIpc } = require('./main/updater');
 const { registerExternalLinksIpc } = require('./main/external-links');
+const { createImageWindowService } = require('./main/image-window');
 const { registerAgentIpc } = require('./main/agent-ipc');
 const { registerOfficeCredentialsIpc } = require('./main/office-credentials');
 const { createDiscordPresence } = require('./main/discord');
@@ -57,6 +58,8 @@ const backends = createAgentBackends({ app, rootDir });
 const headers = createSessionHeaders({ session, backends });
 const panel = createPanelWindow({ BrowserWindow, rootDir, icon });
 const chunior = createChuniorWindowService({ BrowserWindow, icon, headers, panel });
+// Visor de imágenes del chat: ventana aparte y una sola. Se registra solo sus IPC.
+const visorImagen = createImageWindowService({ BrowserWindow, ipcMain, rootDir, icon });
 const automationRequests = createRequestRegistry();
 const verificationRequests = createRequestRegistry();
 const agents = createAgentWindowService({ BrowserWindow, icon, partition: proxy.partition, backends, headers, requests: automationRequests });

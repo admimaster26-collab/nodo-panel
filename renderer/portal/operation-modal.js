@@ -83,6 +83,7 @@ const api = {};
           <div id="portalJobVinculo" style="margin-top:8px;padding-top:8px;border-top:1px solid #243049;font-size:13px"></div>
           <div id="portalJobPromo" style="margin-top:8px"></div>
           <div id="portalJobAlertas" style="margin-top:6px"></div>
+          <div id="portalJobFichas" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid #243049;font-size:13px"></div>
         </div>
 
         </div><!-- /portalJobScroll -->
@@ -214,6 +215,7 @@ const api = {};
     el.innerHTML = '<span style="color:#64748b">Vínculo usuario/teléfono:</span> <span style="color:#94a3b8">consultando…</span>';
     try{
       const pcs = (typeof deps.pcAliasesHist==='function') ? deps.pcAliasesHist() : [String(deps.pcOperativa||'')];
+      deps.window.NodoSalud?.begin('IDENTIDAD')?.record('DATA','OK','PORTAL_VINCULO_READ');
       const { data } = await deps.supabaseClient.from('usuarios_portal_vinculos')
         .select('id,estado_vinculo,telefono_canon,fuente')
         .in('pc_codigo', pcs).eq('usuario', u).limit(1);
@@ -321,6 +323,7 @@ const api = {};
     if(btn){ btn.disabled=false; btn.style.opacity=''; btn.textContent='Aprobar'; }
     // Botón "Parcial" solo en RETIROS (unifica: desde el mismo modal se puede aprobar completo o parcial).
     const _pb=deps.document.getElementById('portalJobParcialBtn'); if(_pb) _pb.style.display = _esRetiroJob ? '' : 'none';
+    try{ api.portalJobRevisarFichas(); }catch(_e){}
     el.style.display = 'block';
     deps.setTimeout(()=>{ const inp = deps.document.getElementById('portalJobMontoAprobado'); if(inp){ inp.focus(); inp.select(); } }, 80);
   };
@@ -370,20 +373,105 @@ const api = {};
   // La nota lleva SOLO lo que no está en las columnas de la tabla. El monto ya se ve en su columna
   // y la billetera en la suya: repetirlos hacía que la línea de detalle fuera casi toda ruido, y
   // lo único que se quería leer —el titular, el alias del cliente— quedaba enterrado al final.
-  api.v154pCrearJobSolicitud = async function(id){
-    // Si el retiro YA tiene un parcial en curso (pagado>0 y < total), "Aprobar" NO debe hacer un
-    // retiro COMPLETO: eso marcaría PAGADA ignorando lo ya pagado (y sin tocar metadata.retiro_parcial),
-    // cerrando el retiro con saldo real pendiente. En ese caso, redirigimos al flujo Parcial por lo que
-    // falta → el cierre lo decide SOLO la RPC del parcial cuando pagado>=total.
+  // Si el retiro YA tiene un parcial en curso (pagado>0 y < total), "Aprobar" NO debe hacer un
+  // retiro COMPLETO: eso marcaría PAGADA ignorando lo ya pagado (y sin tocar metadata.retiro_parcial),
+  // cerrando el retiro con saldo real pendiente. En ese caso, redirigimos al flujo Parcial por lo que
+  // falta → el cierre lo decide SOLO la RPC del parcial cuando pagado>=total.
+  // Devuelve true si redirigió (y entonces el que llama no sigue).
+  function _irAParcialSiCorresponde(id){
     try{
       const s = (deps.V154P.solicitudes||[]).find(x=>Number(x.ID||x.SOLICITUD_ID)===Number(id));
       if(s && deps.window._retiroParcialSigueAbierto && deps.window._retiroParcialSigueAbierto(s)){
         const pp = deps.window._retiroParcialInfo(s);
         try{ deps.toast('Este retiro tiene un parcial en curso · pagado '+deps.money(pp.pagado)+' de '+deps.money(pp.total)+'. Abro "Parcial" por lo que falta ('+deps.money(pp.restante)+').','yellow'); }catch(_e){}
-        if(typeof deps.window.v154pRegistrarParcial==='function'){ deps.window.v154pRegistrarParcial(id); return; }
+        if(typeof deps.window.v154pRegistrarParcial==='function'){ deps.window.v154pRegistrarParcial(id); return true; }
       }
     }catch(_e){}
+    return false;
+  }
+
+  // Abre el cartel de aprobar: para cuando hay que cambiar el monto, la billetera o dejar una
+  // observación. El botón "Aprobar" común ya no pasa por acá (ver v154pAprobarSolicitud).
+  api.v154pCrearJobSolicitud = async function(id){
+    if(_irAParcialSiCorresponde(id)) return;
     return deps.window.abrirModalPortalSolicitud(id);
+  };
+
+  // El bono de primer ingreso de este usuario, sin dibujar nada: lo mismo que lee el cartel
+  // (portalRenderPromo) pero como dato. Devuelve null si no le toca ninguno.
+  async function portalPromoDe(usuario){
+    const u = String(usuario||'').trim();
+    if(!u) return null;
+    try{
+      const r = await deps.supabaseClient.rpc('panel_promo_primer_ingreso',{p_secret:deps.window.PANEL_DATA_SECRET,p_pc_codigo:(deps.pcOperativa||deps.window.pcOperativa||''),p_usuario:u});
+      const d = (r && r.data) || {};
+      if(!d.primer_ingreso || !d.promo_activa || !(Number(d.bono_pct)>0)) return null;
+      return {
+        pct: Number(d.bono_pct)||0,
+        max: Number(d.bono_max)||0,
+        billeteraId: String(d.promo_billetera_id||''),
+        // La cuenta donde cobra ya recibió el bono con otro usuario: el cartel deja el tilde
+        // APAGADO para que sea una decisión y no el default.
+        compartida: !!d.cuenta_compartida,
+        otros: Number(d.otros_con_bono)||0
+      };
+    }catch(e){ console.warn('[promo]', e); return null; }
+  }
+
+  // APROBAR DE UNA. El operador ya miró el expediente: acá no se le pide nada más. Se usa lo que el
+  // propio cartel proponía de entrada —el monto declarado, la billetera donde entró la plata y el
+  // bono si le toca— y se encola igual que cuando se confirmaba desde el cartel (misma cola, que
+  // además no deja encolar dos veces la misma solicitud).
+  //
+  // Hay UN caso en que el cartel se abre igual: el bono con cuenta compartida. Es una decisión que
+  // el sistema dejó explícitamente en manos del operador (puede ser familia), y no se puede tomar
+  // después: el bono viaja en la misma operación que la carga.
+  const _aprobando = new Set();
+  api.v154pAprobarSolicitud = async function(id){
+    const nid = Number(id);
+    if(!nid || _aprobando.has(nid)) return;                    // doble clic: una sola vez
+    _aprobando.add(nid);
+    try{
+      if(_irAParcialSiCorresponde(nid)) return;
+      const s = portalSolicitudById(nid);
+      if(!s) return deps.alert('Solicitud no encontrada');
+      try{ await deps.cargarBilleteras(false); }catch(_e){}
+
+      const usuario = s.USUARIO || '';
+      const tipo = String(s.TIPO || s.TIPO_SOLICITUD || 'CARGA').toUpperCase();
+      const montoAprobado = Math.abs(Number(s.MONTO_REAL || s.MONTO_DECLARADO || 0));
+      const bil = portalBilleteraPreferida(s);
+      // Sin monto o sin billetera no hay nada que proponer: ahí SÍ hace falta el cartel.
+      if(!usuario || !montoAprobado || !bil || !bil.ID_BILLETERA){
+        try{ deps.toast('Falta el monto o la billetera: completalo en el cartel.', 'yellow'); }catch(_e){}
+        return deps.window.abrirModalPortalSolicitud(nid);
+      }
+
+      let promo = null;
+      if(tipo === 'CARGA'){
+        promo = await portalPromoDe(usuario);
+        if(promo && promo.compartida){
+          try{ deps.toast('Hay que decidir el bono: esa cuenta ya cobró el bono con '+promo.otros+' usuario'+(promo.otros===1?'':'s')+' más.', 'yellow'); }catch(_e){}
+          return deps.window.abrirModalPortalSolicitud(nid);
+        }
+      }
+
+      try{ if(deps.window.cerrarExpedienteSolicitud) deps.window.cerrarExpedienteSolicitud(); }catch(_e){}
+      return Promise.resolve(deps.ejecutarSolicitudPortalSimple({
+        id: nid, solicitud: s, usuario, tipo, montoAprobado,
+        bilId: bil.ID_BILLETERA,
+        titular: s.TITULAR || s.NOMBRE_COMPLETO || '',
+        destino: s.DESTINO || s.BILLETERA_NOMBRE || '',
+        cbu: s.CBU || s.CVU || s.CBU_ALIAS || '',
+        obs: '',
+        bonoAplicar: !!promo, bonoPct: promo ? promo.pct : 0, bonoMax: promo ? promo.max : 0,
+        promoBilleteraId: promo ? promo.billeteraId : ''
+      })).catch(function(e){ console.error('portal job error:', e); deps.toast('Portal con error: '+(e.message||''), 'red'); });
+    } finally {
+      // Se suelta recién cuando el clic ya hizo su efecto (encolado, o cartel abierto): así dos
+      // clics seguidos no se pisan, pero tampoco queda trabada para siempre si algo falla.
+      deps.setTimeout(function(){ _aprobando.delete(nid); }, 1500);
+    }
   };
 
   let _expedienteActualData = null;
@@ -395,7 +483,7 @@ const api = {};
     el.id = 'modalExpedienteOverlay';
     el.className = 'expediente-overlay hidden';
     el.innerHTML = `
-      <div class="expediente-drawer" onclick="event.stopPropagation()">
+      <div class="expediente-drawer" data-ocupa-derecha onclick="event.stopPropagation()">
         <div class="expediente-head">
           <div style="display:flex;align-items:center;gap:12px;min-width:0">
             <div id="expedienteTipoIco" class="expediente-ico">📋</div>
@@ -408,7 +496,7 @@ const api = {};
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-            <button class="mini-btn gray" type="button" onclick="copiarResumenExpediente()" title="Copiar ficha / resumen para soporte o WhatsApp">📋 Copiar ficha</button>
+            <button class="mini-btn gray" type="button" onclick="copiarResumenExpediente()" title="Copia los datos de esta operación (jugador, monto, estado, billetera y titular) listos para pegar en el chat o en WhatsApp">📋 Copiar datos</button>
             <button class="expediente-close-btn" type="button" onclick="cerrarExpedienteSolicitud()" title="Cerrar (Esc)">✕</button>
           </div>
         </div>
@@ -427,7 +515,21 @@ const api = {};
     const el = deps.document.getElementById('modalExpedienteOverlay');
     if(el) el.classList.add('hidden');
     _expedienteActualData = null;
+    _anclarCartel();
   };
+
+  // El cartel de versión vive arriba a la derecha, que es justo donde se abre el cajón del
+  // expediente: lo pisaba y tapaba el título. Se corre hacia el costado mientras el cajón esté
+  // abierto y vuelve cuando se cierra (la cuenta la hace _updaterAnclar, en core/actualizaciones.js).
+  function _anclarCartel(){
+    try{
+      const f = deps.window && deps.window._updaterAnclar;
+      if(typeof f !== 'function') return;
+      f();
+      // El cajón entra deslizándose (.24 s): se vuelve a medir cuando ya llegó a su lugar.
+      deps.setTimeout(f, 320);
+    }catch(_e){}
+  }
 
   deps.window.cerrarExpedienteSolicitud = api.cerrarExpedienteSolicitud;
 
@@ -474,7 +576,7 @@ const api = {};
 
     // Por nodoCopiar: recupera el foco antes de copiar (el panel puede estar operando en la
     // ventana del backoffice) y, si aun así no puede, muestra el texto en vez de perderlo.
-    try{ deps.window.nodoCopiar(txt, { etiqueta: '✓ Ficha copiada' }); }
+    try{ deps.window.nodoCopiar(txt, { etiqueta: '✓ Datos de la operación copiados' }); }
     catch(_e){ deps.toast('No se pudo copiar automáticamente', 'yellow'); }
   };
 
@@ -690,6 +792,9 @@ const api = {};
     // el N de Chunior. El badge verde ya las contaba como cerradas: quedaban las dos cosas
     // contradiciendose en la misma ficha.
     const abierta = !['ACREDITADA', 'PAGADA', 'APROBADA', 'RECHAZADA', 'CANCELADA', 'OK', 'COMPLETADA', 'REVERTIDA'].includes(estado);
+    // Un retiro del portal que todavía no se pagó: al abrir el expediente se leen las fichas del
+    // jugador (ver revisarFichasExpediente). En las cargas, los manuales y los ya cerrados no aplica.
+    _expedienteActualData.fichasPendientes = !!(esRetiro && abierta && !esManual && usuario);
 
     // 1. Cabecera y Botones de Acción
     let actionsHtml = '';
@@ -703,11 +808,18 @@ const api = {};
       if(!tomada){
         actionsHtml += `<button class="mini-btn yellow" type="button" onclick="window.v154pTomarSolicitud && window.v154pTomarSolicitud(${id})">Tomar</button>`;
       }
-      actionsHtml += `<button class="mini-btn green" type="button" onclick="window.v154pCrearJobSolicitud && window.v154pCrearJobSolicitud(${id})">✓ Aprobar</button>`;
+      // Aprobar aprueba DE UNA: acá ya está todo el expediente a la vista. Para cambiar el monto,
+      // la billetera o dejar una observación está el botón de al lado.
+      actionsHtml += `<button class="mini-btn green" type="button" onclick="window.v154pAprobarSolicitud && window.v154pAprobarSolicitud(${id})">✓ Aprobar</button>`;
+      actionsHtml += `<button class="mini-btn" type="button" onclick="window.v154pCrearJobSolicitud && window.v154pCrearJobSolicitud(${id})" title="Aprobar cambiando el monto, la billetera o dejando una observación">✎ Otro monto</button>`;
       if(esRetiro){
         actionsHtml += `<button class="mini-btn purple" type="button" onclick="window.v154pRegistrarParcial && window.v154pRegistrarParcial(${id})">💸 Parcial</button>`;
       }
       actionsHtml += `<button class="mini-btn red" type="button" onclick="window.v154pRechazarSolicitud && window.v154pRechazarSolicitud(${id})">✕ Rechazar</button>`;
+      // Tomada por error, o el que la tomó se fue: vuelve a la lista de pendientes para que otro la agarre.
+      if(tomada){
+        actionsHtml += `<button class="mini-btn" type="button" onclick="window.v154pSoltarSolicitud && window.v154pSoltarSolicitud(${id})" title="La devuelve a la lista de pendientes para que otro operador la tome">↩ Soltar</button>`;
+      }
     } else if(esRechazo){
       actionsHtml = `
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
@@ -808,8 +920,8 @@ const api = {};
         <button type="button" class="sol-comm-btn" onclick="window.abrirPerfilJugador && window.abrirPerfilJugador('${esc(usuario)}')" title="Ver historial y perfil CRM del jugador">
           <span>👤</span> Ficha CRM
         </button>
-        <button type="button" class="sol-comm-btn" onclick="copiarResumenExpediente()" title="Copiar ficha de la operación al portapapeles">
-          <span>📋</span> Copiar Ficha
+        <button type="button" class="sol-comm-btn" onclick="copiarResumenExpediente()" title="Copia los datos de esta operación (jugador, monto, estado, billetera y titular) listos para pegar en el chat o en WhatsApp">
+          <span>📋</span> Copiar datos de la operación
         </button>
       </div>
 
@@ -1014,7 +1126,13 @@ ${stepperHtml}
               </div>
             </div>
 
-            ${(esCarga || esRetiro) ? `
+            ${(_expedienteActualData.fichasPendientes && _partesRetiro <= 1 && saldoPre == null && saldoPost == null) ? `
+              <div class="sol-cotejo-row">
+                <span class="sol-cotejo-lbl">Fichas del jugador:</span>
+                <div class="sol-cotejo-val">
+                  <span data-fichas="1">${fichasHtml(fichasEnCache(usuario), montoDecl)}</span>
+                </div>
+              </div>` : (esCarga || esRetiro) ? `
               <div class="sol-cotejo-row">
                 <span class="sol-cotejo-lbl">Saldos en casino:</span>
                 <div class="sol-cotejo-val">
@@ -1070,6 +1188,88 @@ ${stepperHtml}
     return html;
   };
 
+  // ── Fichas del jugador, en el expediente de un RETIRO ───────────────────────────────────────
+  // "Ver" en un retiro tiene que decir cuántas fichas tiene el jugador AHORA: es lo que decide si se
+  // paga entero, por partes o no se paga (Juan, 25/10). Se lee del casino al abrir, sin tocar nada.
+  // La lectura la hace revisarFichasRetiro (core/chunior-recuperacion-y-transferencias.js), la misma
+  // que usa el escaneo en segundo plano y que alimenta el "saldo … ✓/⚠" de la tarjeta.
+  const _FICHAS_VIVA_MS = 3 * 60 * 1000;           // una lectura de hace menos de 3 min se reusa
+  function fichasEnCache(usuario){
+    try{
+      const c = (deps.window._retiroSaldoCheck || {})[String(usuario||'').toLowerCase()];
+      return (c && c.ts && (Date.now() - c.ts) < _FICHAS_VIVA_MS) ? c : null;
+    }catch(_e){ return null; }
+  }
+  function fichasHtml(r, monto, releer){
+    const boton = function(texto){
+      return '<button type="button" class="sol-copy-btn" onclick="' + (releer || 'expedienteRevisarFichas') + '(true)" title="Vuelve a consultar el saldo en el casino">🔄 ' + texto + '</button>';
+    };
+    const _btnFichas = boton('Volver a leer');
+    if(!r) return '<span style="color:#64748b">Leyendo las fichas…</span>';
+    if(r.confiable === false) return '<span style="color:#f59e0b">No pude leer bien el saldo</span> ' + _btnFichas;
+    if(r.error) return '<span style="color:#f59e0b">' + esc(r.error) + '</span> ' + boton('Reintentar');
+    const pidio = Math.abs(Number(monto || 0));
+    const saldo = Number(r.saldo || 0);
+    const alcanza = saldo + 0.5 >= pidio;
+    const color = alcanza ? '#34d399' : '#f87171';
+    return '<b style="color:' + color + ';font-size:13px">' + esc(r.raw || fmtMoney(saldo)) + '</b> '
+      + '<span style="color:' + color + '">' + (alcanza
+          ? '✓ alcanza para lo que pidió (' + fmtMoney(pidio) + ')'
+          : (saldo >= 0.5
+              ? '⚠ no alcanza para ' + fmtMoney(pidio) + ' · se puede pagar por partes'
+              : '⚠ sin fichas para retirar')) + '</span> ' + _btnFichas;
+  }
+  function _pintarFichas(html){
+    try{
+      const nodos = deps.document.querySelectorAll ? deps.document.querySelectorAll('[data-fichas]') : [];
+      Array.prototype.forEach.call(nodos, function(n){ n.innerHTML = html; });
+    }catch(_e){}
+  }
+  api.revisarFichasExpediente = async function(forzar){
+    const d = _expedienteActualData;
+    if(!d || !d.fichasPendientes) return null;
+    const leer = deps.window && deps.window.revisarFichasRetiro;
+    if(typeof leer !== 'function') return null;
+    const monto = Math.abs(Number(d.montoDeclarado || 0));
+    const previa = forzar ? null : fichasEnCache(d.usuario);
+    if(previa){ _pintarFichas(fichasHtml(previa, monto)); return previa; }
+    _pintarFichas(fichasHtml(null, monto));
+    let r;
+    try{ r = await leer({ usuario: d.usuario, solicitudId: d.id, monto: monto, forzar: !!forzar }); }
+    catch(_e){ r = { error: 'No se pudieron leer las fichas. Probá de nuevo.' }; }
+    // Mientras leía, el operador pudo cerrar el expediente o abrir otro: no se pisa lo que ve ahora.
+    if(!_expedienteActualData || String(_expedienteActualData.id) !== String(d.id)) return r;
+    _pintarFichas(fichasHtml(r, monto));
+    return r;
+  };
+  if(deps.window) deps.window.expedienteRevisarFichas = function(forzar){ return api.revisarFichasExpediente(!!forzar); };
+
+  // El cartel de aprobar un retiro coteja las fichas igual que "Ver": misma lectura, mismo texto y
+  // botón de reintento. Antes no mostraba ninguna y se aprobaba sin saber si las tenía.
+  api.portalJobRevisarFichas = async function(forzar){
+    const modal = deps.document.getElementById('portalJobModal');
+    const box = deps.document.getElementById('portalJobFichas');
+    if(!modal || !box) return null;
+    const id = modal.dataset.solicitudId;
+    const s = portalSolicitudById(Number(id));
+    const esRetiro = !!s && String(s.TIPO || s.TIPO_SOLICITUD || '').toUpperCase() === 'RETIRO';
+    box.style.display = esRetiro ? '' : 'none';
+    if(!esRetiro) return null;
+    const monto = Math.abs(Number(s.MONTO_REAL || s.MONTO_DECLARADO || 0));
+    const pintar = function(r){
+      box.innerHTML = '<span style="color:#64748b">Cotejo de fichas:</span> ' + fichasHtml(r, monto, 'portalJobRevisarFichas');
+    };
+    const previa = forzar ? null : fichasEnCache(s.USUARIO);
+    if(previa){ pintar(previa); return previa; }
+    pintar(null);
+    let r;
+    try{ r = await deps.window.revisarFichasRetiro({ usuario: s.USUARIO, solicitudId: id, monto: monto, forzar: !!forzar }); }
+    catch(_e){ r = { error: 'No se pudieron leer las fichas. Probá de nuevo.' }; }
+    // Mientras leía, el operador pudo pasar a otra solicitud: no se pisa lo que ve ahora.
+    if(modal.dataset.solicitudId === id) pintar(r);
+    return r;
+  };
+
   api.mostrarExpedienteEnPane = function(idOrObj){
     const html = api.construirDossierCompletoHtml(idOrObj);
     const pane = deps.document.getElementById('solicitudesDossierPane');
@@ -1092,6 +1292,10 @@ ${stepperHtml}
       }
       modalEl.classList.remove('hidden');
     }
+    _anclarCartel();
+    // Si es un retiro abierto, "Ver" también revisa las fichas del jugador. Sin await: el expediente
+    // ya está a la vista y la lectura se pinta cuando llega.
+    try{ api.revisarFichasExpediente(); }catch(_e){}
   };
 
   api.v154pDetalleSolicitud = api.abrirExpedienteSolicitud;

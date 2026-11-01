@@ -34,6 +34,7 @@ window.PANEL_DATA_SECRET = localStorage.getItem("nodo_panel_data_secret") || "no
 // no había forma de saber qué build tenía cada PC — justo lo que hace falta para decidir si ya se
 // puede exigir algo nuevo del lado del servidor. Se pide una sola vez y queda cacheada.
 async function _versionDelPanel(){
+  window.NodoSalud?.begin('CONEXION')?.record('ALIVE','OK','PANEL_VERSION_CHECK');
   if(window._versionApp) return window._versionApp;
   try{
     const v = await window.updaterAPI?.getVersion();
@@ -68,6 +69,7 @@ async function _latidoPanel(){
       p_instalacion:_instalacionId()
     });
   }catch(_e){}
+  finally{ try{ void window.NodoSalud?.flush(); }catch(_e){} }
 }
 setInterval(_latidoPanel, 45000);
 setTimeout(_latidoPanel, 6000);
@@ -494,7 +496,9 @@ function abrirEditarUsuario(u){
       clave:                val("eU_clave")||null,
       updated_at:           new Date().toISOString()
     };
+    const _idHealth = window.NodoSalud?.begin('IDENTIDAD');
     const {error} = await supabaseClient.from("usuarios").update(cambios).eq("id", u.id);
+    _idHealth?.reply(error);
     if(error){ alert(error.message||"Error"); return; }
     cerrarModal();
     toast("Usuario actualizado","green");
@@ -687,6 +691,7 @@ function _blIsoDay(offset){ const d=new Date(); d.setDate(d.getDate()-(offset||0
 var _BL_H24 = 24*60*60*1000;
 
 async function verificarRetiro24h(usuario) {
+  const health = window.NodoSalud?.begin('RETIROS');
   const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).getTime();
   const ahora   = Date.now();
   const usuarioNorm = normalizar(usuario);
@@ -741,6 +746,7 @@ async function verificarRetiro24h(usuario) {
     }
   }
 
+  health?.record('DATA', 'OK', candidatos.length ? 'RETIRO_24H_MATCH' : 'RETIRO_24H_CLEAR');
   if(!candidatos.length) return { bloqueado: false };
 
   // Tomar el retiro más reciente de cualquier fuente
@@ -863,10 +869,12 @@ function estadoBadge(e){const x=normalizar(e);if(esRealizada({ESTADO:e}))return`
 function escapeHtml(text){return String(text||"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;").replaceAll("'","&#039;")}
 
 async function api(data){
+  const _apiHealth=window.NodoSalud?.begin('PORTAL');
   const fd=new FormData();
   Object.keys(data).forEach(k=>fd.append(k,data[k]??""));
   const res=await fetch(API_URL,{method:"POST",body:fd});
   const text=await res.text();
+  _apiHealth?.record('CONNECTED','OK','API_POST_OK');
   try{return JSON.parse(text)}catch(e){console.error(text);return{ok:false,error:"Respuesta inválida de API"}}
 }
 
@@ -1024,6 +1032,7 @@ async function login(){
 
   // Validar contra Chunior. No guardamos la clave en ningún lado.
   let okBackoffice = false;
+  const _connHealth = window.NodoSalud?.begin('CONEXION');
   try {
     okBackoffice = await validarLoginChunior(usuario, clave);
   } catch(e){
@@ -1070,6 +1079,7 @@ async function login(){
   setBox("loginMsg",`<div class="alert-box">Chunior OK. Esperando selección de puesto...</div>`);
   // Disparar el flujo de Chunior post-login. _chuniorConfirmarPuesto
   // se encarga de setear pcOperativa, asegurar la oficina y finalizar el login.
+  _connHealth?.record('CONNECTED','OK','CHUNIOR_LOGIN_OK');
   _checkPuestoPostLogin();
 }
 
@@ -1298,6 +1308,10 @@ window.explicarDiferenciaFichas = function(){
 };
 
 function mostrarVista(vista){
+  if(vista==="ajustes"){
+    try{ window.nodoAbrirAjustes && window.nodoAbrirAjustes(); }catch(_e){}
+    return;
+  }
   if(vista==="chat" && window.matchMedia && window.matchMedia("(min-width:1101px)").matches){
     try{ window.nodoChatMin && nodoChatMin(false); }catch(_e){} // tocar Chat restaura el panel si estaba minimizado
     document.querySelectorAll(".nav-btn").forEach(x=>x.classList.remove("active"));
@@ -1305,7 +1319,7 @@ function mostrarVista(vista){
     cargarChats(true);
     return;
   }
-  ["Inicio","Solicitudes","Billeteras","Chat","Jugadores","Auto"].forEach(v=>{
+  ["Inicio","Solicitudes","Billeteras","Chat","Jugadores"].forEach(v=>{
     document.getElementById("view"+v)?.classList.add("hidden");
     document.getElementById("nav"+v)?.classList.remove("active");
   });
@@ -1319,7 +1333,11 @@ function mostrarVista(vista){
   if(vista==="billeteras")cargarBilleteras();
   if(vista==="chat")cargarChats();
   if(vista==="jugadores")cargarJugadores();
-  if(vista==="auto"){ verificarEstadoBackoffice(); try{ nodoCargarBackendAgentes(); }catch(_e){} }
+  if(vista==="ajustes"){
+    try{ window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos(); }catch(_e){}
+    try{ window.nodoCargarBackendAgentes && window.nodoCargarBackendAgentes(); }catch(_e){}
+    try{ window.verificarEstadoBackoffice && window.verificarEstadoBackoffice(); }catch(_e){}
+  }
   if(vista==="verificaciones")cargarVerificaciones();
   cerrarMenuMobile();
 }
@@ -1398,6 +1416,7 @@ async function cargarBilleteras(render=true){
   }
 
   // 1) RPC oficial. Puede devolver {rows:[...]} o string JSON, según cache/API.
+  const health = window.NodoSalud?.begin('BILLETERAS');
   const candidates = _candidateCodes();
   for(const code of candidates){
     if(rows.length) break;
@@ -1466,7 +1485,8 @@ async function cargarBilleteras(render=true){
     }
   }
 
-  if(!rows.length && errorFinal){ console.error('Error billeteras:', errorFinal); }
+  if(!rows.length && errorFinal){ health?.reply(errorFinal); health?.record('DATA','ERROR','BILLETERAS_LOAD_FAILED'); console.error('Error billeteras:', errorFinal); }
+  else { health?.reply(); health?.record('DATA','OK','BILLETERAS_LOAD_OK'); }
 
   const saldoByUid = window.__nodoChuniorWalletSaldoByUid || {};
   let nombreByUid = window.__nodoChuniorWalletNombreByUid || {};
@@ -1575,15 +1595,16 @@ function renderInicio(){
     ? window.V154P.solicitudes
     : solicitudes;
   const portalPendientes = fuentePortal.filter(function(s){ return esPendiente(s) && String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()!=='SOPORTE'; });
-  const pendientes = portalPendientes;
+  // Sólo lo que nadie tomó: lo tomado vive en 💸 En proceso. Si el portal todavía no cargó, queda
+  // la cuenta de siempre (mejor un número de más que ninguno).
+  const pendientes = window.nodoSolicitudesSinTocar ? window.nodoSolicitudesSinTocar(portalPendientes) : portalPendientes;
   const retiros=pendientes.filter(s=>normalizar(s.TIPO_SOLICITUD||s.TIPO)==="RETIRO");
-  // "Sin leer": usar la cuenta ACTUAL del chat nuevo (tickets en espera). El viejo chats[].SIN_LEER
-  // era del sistema legacy y quedaba desfasado (mostraba un número viejo que no coincidía con la lista).
-  const unread=(typeof window.__wq2EnEspera==='number')?window.__wq2EnEspera:chats.reduce((a,c)=>a+Number(c.SIN_LEER||0),0);
+  // Mismo significado que el badge: mensajes pendientes, no chats en espera.
+  const unread=window.nodoChatUnreadSnapshot?.().total || 0;
   const bil=billeteras.find(b=>normalizar(b.SELECCIONADA_MANUAL)==="SI") || billeteras.find(b=>normalizar(b.ACTIVA)==="SI") || {};
   setBox("statPendientes",pendientes.length);
   setBox("statRetiros","Retiros: "+retiros.length);
-  setBox("statChats",unread);
+  window.nodoChatRefreshUnread?.();
   setBox("statBilletera",bil.NOMBRE_VISIBLE||bil.BILLETERA_NOMBRE||"-");
   setBox("statBilleteraTipo",bil.TIPO?(bil.TIPO+" · "+(bil.PC||pcOperativa)):"-");
   setBox("alertas",
@@ -2118,6 +2139,7 @@ window.copiarDetalleError = function(histId){
 // actúa ANTES de "Aplicar" (nunca después — la plata ya se movió). Portado de NexoBetaChan.
 function _mostrarBtnAbort(show){ try{ const b=document.getElementById('btnAbortarOp'); if(b) b.style.display = show ? 'inline-block' : 'none'; }catch(_e){} }
 async function abortarOperacionActual(){
+  window.NodoSalud?.begin('AUTOMATISMOS')?.record('EFFECT','OK','MANUAL_ABORT_REQUESTED');
   try{
     if(window.ctrlElectron && ctrlElectron.drexAutomation){
       await ctrlElectron.drexAutomation('abortarOperacion');
@@ -2736,7 +2758,7 @@ async function _copiarMensajeClienteNuevo(usuario, clave){
 function _updaterForzarVisible(){
   try{
     const box=document.getElementById("updaterBox"), chip=document.getElementById("updaterMiniChip");
-    if(box){ box.style.display="flex"; box.style.borderColor="#3fb950"; }
+    if(box){ box.style.display="flex"; box.style.borderColor="#10b981"; }
     if(chip) chip.style.display="none";
   }catch(_e){}
 }
@@ -2745,77 +2767,91 @@ function nodoUpdaterStatus(payload){
   if(!el || !payload) return;
   const st=payload.state;
   if(st==="available" || st==="downloaded") _updaterForzarVisible();
-  if(st==="checking") el.innerHTML="Buscando actualización...";
-  else if(st==="not-available") el.innerHTML="✅ Ya tenés la última versión";
-  else if(st==="available") el.innerHTML="🆕 v"+escapeHtml(payload.version||"")+" disponible — <a href=\"javascript:void 0\" onclick=\"nodoDescargarActualizacion()\" style=\"color:#58a6ff\">Descargar</a>";
-  else if(st==="downloading") el.innerHTML="⬇️ Descargando... "+(payload.percent||0)+"%";
-  else if(st==="downloaded") el.innerHTML="✅ Lista v"+escapeHtml(payload.version||"")+" — <a href=\"javascript:void 0\" onclick=\"nodoInstalarActualizacion()\" style=\"color:#3fb950;font-weight:700\">Reiniciar e instalar</a>";
-  else if(st==="error") el.innerHTML='<span style="color:#f85149">Error: '+escapeHtml(payload.message||"")+"</span>";
+  if(st==="checking") el.innerHTML="<span style='color:#94a3b8'>Buscando...</span>";
+  else if(st==="not-available"){
+    el.innerHTML="<span style='color:#10b981;font-weight:600'>✅ Al día</span>";
+    setTimeout(function(){ try{ if(el && el.innerHTML.includes("Al día")) el.innerHTML=""; }catch(_e){} }, 3500);
+  }
+  else if(st==="available") el.innerHTML="<button class=\"mini-btn blue\" onclick=\"nodoDescargarActualizacion()\" style=\"padding:2px 8px;font-size:11px;font-weight:700\">⬇️ v"+escapeHtml(payload.version||"")+" Descargar</button>";
+  else if(st==="downloading") el.innerHTML="<span style='color:#60a5fa;font-weight:700'>⬇️ "+(payload.percent||0)+"%</span>";
+  else if(st==="downloaded") el.innerHTML="<button class=\"mini-btn green\" onclick=\"nodoInstalarActualizacion()\" style=\"padding:2px 8px;font-size:11px;font-weight:800\">🚀 Reiniciar e instalar</button>";
+  else if(st==="error") el.innerHTML='<span style="color:#f87171" title="'+escapeHtml(payload.message||"")+'">⚠️ Error</span>';
 }
-// Canal de actualización (portado de NexoBetaChan): alpha = repo oficial nuestro · beta = repo del colega (pruebas).
-function nodoGetCanal(){ try{ return localStorage.getItem("nodo_update_channel")==="beta" ? "beta" : "alpha"; }catch(_e){ return "alpha"; } }
-function nodoAplicarIconoCanal(){
-  try{
-    const beta = nodoGetCanal()==="beta";
-    const box = document.getElementById("updaterBox"); if(box) box.style.borderColor = beta ? "rgba(34,197,94,.6)" : "#272b36"; // verde = beta
-    const sel = document.getElementById("updaterCanal"); if(sel) sel.value = nodoGetCanal();
-  }catch(_e){}
-}
-function nodoSetCanal(c){
-  const canal = c==="beta" ? "beta" : "alpha";
-  try{ localStorage.setItem("nodo_update_channel", canal); }catch(_e){}
-  nodoAplicarIconoCanal();
-  try{ toast("Canal: "+(canal==="beta"?"β Beta (repo del colega · pruebas)":"α Alpha (oficial · nuestro)")+" · tocá 🔄 para buscar en ese canal", "blue"); }catch(_e){}
-}
+// Canal único de actualización unificado
+function nodoGetCanal(){ return "main"; }
+function nodoAplicarIconoCanal(){}
+function nodoSetCanal(_c){}
 async function nodoInitUpdater(){
   try{
     if(!window.updaterAPI){ const b=document.getElementById("updaterBox"); if(b) b.style.display="none"; return; }
     nodoAplicarIconoCanal();
+    const _updHealth = window.NodoSalud?.begin('CONEXION');
     const v = await window.updaterAPI.getVersion();
+    _updHealth?.record('ALIVE','OK','UPDATER_VERSION_OK');
     const el=document.getElementById("updaterVersionTxt");
     if(el && v && v.version) el.textContent = "v"+v.version;
     const mv=document.getElementById("updaterMiniVer");
-    if(mv && v && v.version) mv.textContent = "v"+v.version;   // el plegado también dice la versión
-    // Mostrar el botón "Volver" solo si la función existe (app instalada con updater).
+    if(mv && v && v.version) mv.textContent = "v"+v.version;
     const rb=document.getElementById("updaterRollbackBtn"); if(rb) rb.style.display="";
     window.updaterAPI.onStatus(nodoUpdaterStatus);
-    // Restaurar si el operador lo había dejado minimizado.
     try{ if(localStorage.getItem("nodo_updater_min")==="1") nodoUpdaterMinimizar(true); }catch(_e){}
-    // Buscar SOLO. Antes esto no existía: la única forma de enterarse de que había una
-    // versión nueva era apretar 🔄 por las dudas, así que no se enteraba nadie — la 1.1.81
-    // salió y dos días después seguía sin instalarse en ninguna oficina, con máquinas
-    // cuatro versiones atrás. Ahora chequea al arrancar y cada 3 horas.
-    // Sigue SIN instalar por su cuenta: instalar reinicia la app y en medio del turno eso
-    // corta la operación. Avisar es del panel, decidir cuándo cortar es del operador.
-    setTimeout(nodoAutoBuscar, 20000);                 // dar tiempo al login
+    setTimeout(nodoAutoBuscar, 20000);
     setInterval(nodoAutoBuscar, 3*60*60*1000);
   }catch(_e){}
 }
 function nodoAutoBuscar(){
   try{
-    if(window.updaterAPI && window.updaterAPI.check) window.updaterAPI.check({ channel: nodoGetCanal() });
+    if(window.updaterAPI && window.updaterAPI.check) window.updaterAPI.check();
   }catch(_e){}
 }
 // Arriba a la derecha, pero apoyado en el borde izquierdo del panel de chat: ahí está el hueco
 // que queda arriba del botón "Rechequear". Se mide del DOM, así sigue bien si el chat se minimiza.
+//
+// Y se corre más todavía cuando se despliega algo contra el costado derecho que lo taparía —el cajón
+// del expediente al apretar "Ver"—: queda al costado, sin pisar el título (Juan, 25/10). Cualquier
+// cajón nuevo que se pegue a la derecha sólo tiene que llevar el atributo data-ocupa-derecha; no hace
+// falta tocar esto. Sirve igual si el cajón queda por encima o por debajo del cartel: se corre por
+// posición, no por capa.
+function _updaterBordeOcupado(){
+  const ancho=window.innerWidth;
+  let borde=null;
+  // alturaTodaLaPantalla: el chat es una columna que ocupa todo el costado, y el cartel se apoya en su
+  // borde aunque el chat arranque más abajo. Un cajón sí tiene que llegar a la franja del cartel.
+  const tomar=function(el, ignorarAltura){
+    try{
+      if(!el) return;
+      const cs=getComputedStyle(el);
+      if(cs.display==="none" || cs.visibility==="hidden") return;
+      const r=el.getBoundingClientRect();
+      if(r.width<20 || r.height<20) return;                   // escondido o sin dibujar
+      if(r.right<ancho-60) return;                            // no está pegado a la derecha
+      if(!ignorarAltura && r.top>46) return;                  // no llega a la franja del cartel
+      if(borde===null || r.left<borde) borde=r.left;
+    }catch(_e){}
+  };
+  // En la pantalla de LOGIN el chat está tapado (el login ocupa toda la pantalla) pero sigue
+  // midiendo: el cartel se enganchaba a su borde y quedaba flotando en el MEDIO del login. Sin el chat
+  // a la vista, el cartel va a la esquina.
+  const login=document.getElementById("loginView");
+  let enLogin=false;
+  try{ enLogin=!!(login && !login.classList.contains("hidden") && getComputedStyle(login).display!=="none"); }catch(_e){}
+  if(!enLogin) tomar(document.getElementById("viewChat"), true);
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ocupa-derecha]"), function(el){ tomar(el, false); });
+  return borde;
+}
 function _updaterAnclar(){
   try{
-    const chat=document.getElementById("viewChat");
-    let right=12;
-    // En la pantalla de LOGIN el chat está tapado (el login ocupa toda la pantalla) pero sigue
-    // midiendo: el cartel se enganchaba a su borde y quedaba flotando en el MEDIO del login. Juan
-    // lo pidió dos veces; la primera se entendió mal y se movió la tira de proceso en vez de esto.
-    // Sin el chat a la vista, el cartel va a la esquina.
-    const login=document.getElementById("loginView");
-    let enLogin=false;
-    try{ enLogin=!!(login && !login.classList.contains("hidden") && getComputedStyle(login).display!=="none"); }catch(_e){}
-    if(chat && !enLogin){
-      const r=chat.getBoundingClientRect();
-      if(r.width>0 && r.right>window.innerWidth-60) right=Math.round(window.innerWidth-r.left)+14;
-    }
+    const ancho=window.innerWidth;
+    const borde=_updaterBordeOcupado();
+    const right = borde===null ? 12 : Math.round(ancho-borde)+14;
     ["updaterBox","updaterMiniChip"].forEach(function(id){
       const el=document.getElementById(id);
-      if(el){ el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=right+"px"; }
+      if(!el) return;
+      // Nunca se sale de la pantalla: si el cajón ocupa casi todo el ancho y no queda lugar al costado,
+      // se queda lo más a la izquierda que entra.
+      const w=el.offsetWidth;
+      const r = w>0 ? Math.min(right, Math.max(12, ancho-w-8)) : right;
+      el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=r+"px";
     });
   }catch(_e){}
 }
@@ -2841,9 +2877,10 @@ async function nodoVolverVersionAnterior(){
 async function nodoBuscarActualizacion(){
   const el=document.getElementById("updaterStatusTxt");
   if(!window.updaterAPI){ if(el) el.textContent="No disponible en este entorno."; return; }
-  const r = await window.updaterAPI.check({ channel: nodoGetCanal() });
+  if(el) el.innerHTML="<span style='color:#94a3b8'>Buscando...</span>";
+  const r = await window.updaterAPI.check();
   if(!r || !r.ok){
-    if(el) el.textContent = (r&&r.reason==="dev-mode") ? "Solo disponible en la app instalada." : "No se pudo buscar actualización.";
+    if(el) el.textContent = (r&&r.reason==="dev-mode") ? "Solo disponible en app instalada." : "No se pudo buscar actualización.";
   }
 }
 async function nodoDescargarActualizacion(){
@@ -2856,8 +2893,6 @@ async function nodoInstalarActualizacion(){
 }
 document.addEventListener("DOMContentLoaded", nodoInitUpdater);
 if(document.readyState !== "loading") nodoInitUpdater();
-
-// ── Crear nuevo usuario en el casino ─────────────────────────────────────────
 // prefUsuario/prefTelefono: para poder crear la cuenta DESDE la consulta del chat, con lo que el
 // cliente ya declaró. Antes había que copiar los datos, irse al apartado manual, crear la cuenta
 // allá, copiar el mensaje, volver al chat y recién ahí validar.
@@ -3036,6 +3071,7 @@ async function _generarAlternativasAlias(base, cantidad){
   }
   // Filtrar los que YA existen en nuestra base local (cualquier oficina, indistinto)
   const unicos = [...new Set(candidatos)];
+  window.NodoSalud?.begin('VALIDACION')?.record('DATA','OK','ALTA_ALIAS_CHECK');
   try {
     const { data } = await supabaseClient
       .from('usuarios')
@@ -3135,6 +3171,7 @@ window.guardarMovimientoLocal = function guardarMovimientoLocal(rec){
       _fecha: rec.fecha || prev._fecha || new Date().toISOString()
     };
     _movStoreSave(map);
+    try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
     // Auto-alimenta la base local de JUGADORES (CBUs/titulares) desde cada movimiento.
     try{
       const _m = map[key];
@@ -3211,8 +3248,52 @@ function _nexoBonoDesc(pct){
 // el sync la mezcla con el archivo local (que trae lo de tiempo real).
 window._nexoOpsCache = window._nexoOpsCache || null;
 window._nexoOpsCacheAt = window._nexoOpsCacheAt || 0;
+window._nexoEstado = window._nexoEstado || { mode: 'legacy', completo: false, analizadas: 0, total: null, corteFecha: null };
+window._nexoCapCache = window._nexoCapCache || {};
+async function _nexoCargarOpsBeta(pc){
+  if(!pc || !window.panelAPI || typeof window.panelAPI.rpc !== 'function') return null;
+  try{
+    if(typeof window.panelAPI.getContext === 'function'){
+      const rawCtx = await window.panelAPI.getContext();
+      const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
+      if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(pc))) return null;
+    }
+    if(window._nexoCapCache[pc] !== true){
+      const capRes = await window.panelAPI.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: pc, p_activate: false });
+      const capData = capRes && capRes.data;
+      const caps = (capData && Array.isArray(capData.capabilities)) ? capData.capabilities : [];
+      if(!capData || capData.ok !== true || capData.enabled !== true || !caps.includes('nexo.export.v1')) return null;
+      window._nexoCapCache[pc] = true;
+    }
+    let todas = [], cursor = null, paginas = 0, total = null, completo = true;
+    while(paginas < 16){
+      const r = await window.panelAPI.rpc('nodo_beta_nexo_export_v1', { p_pc_codigo: pc, p_limit: 500, p_cursor: cursor });
+      if(!r || r.error || !r.data || r.data.ok !== true || !Array.isArray(r.data.rows)) return null;
+      todas = todas.concat(r.data.rows);
+      total = r.data.total != null ? Number(r.data.total) : total;
+      paginas++;
+      if(!r.data.has_more || !r.data.next_cursor){ completo = true; break; }
+      cursor = r.data.next_cursor;
+      completo = false;
+    }
+    const ult = todas.length ? todas[todas.length - 1] : null;
+    window._nexoEstado = { mode: 'beta', completo: completo, analizadas: todas.length, total: total, corteFecha: ult ? ult.created_at : null };
+    return todas;
+  }catch(_e){ return null; }
+}
 async function _nexoCargarOpsCompletas(force){
   const FRESH = 15*60*1000;
+  const health = window.NodoSalud?.begin('NEXO');
+  const pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase();
+  if(!force && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
+  const betaRows = await _nexoCargarOpsBeta(pc);
+  if(Array.isArray(betaRows)){
+    window._nexoOpsCache = betaRows;
+    window._nexoOpsCacheAt = Date.now();
+    health?.reply(null);
+    health?.record('DATA', window._nexoEstado.completo ? 'OK' : 'DEGRADED', window._nexoEstado.completo ? 'NEXO_EXPORT_COMPLETE' : 'NEXO_EXPORT_TRUNCATED');
+    return betaRows;
+  }
   if(!force && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
   try{
     if(typeof supabaseClient==='undefined' || !supabaseClient) return window._nexoOpsCache||[];
@@ -3229,7 +3310,15 @@ async function _nexoCargarOpsCompletas(force){
       if(data.length < PAG) break;
       desde += PAG;
     }
-    if(todas.length){ window._nexoOpsCache = todas; window._nexoOpsCacheAt = Date.now(); }
+    if(todas.length){
+      window._nexoOpsCache = todas;
+      window._nexoOpsCacheAt = Date.now();
+      const completo = todas.length < MAX;
+      const ult = todas[todas.length - 1];
+      window._nexoEstado = { mode: 'legacy', completo: completo, analizadas: todas.length, total: completo ? todas.length : null, corteFecha: ult ? ult.created_at : null };
+      health?.reply(null);
+      health?.record('DATA', completo ? 'OK' : 'DEGRADED', completo ? 'NEXO_LEGACY_OK' : 'NEXO_LEGACY_TRUNCATED_8000');
+    }
   }catch(_e){}
   return window._nexoOpsCache || [];
 }
@@ -3563,6 +3652,7 @@ window.marcarTitularRechazado = function(usuario, titular, motivo){
   m[k] = { motivo:motivo||'', fecha:new Date().toISOString(), titular:String(titular||''), usuario:String(usuario||'') };
   const ks = Object.keys(m); if(ks.length > 500) delete m[ks[0]];   // tope del caché local
   _rechSave(m);
+  try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
 
   // A la base, que es lo que ve el portal y el resto de las PCs. No se espera: si falla, el
   // bloqueo local igual quedó y se avisa.
@@ -3587,6 +3677,7 @@ window.desmarcarTitularRechazado = function(usuario, titular){
   delete m[_rechClave(usuario, titular)];
   delete m[_rechClaveGlobal(titular)];        // desbloquear siempre limpia los dos
   _rechSave(m);
+  try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
   try{
     supabaseClient.rpc('panel_titular_desbloquear', {
       p_pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : null),
@@ -3770,6 +3861,7 @@ window.sincronizarTitularesBloqueados = async function(){
       m[k] = { motivo:b.motivo||'', fecha:b.created_at||'', titular:String(b.titular||''), usuario:u };
     });
     _rechSave(m);
+  try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
   }catch(e){ console.warn('[titulares bloqueados] sync', e); }
 };
 // El padrón que ya está en memoria: el teléfono y el titular de un jugador, SIN pedir nada.
@@ -3993,7 +4085,69 @@ function _perfilCss(){
   .pj-day::after{content:'';flex:1;height:1px;background:#21262d}`;
   document.head.appendChild(st);
 }
-window.cerrarPerfilJugador = function(){ const o=document.getElementById('perfilJugadorOverlay'); if(o) o.remove(); };
+function _pjOficina(){ return String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase(); }
+function _pjUsuario(usuario){ return String(usuario||'').trim().toLowerCase(); }
+function _pjClave(usuario){ return JSON.stringify([_pjOficina(),_pjUsuario(usuario)]); }
+function _pjDeOficina(row){
+  const pc = String(row && (row.pc_codigo || row.pc) || '').trim().toUpperCase();
+  const scopeAliases=row && row.usuario && window.NodoPerfilConsulta ? window.NodoPerfilConsulta.snapshot(row.usuario).aliases : null;
+  const aliases = scopeAliases && scopeAliases.length ? scopeAliases : (_pjOficina() && typeof pcAliasesHist==='function' ? pcAliasesHist() : [_pjOficina()]);
+  return !!pc && aliases.map(function(p){ return String(p).trim().toUpperCase(); }).includes(pc);
+}
+function _pjVistaVigente(vista){ return !!vista && window.__perfilVista===vista && vista.pc===_pjOficina(); }
+function _pjEstado(usuario){ return window.NodoPerfilConsulta ? window.NodoPerfilConsulta.snapshot(usuario) : {mode:'legacy',rows:[],loading:false,error:''}; }
+function _pjTextoAccion(value){ return escapeHtml(JSON.stringify(String(value||''))); }
+window.cerrarPerfilJugador = function(){
+  window.__perfilVista = null; window.__perfilJugadorAbierto = null;
+  const o=document.getElementById('perfilJugadorOverlay'); if(o) o.remove();
+};
+window.pjPerfilConsultar = async function(mas,refrescar){
+  const vista=window.__perfilVista;
+  if(!_pjVistaVigente(vista)){ cerrarPerfilJugador(); return; }
+  if(!window.NodoPerfilConsulta){ await _pjCargarLegacy(vista,refrescar); return; }
+  const pending=window.NodoPerfilConsulta.load(vista.usuario,{more:!!mas,refresh:!!refrescar});
+  window.abrirPerfilJugador(vista.usuario,vista);
+  try{
+    const result=await pending;
+    if(!_pjVistaVigente(vista)) return;
+    window.abrirPerfilJugador(vista.usuario,vista);
+    if(result.mode==='legacy') await _pjCargarLegacy(vista,refrescar);
+  }catch(_e){ /* Una respuesta de otra oficina nunca repinta esta vista. */ }
+};
+window._pjLegacyCrmCache = window._pjLegacyCrmCache || {};
+window.pjPerfilMasIdentidad = async function(){
+  const vista=window.__perfilVista;
+  if(!_pjVistaVigente(vista)){ cerrarPerfilJugador(); return; }
+  if(!window.NodoPerfilConsulta) return;
+  const pending=window.NodoPerfilConsulta.load(vista.usuario,{moreIdentity:true});
+  window.abrirPerfilJugador(vista.usuario,vista);
+  try{
+    await pending;
+    if(!_pjVistaVigente(vista)) return;
+    window.abrirPerfilJugador(vista.usuario,vista);
+  }catch(_e){}
+};
+async function _pjCargarLegacy(vista,refrescar){
+  if(!_pjVistaVigente(vista)) return;
+  const key=_pjClave(vista.usuario);
+  if(!vista.pc){ vista.legacyError=true; window.abrirPerfilJugador(vista.usuario,vista); return; }
+  const version=vista.legacyVersion=(vista.legacyVersion||0)+1;
+  const actual=function(){return _pjVistaVigente(vista) && vista.legacyVersion===version;};
+  vista.legacyError=false;
+  if(refrescar){ delete window._arbolFullCache[key]; delete window._pjLegacyCrmCache[key]; }
+  const tasks=[window.cargarArbolCompletoUsuario(vista.usuario)];
+  if(!window._pjLegacyCrmCache[key]) tasks.push((async function(){
+    try{
+      const r=await supabaseClient.rpc('panel_crm_perfil_v1',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:vista.pc,p_query:null,p_usuario:vista.usuario,p_limit:1});
+      if(!actual())return;
+      const j=r && !r.error && r.data && r.data.ok!==false && (r.data.jugadores||[])[0];
+      if(j && _pjUsuario(j.usuario)===_pjUsuario(vista.usuario)) window._pjLegacyCrmCache[key]=j;
+      else if(!r || r.error || !r.data || r.data.ok===false || !Array.isArray(r.data.jugadores)) vista.legacyError=true;
+    }catch(_e){ if(actual())vista.legacyError=true; }
+  })());
+  await Promise.allSettled(tasks);
+  if(actual()) window.abrirPerfilJugador(vista.usuario,vista);
+}
 
 // ── Ficha del usuario desde Supabase (RPC panel_usuario_ficha) ────────────────
 // Trae el teléfono VIGENTE (usuarios_portal_vinculos), los teléfonos ANTERIORES y las
@@ -4002,18 +4156,21 @@ window.cerrarPerfilJugador = function(){ const o=document.getElementById('perfil
 // Un usuario tiene UN teléfono vigente; los demás son historia, para verificar antes de validar.
 async function _pjCargarFicha(usuario){
   const uLow = String(usuario||'').trim().toLowerCase();
+  const vista=window.__perfilVista, pc=_pjOficina();
   const box = document.getElementById('pjFichaBox'); if(!box) return;
   let d = null;
   try{
-    const r = await supabaseClient.rpc('panel_usuario_ficha', { p_usuario: usuario, p_pc_codigos: null, p_secret: window.PANEL_DATA_SECRET });
+    if(!pc) throw new Error('PERFIL_OFFICE_REQUIRED');
+    const r = await supabaseClient.rpc('panel_usuario_ficha', { p_usuario: usuario, p_pc_codigos: typeof pcAliasesHist==='function'?pcAliasesHist():[pc], p_secret: window.PANEL_DATA_SECRET });
     if(r && !r.error) d = (typeof r.data === 'string') ? JSON.parse(r.data) : r.data;
   }catch(_e){}
   // El perfil pudo cerrarse o cambiar de usuario mientras respondía.
   const box2 = document.getElementById('pjFichaBox');
-  if(!box2 || window.__perfilJugadorAbierto !== uLow) return;
+  if(!box2 || window.__perfilJugadorAbierto !== uLow || pc!==_pjOficina() || (vista && !_pjVistaVigente(vista))) return;
   if(!d || d.ok !== true){
     box2.innerHTML = '<h4>📱 Teléfonos y validaciones</h4>'
-      + '<div class="small" style="color:#8b949e">Sin datos. Si nunca corriste el SQL de <b>panel_usuario_ficha</b>, esta ficha queda vacía.</div>';
+      + '<div class="small" style="color:#fbbf24">No se pudo consultar la ficha. <button class="mini-btn gray" onclick="_pjCargarFicha('+_pjTextoAccion(usuario)+')">Reintentar</button></div>';
+    if(vista) vista.fichaHtml=box2.innerHTML;
     return;
   }
   const E = escapeHtml;
@@ -4079,25 +4236,64 @@ async function _pjCargarFicha(usuario){
   }
 
   box2.innerHTML = h;
+  if(vista) vista.fichaHtml=h;
 }
 window._pjCargarFicha = _pjCargarFicha;
 
-window.abrirPerfilJugador = function(usuario){
+window.pjPerfilDetalle = function(id,usuario,solicitudId,esLocal){
+  if(!_pjVistaVigente(window.__perfilVista)){ cerrarPerfilJugador(); return; }
+  cerrarPerfilJugador();
+  if(!esLocal){ window.verDetalleMovimiento(id,usuario,solicitudId); return; }
+  const pair=Object.entries(_movStoreAll()).find(function(p){ const m=p[1]; return String(m.id==null?p[0]:m.id)===String(id) && _pjUsuario(m.usuario)===_pjUsuario(usuario); });
+  const row=pair && pair[1];
+  if(!row) return;
+  const labels={tipo:'Tipo',monto:'Monto',estado:'Estado',titular:'Titular',cbu:'CBU / Alias',destino:'Destino',obs:'Observaciones',saldoPre:'Saldo antes',saldoPost:'Saldo después',billeteraNombre:'Billetera',operador:'Operador',chuniorId:'Nº Chunior',bonoPct:'Bono %',_fecha:'Fecha',notas:'Notas'};
+  const fields=Object.keys(labels).filter(function(k){ return row[k]!=null && row[k]!==''; }).map(function(k){ return '<div class="pj-field"><span>'+labels[k]+'</span><b>'+escapeHtml(String(row[k]))+'</b></div>'; }).join('');
+  abrirModal('Detalle local · '+escapeHtml(usuario),'<p>Datos locales '+((row.pc_codigo || row.pc)?'de la oficina '+escapeHtml(row.pc_codigo || row.pc):'sin oficina identificada')+'. No integran el resumen del servidor.</p>'+fields,null,'');
+};
+function _pjActividadHtml(ops,usuario,esLocal){
+  let tl='', diaPrev='';
+  const esc=escapeHtml;
+  ops.forEach(function(o){
+    const d=new Date(o.fecha || '');
+    const diaK=isNaN(d)?'Fecha no registrada':d.toLocaleDateString('es-AR',{weekday:'long',day:'2-digit',month:'2-digit'});
+    if(diaK!==diaPrev){ tl+='<div class="pj-day">'+esc(diaK)+'</div>'; diaPrev=diaK; }
+    const hora=isNaN(d)?'—':String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+    const t=String(o.tipo||'').toUpperCase(), eOk=['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'].includes(String(o.estado||'').toUpperCase());
+    const destTxt=String(o.cbu||o.destino||'').trim();
+    tl+='<div class="pj-tl-row" onclick="pjPerfilDetalle('+_pjTextoAccion(o.id)+','+_pjTextoAccion(usuario)+','+_pjTextoAccion(o.solicitudId)+','+!!esLocal+')">'
+      + '<div class="pj-tl-hora"><b>'+hora+'</b><span>'+(isNaN(d)?'':String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'))+'</span></div>'
+      + '<div style="min-width:0;flex:1"><div style="display:flex;justify-content:space-between;gap:8px"><span style="font-weight:800">'+(t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•')+' '+esc(t||'—')+' '+(eOk?'<span style="color:#22c55e">✅</span>':esc(o.estado||''))+'</span>'
+      + '<b style="color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</b></div>'
+      + (destTxt?'<div class="pj-mono small" style="color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ '+esc(destTxt)+'</div>':'')
+      + '<div class="small" style="color:#8b949e">'+(o.titular?'👤 '+esc(o.titular)+' · ':'')+(o.chuniorId?'Nº '+esc(String(o.chuniorId))+' · ':'')+(o.operador?'op:'+esc(o.operador):'')+'</div></div></div>';
+  });
+  return tl;
+}
+
+window.abrirPerfilJugador = function(usuario,vistaPrevia){
   const u = String(usuario||'').trim(); if(!u) return;
+  if(vistaPrevia && !_pjVistaVigente(vistaPrevia)) return;
+  if(!vistaPrevia) cerrarPerfilJugador();
+  const vista= vistaPrevia || {usuario:u,pc:_pjOficina()};
+  window.__perfilVista=vista;
   _perfilCss();
   const uLow = u.toLowerCase();
   const esc = escapeHtml;
-  const local = _jugStoreAll()[uLow] || {};
-  // Desde que el CRM abre vacío (v1.1.70) _crmJugadoresData sólo tiene datos si el
-  // operador pidió "Cargar lista". El perfil se abre igual desde el buscador, así que
-  // hay que mirar también lo que trajo la búsqueda del servidor (_crmBuscados): ahí
-  // vienen turno, última carga, score y segmento calculados sobre TODAS las operaciones.
-  // Sin esto el perfil mostraba "—" en turno y última carga teniendo el dato a mano.
-  const crm = (window._crmJugadoresData||[]).find(function(x){ return String(x.usuario||'').toLowerCase()===uLow; })
-           || (window._crmBuscados||{})[uLow]
-           || (window._crmWtkBuscados||{})[uLow] || {};
+  const localGuardado = _jugStoreAll()[uLow] || {};
+  const local = !(localGuardado.pc_codigo || localGuardado.pc) || _pjDeOficina(localGuardado) ? localGuardado : {};
+  const estado=_pjEstado(u), beta=estado.mode!=='legacy';
+  const legacyCache=window._arbolFullCache[_pjClave(u)];
+  const consultaError=estado.error || (!beta && ((legacyCache && legacyCache.__error) || vista.legacyError));
+  const localSinOficina=!(local.pc_codigo || local.pc) && Object.keys(local).length>0;
+  // Cada resumen pertenece al usuario y la oficina consultados. Las cachés globales
+  // del buscador no tienen ese contrato y no se incorporan a esta ficha.
+  const crm = beta ? (estado.resumen || {}) : (window._pjLegacyCrmCache[_pjClave(u)] || {});
+  const requiereRevision=beta && crm.requiere_revision===true;
   const fl = (window._crmFlags||{})[uLow] || {};
-  const ops = (typeof arbolUsuario==='function') ? arbolUsuario(u) : [];
+  const ops = beta ? _pjUnirOperaciones(u,estado.rows||[],false) : arbolUsuario(u);
+  const localesSinOficina=_pjLocalesSinOficina(u,ops);
+  const localesOficina=beta?_pjLocalesDeOficina(u,ops):[];
   const uEsc = u.replace(/'/g,"\\'");
 
   // ── carril izquierdo (identidad / instrumentos / bonos / resumen) ──
@@ -4105,21 +4301,13 @@ window.abrirPerfilJugador = function(usuario){
   const cbus = Object.values(local.cbus||{});
   const tits = Object.values(local.titulares||{});
   const bonos = Array.isArray(local.bonos)?local.bonos.slice().reverse():[];
-  // Respaldo desde el CRM (vínculo de whaticket): si el usuario nunca operó/validó en ESTA máquina,
-  // la base local no tiene su teléfono/titular, pero el CRM sí lo trae del registro (panel_crm_vinculos).
-  // Fallback WTK: si el jugador está en _crmJugadoresData (por ops/CSV) pero SIN titular/teléfono,
-  // lo completamos con lo que trajo la búsqueda de whaticket (_crmWtkBuscados), que sí lo tiene.
-  // Antes el lookup se quedaba con el item de ops (sin titular) → mostraba "sin datos" aunque lo
-  // hubieras encontrado JUSTO buscando por ese titular.
-  // _crmBuscados lo llena el buscador del CRM (panel_crm_perfil_v1): trae teléfono,
-  // titular y el perfil calculado sobre TODAS las operaciones. _crmWtkBuscados es el
-  // buscador viejo, queda de respaldo.
-  const _crmWtk = (window._crmBuscados||{})[uLow] || (window._crmWtkBuscados||{})[uLow] || {};
+  // La identidad de servidor completa los datos que esta máquina no conoce.
+  const _crmWtk = crm;
   const crmTel = String(crm.telefono || _crmWtk.telefono || '').replace(/\D/g,'');
   const crmTit = String(crm.titular || _crmWtk.titular || '').trim();
   const crmEst = String(crm.estadoVinculo || _crmWtk.estadoVinculo || '').trim().toUpperCase();
   const railIdent =
-      '<div class="pj-card"><h4>👤 Identidad</h4>'
+      '<div class="pj-card"><h4>👤 Identidad'+(localSinOficina?' · datos locales':'')+'</h4>'
     + (tits.length
         ? tits.map(function(t){
             // Bloqueo de titular: la acción que le faltaba a la auditoría de multicuenta.
@@ -4148,8 +4336,10 @@ window.abrirPerfilJugador = function(usuario){
   // cuentas propias — eso es normal). 🚨 = el titular de ESE instrumento no coincide con los
   // titulares conocidos del usuario (posible cuenta ajena). Tocá uno para copiarlo.
   const titsSet = tits.map(function(t){ return String(t.raw).toLowerCase().trim(); });
+  const cbuTitulo=beta ? (crm.cbu_fuente==='RETIRO_CONFIRMADO'?'Tomado de un retiro confirmado':crm.cbu_fuente==='VINCULO_DECLARADO'?'Destino declarado en el vínculo':'Destino registrado; procedencia sin confirmar') : 'Tomado del último retiro pagado';
+  const cbuLeyenda=beta ? (crm.cbu_fuente==='RETIRO_CONFIRMADO'?'de un retiro confirmado':crm.cbu_fuente==='VINCULO_DECLARADO'?'declarado en el vínculo · no acredita un pago':'procedencia sin confirmar') : 'del último retiro';
   const railInstr =
-      '<div class="pj-card"><h4>💳 Instrumentos de retiro (todos)</h4>'
+      '<div class="pj-card"><h4>💳 Instrumentos de retiro'+(localSinOficina?' · datos locales':'')+'</h4>'
     + (cbus.length?cbus.slice().sort(function(a,b){ return String(b.ultima||'').localeCompare(String(a.ultima||'')); }).map(function(c){
         const ajeno = c.titular && titsSet.length && titsSet.indexOf(String(c.titular).toLowerCase().trim())===-1;
         return '<div style="padding:4px 0;border-bottom:1px dashed #21262d;cursor:pointer" title="Tocá para copiar" data-valor="'+esc(c.raw)+'" onclick="event.stopPropagation();portalCopiarCbu(this)">'
@@ -4162,45 +4352,43 @@ window.abrirPerfilJugador = function(usuario){
       // servidor. La base local es POR MÁQUINA: si el retiro lo pagó otro turno u otra PC,
       // acá no hay nada aunque el usuario tenga destino conocido.
       : (_crmWtk.cbu
-          ? '<div style="padding:4px 0" title="Tomado del último retiro pagado">'
+          ? '<div style="padding:4px 0" title="'+esc(cbuTitulo)+'">'
             + '<div class="pj-mono" style="font-size:12px;font-weight:700;color:#e6edf3">'+esc(_crmWtk.cbu)+'</div>'
-            + '<div class="small" style="color:#8b949e">'+(crmTit?esc(crmTit)+' · ':'')+'del último retiro</div></div>'
+            + '<div class="small" style="color:#8b949e">'+(crmTit?esc(crmTit)+' · ':'')+esc(cbuLeyenda)+'</div></div>'
           : '<div class="small" style="color:#5a6474">Sin destinos registrados aún.</div>'))
     + '</div>';
   const railBonos =
-      '<div class="pj-card"><h4>🎁 Bonos</h4>'
+      '<div class="pj-card"><h4>🎁 Bonos'+(localSinOficina?' · datos locales':'')+'</h4>'
     + (bonos.length?bonos.slice(0,5).map(function(b){ const ap=b.estado==='APLICADO'; return '<div class="pj-field"><span class="k">'+esc(formatFecha(b.fecha||''))+'</span><span class="v" style="color:'+(ap?'#22c55e':'#f5c518')+'">'+(ap?'🎁 aplicado':'⏳ pendiente')+(b.pct?(' '+b.pct+'%'):'')+'</span></div>'; }).join(''):'<div class="small" style="color:#5a6474">Sin bonos registrados.</div>')
     + '</div>';
-  let totC=0, totR=0; ops.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+  let totC=0, totR=0;
+  if(!beta) ops.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
   const railResumen =
-      '<div class="pj-card"><h4>📊 Resumen</h4>'
-    + '<div class="pj-field"><span class="k">Cargas</span><span class="v" style="color:#22c55e">'+(crm.cargas!=null?crm.cargas:'—')+' · '+money(crm.montoCargas||totC)+'</span></div>'
-    + '<div class="pj-field"><span class="k">Retiros</span><span class="v" style="color:#fb923c">'+(crm.retiros!=null?crm.retiros:'—')+' · '+money(crm.montoRetiros||totR)+'</span></div>'
-    + '<div class="pj-field"><span class="k">Neto</span><span class="v" style="color:'+((crm.neto||totC-totR)>=0?'#22c55e':'#ef4444')+'">'+money(crm.neto!=null?crm.neto:(totC-totR))+'</span></div>'
+      '<div class="pj-card"><h4>📊 '+(beta?'Resumen del historial':'Resumen disponible')+'</h4>'
+    + (requiereRevision?'<div class="small" style="color:#fbbf24;margin-bottom:8px">Reversiones pendientes de cotejo. Los importes del resumen están pendientes de confirmación.</div>':'')
+    + ((beta && !estado.resumen) || (!beta && !Object.keys(crm).length && (!legacyCache || !legacyCache.__loaded)) ? '<div class="small">'+(consultaError?'No se pudo consultar el resumen.':'Consultando resumen…')+'</div>' :
+      '<div class="pj-field"><span class="k">'+(beta?'Cargas confirmadas':'Cargas')+'</span><span class="v" style="color:#22c55e">'+(crm.cargas!=null?crm.cargas:'—')+' · '+(requiereRevision?'importe pendiente':money(crm.montoCargas!=null?crm.montoCargas:totC))+'</span></div>'
+    + '<div class="pj-field"><span class="k">'+(beta?'Retiros confirmados':'Retiros')+'</span><span class="v" style="color:#fb923c">'+(crm.retiros!=null?crm.retiros:'—')+' · '+(requiereRevision?'importe pendiente':money(crm.montoRetiros!=null?crm.montoRetiros:totR))+'</span></div>'
+    + '<div class="pj-field"><span class="k">Neto</span><span class="v" style="color:'+(requiereRevision?'#fbbf24':(crm.neto!=null?crm.neto:totC-totR)>=0?'#22c55e':'#ef4444')+'">'+(requiereRevision?'Pendiente de cotejo':money(crm.neto!=null?crm.neto:(totC-totR)))+'</span></div>'
     + '<div class="pj-field"><span class="k">Turno frecuente</span><span class="v">'+esc(crm.turnoFrecuente||'—')+'</span></div>'
-    + '<div class="pj-field"><span class="k">Última carga</span><span class="v">'+(crm.ultimaCarga?esc(new Date(crm.ultimaCarga).toLocaleDateString('es-AR')):'—')+'</span></div>'
-    + '</div>';
+    + (beta && crm.errores!=null?'<div class="pj-field"><span class="k">Registros no confirmados</span><span class="v">'+esc(String(crm.errores))+'</span></div>':'')
+    + '<div class="pj-field"><span class="k">Última carga</span><span class="v">'+(crm.ultimaCarga?esc(new Date(crm.ultimaCarga).toLocaleDateString('es-AR')):'—')+'</span></div>')
+    + (estado.error?'<div class="small" style="color:#fbbf24">No se pudo actualizar toda la consulta. Se conserva lo recibido.</div>':'')
+    + '</div>'
+    + (beta && estado.agente ? '<div class="pj-card"><h4>Importación del agente</h4>'
+      + '<div class="pj-field"><span class="k">Cargas</span><span class="v">'+estado.agente.cargas+' · '+money(estado.agente.montoCargas)+'</span></div>'
+      + '<div class="pj-field"><span class="k">Retiros</span><span class="v">'+estado.agente.retiros+' · '+money(estado.agente.montoRetiros)+'</span></div>'
+      + '<div class="small" style="color:#8b949e">Totales importados por separado; pueden coincidir con operaciones del historial.</div></div>':'');
 
   // ── timeline (derecha): operaciones agrupadas por día, hora protagonista ──
-  let tl='', diaPrev='';
-  ops.forEach(function(o){
-    const d = new Date(o.fecha);
-    const diaK = isNaN(d)?'—':d.toLocaleDateString('es-AR',{weekday:'long',day:'2-digit',month:'2-digit'});
-    if(diaK!==diaPrev){ tl += '<div class="pj-day">'+esc(diaK)+'</div>'; diaPrev=diaK; }
-    const hora = isNaN(d)?'—':String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
-    const t = String(o.tipo||'').toUpperCase();
-    const eOk = ['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'].includes(String(o.estado||'').toUpperCase());
-    const destTxt = String(o.cbu||o.destino||'').trim();
-    tl += '<div class="pj-tl-row" onclick="cerrarPerfilJugador();verDetalleMovimiento(\''+esc(String(o.id||''))+'\',\''+uEsc+'\')">'
-      + '<div class="pj-tl-hora"><b>'+hora+'</b><span>'+(isNaN(d)?'':String(d.getDate()).padStart(2,'0')+'/'+String(d.getMonth()+1).padStart(2,'0'))+'</span></div>'
-      + '<div style="min-width:0;flex:1">'
-      +   '<div style="display:flex;justify-content:space-between;gap:8px"><span style="font-weight:800">'+(t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•')+' '+esc(t||'—')+' '+(eOk?'<span style="color:#22c55e">✅</span>':String(o.estado||'').toUpperCase()==='ERROR'?'<span style="color:#ef4444">❌</span>':'<span style="color:#8b949e">'+esc(o.estado||'')+'</span>')+'</span>'
-      +   '<b style="color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</b></div>'
-      +   (destTxt?('<div class="pj-mono small" style="color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ '+esc(destTxt)+'</div>'):'')
-      +   '<div class="small" style="color:#8b949e">'+(o.titular?('👤 '+esc(o.titular)+' · '):'')+(o.chuniorId?('Nº '+esc(String(o.chuniorId))+' · '):'')+(o.operador?('op:'+esc(o.operador)):'')+'</div>'
-      + '</div></div>';
-  });
-  if(!tl) tl = '<div class="small" style="color:#8b949e;padding:14px">Sin operaciones registradas para este usuario.</div>';
+  let tl=_pjActividadHtml(ops,u,false);
+  if(!tl) tl='<div class="small" style="color:#8b949e;padding:14px">'+(consultaError?'No se pudo consultar la actividad.':!(beta?estado.loaded:legacyCache && legacyCache.__loaded)?'Consultando actividad…':'Sin operaciones registradas en este historial.')+'</div>';
+  const controles=beta
+    ? '<div class="small" style="color:#8b949e;margin:8px 0">'+(estado.loaded ? ops.length+' operaciones cargadas'+(estado.detalleTotal!=null?' de '+estado.detalleTotal:'')+'. ' : '')+(estado.loading?'Cargando…':'')+'</div>'
+      + (consultaError?'<div class="small" style="color:#fbbf24">No se pudo completar la consulta. <button class="mini-btn gray" onclick="pjPerfilConsultar(false,true)">Reintentar</button></div>':'')
+      + (estado.hasMore?'<button class="mini-btn blue" '+(estado.loading?'disabled':'')+' onclick="pjPerfilConsultar(true,false)">Ver más operaciones</button>':'')
+    : '<div class="small" style="color:#8b949e">Detalle disponible'+(legacyCache && legacyCache.__truncated?' · se alcanzó el límite de 3000 filas; no es el historial completo.':'.')+'</div>'
+      + (consultaError?'<div class="small" style="color:#fbbf24">No se pudo actualizar el historial. <button class="mini-btn gray" onclick="pjPerfilConsultar(false,true)">Reintentar</button></div>':'');
 
   // El chip VIP / TIBIO / FRIO se fue: era una etiqueta de marketing, no un dato para operar.
   const html =
@@ -4209,7 +4397,7 @@ window.abrirPerfilJugador = function(usuario){
     +     '<div class="pj-avatar">'+esc(u.substring(0,2).toUpperCase())+'</div>'
     +     '<div style="min-width:0;flex:1"><div style="font-size:17px;font-weight:900">'+esc(u)
     +       ' <span title="Push" style="opacity:'+(fl.push?1:.25)+'">🔔</span><span title="App" style="opacity:'+(fl.app?1:.25)+'">📱</span>'+'</div>'
-    +       '<div class="small" style="color:#8b949e">'+ops.length+' operación/es'+'</div></div>'
+    +       '<div class="small" style="color:#8b949e">'+(beta && estado.resumen?estado.resumen.totalOps+' registros en el historial':ops.length+' operaciones disponibles')+'</div></div>'
     +     '<button class="mini-btn yellow" title="Usuario, clave y teléfono para que pueda entrar a la plataforma" onclick="pjDatosIngreso(\''+uEsc+'\')">🔑 Ingreso</button>'
     +     '<button class="mini-btn green" title="Escribirle por el chat del portal, aunque nunca haya escrito" onclick="nodoChatNuevo(\''+uEsc+'\')">💬 Mensaje</button>'
     +     '<button class="mini-btn blue" onclick="crmCopiarPromo(\''+uEsc+'\')">📋 Promo</button>'
@@ -4219,142 +4407,166 @@ window.abrirPerfilJugador = function(usuario){
     +     '<button class="mini-btn gray" onclick="cerrarPerfilJugador()" style="font-weight:800">✕</button>'
     +   '</div>'
     +   '<div class="pj-body">'
-    +     '<div class="pj-rail">'+railIdent
-    +       '<div class="pj-card" id="pjFichaBox"><h4>📱 Teléfonos y validaciones</h4>'
-    +         '<div class="small" style="color:#8b949e">Cargando ficha…</div></div>'
-    +       railInstr+railBonos+railResumen+'</div>'
+    +     '<div class="pj-rail">'+(localSinOficina?'<div class="small" style="color:#fbbf24;margin-bottom:10px">Datos locales sin oficina identificada. No integran el resumen del servidor.</div>':'')+railIdent
+    +       '<div class="pj-card" id="pjFichaBox">'
+    +         (vista.fichaHtml || '<h4>📱 Teléfonos y validaciones</h4><div class="small" style="color:#8b949e">Cargando ficha…</div>')+'</div>'
+    +       railInstr+railBonos+railResumen
+    +       (beta && (estado.identidadLoaded || (estado.identidad && estado.identidad.length) || estado.identidadError)
+              ? '<div class="pj-card"><h4>🔎 Observaciones de identidad</h4>'
+                + (estado.identidadLocalesDisponibles===false ? '<div class="small" style="color:#8b949e;margin-bottom:6px">Vista de observaciones locales aún no sincronizada en servidor.</div>' : (estado.identidadLocalesDisponibles===true ? '<div class="small" style="color:#22c55e;margin-bottom:6px">Incluye observaciones locales sincronizadas.</div>' : ''))
+                + (estado.identidadError ? '<div class="small" style="color:#fbbf24;margin-bottom:6px">No se pudo completar la consulta de observaciones.</div>' : '')
+                + ((estado.identidad && estado.identidad.length)
+                    ? estado.identidad.slice(0,25).map(function(obs){
+                        const atr = String(obs.atributo||'OBSERVADO').toUpperCase();
+                        const col = atr==='VERIFICADO'?'#22c55e':atr==='DECLARADO'?'#f5c518':'#7dd3fc';
+                        const fTxt = obs.fecha ? new Date(obs.fecha).toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}) : '';
+                        return '<div style="padding:4px 0;border-bottom:1px dashed #21262d">'
+                          + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11.5px">'
+                          + '<span style="color:#8b949e;text-transform:uppercase;font-weight:800">'+esc(String(obs.campo||''))+'</span>'
+                          + '<span class="pj-mono" style="font-weight:700;color:#e6edf3;overflow:hidden;text-overflow:ellipsis">'+esc(String(obs.valor||''))+'</span></div>'
+                          + '<div class="small" style="display:flex;justify-content:space-between;gap:6px;color:#8b949e">'
+                          + '<span><b style="color:'+col+'">'+esc(atr)+'</b> · '+esc(String(obs.fuente||''))+(obs.estado?' ('+esc(String(obs.estado))+')':'')+'</span>'
+                          + '<span>'+esc(fTxt)+'</span></div></div>';
+                      }).join('')
+                    : '<div class="small" style="color:#5a6474">Sin observaciones adicionales registradas.</div>')
+                + (estado.identidadHasMore ? '<button class="mini-btn blue" style="margin-top:8px" onclick="pjPerfilMasIdentidad()">Ver más observaciones</button>' : '')
+                + '</div>'
+              : '')
+    +     '</div>'
     +     '<div class="pj-main"><div class="pj-day" style="margin-top:0">🕐 Actividad · '+ops.length+' con detalle</div>'
-    +       ((crm.totalOps||0)>ops.length?'<div class="small" style="color:#8b949e;margin:-2px 0 9px">ℹ️ El resumen cuenta '+crm.totalOps+' ops: incluye las importadas del agente (CSV), que llegan como totales SIN fila individual — acá se listan solo las '+ops.length+' operadas/registradas por el panel.</div>':'')
-    +       tl+'</div>'
+    +       tl+controles
+    +       (localesOficina.length?'<div class="pj-day">Detalles locales de esta oficina</div><div class="small" style="color:#8b949e">No figuran en la página cargada; no se agregan a los totales del servidor.</div>'+_pjActividadHtml(localesOficina,u,true):'')
+    +       (localesSinOficina.length?'<div class="pj-day">Datos locales sin oficina identificada</div><div class="small" style="color:#8b949e">Se conservan estos detalles; no integran el resumen del servidor.</div>'+_pjActividadHtml(localesSinOficina,u,true):'')+'</div>'
     +   '</div>'
     + '</div>';
-  cerrarPerfilJugador();
+  const anterior=document.getElementById('perfilJugadorOverlay'); if(anterior) anterior.remove();
   const ov = document.createElement('div');
   ov.id='perfilJugadorOverlay'; ov.innerHTML=html;
   ov.onclick = cerrarPerfilJugador;
+  ov.addEventListener('click',function(event){ if(!_pjVistaVigente(vista)){ event.stopImmediatePropagation(); cerrarPerfilJugador(); } },true);
   document.body.appendChild(ov);
   window.__perfilJugadorAbierto = uLow;
-  try{ _pjCargarFicha(u); }catch(_e){}   // teléfonos (actual + históricos), validaciones y alertas
-  // Historial COMPLETO (día 1 → hoy): trae async TODAS las ops del usuario (más allá de las 200
-  // globales) y re-renderiza el perfil si sigue abierto y en el mismo usuario. Sin loop: el loader
-  // se cachea y en el re-render devuelve hayNuevas=false.
-  try{
-    if(window.cargarArbolCompletoUsuario){
-      window.cargarArbolCompletoUsuario(u, function(hayNuevas){
-        if(hayNuevas && document.getElementById('perfilJugadorOverlay') && window.__perfilJugadorAbierto===uLow){
-          window.abrirPerfilJugador(u);
-        }
-      });
-    }
-  }catch(_e){}
-
-  // El perfil se abre desde muchos lados (buscador, cola de reconexión, dormidos, una
-  // fila del CRM) y no todos dejan al jugador cacheado. Si no lo tenemos, lo pedimos y
-  // se repinta: así el turno, la última carga, el score y el segmento salen siempre,
-  // calculados sobre TODAS las operaciones y no sobre lo que hubiera en memoria.
-  try{
-    if(!crm.turnoFrecuente && !(window._crmBuscados||{})[uLow]){
-      window._crmBuscados = window._crmBuscados || {};
-      window._crmBuscados[uLow] = null;                 // evita pedirlo dos veces
-      supabaseClient.rpc('panel_crm_perfil_v1',{
-        p_secret: window.PANEL_DATA_SECRET,
-        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
-        p_query: null, p_usuario: u, p_limit: 1
-      }).then(function(r){
-        const j = (r && r.data && (r.data.jugadores||[])[0]) || null;
-        if(!j) return;
-        window._crmBuscados[uLow] = j;
-        if(document.getElementById('perfilJugadorOverlay') && window.__perfilJugadorAbierto===uLow){
-          window.abrirPerfilJugador(u);
-        }
-      }).catch(function(){});
-    }
-  }catch(_e){}
+  if(!vistaPrevia) try{ void _pjCargarFicha(u); }catch(_e){}   // teléfonos (actual + históricos), validaciones y alertas
+  if(!vistaPrevia) try{ void _pjCargarFicha(u); }catch(_e){}   // teléfonos (actual + históricos), validaciones y alertas
+  if(!vistaPrevia) try{ void window.NodoPersistenciaSync?.sync?.({ pc: vista.pc }); }catch(_e){}
+  if(!vistaPrevia) void window.pjPerfilConsultar(false,false);
+  else window.NodoPerfilConsulta?.rendered(u);
 };
 
-// Árbol de operaciones de un usuario: merge de Supabase (_historialData) + store local
-// + caché de historial COMPLETO por usuario (window._arbolFullCache, cargado on-demand al
-// abrir el perfil → trae todas las ops del día 1, más allá de las 200 globales de _historialData).
-function arbolUsuario(usuario){
-  const u = normalizar(usuario||'');
+// Las filas disponibles son detalle, nunca la fuente del resumen beta.
+function _pjUnirOperaciones(usuario,rows,incluirLocales){
+  const u = _pjUsuario(usuario);
   if(!u) return [];
-  const out = {};
-  const _full = (window._arbolFullCache && window._arbolFullCache[u]) ? window._arbolFullCache[u] : [];
-  const _base = _full.length ? _full.concat(_historialData||[]) : (_historialData||[]);
-  _base.forEach(function(h){
-    if(normalizar(h.usuario||'')!==u) return;
+  const out = new Map();
+  (rows||[]).forEach(function(h){
+    if(_pjUsuario(h.usuario)!==u || !_pjDeOficina(h)) return;
     const k = String(h.id);
-    out[k] = {
+    const notas=typeof _movParseNotas==='function'?_movParseNotas(h.notas):{};
+    out.set(k,{
       id:h.id, tipo:String(h.tipo||'').toUpperCase(), monto:Number(h.monto||0),
+      usuario:h.usuario,pc_codigo:h.pc_codigo,solicitudId:h.solicitud_id,
+      titular:notas.titular||'',destino:notas.destino||'',cbu:notas.cbu||'',obs:notas.obs||'',
       estado:h.estado||'', saldoPre:h.saldo_pre, saldoPost:h.saldo_post,
       billeteraNombre:h.billetera_nombre||'', operador:h.operador||'',
       chuniorId:h.chunior_movimiento_id||null, notas:h.notas||'',
       fecha:h.created_at, origen:h.origen||'', _local:false
-    };
+    });
   });
   const map = _movStoreAll();
   Object.keys(map).forEach(function(k){
     const m = map[k];
-    if(normalizar(m.usuario||'')!==u) return;
+    if(_pjUsuario(m.usuario)!==u) return;
     const kk = String(m.id!=null?m.id:k);
-    const base = out[kk] || {};
+    const base = out.get(kk) || {};
+    if((m.pc_codigo || m.pc) && !_pjDeOficina(m)) return;
+    if(!base.id && (!incluirLocales || !_pjDeOficina(m))) return;
     const pick = function(a,b){ return (a!==undefined && a!==null && a!=='') ? a : b; };
-    out[kk] = {
-      id: pick(m.id, base.id),
-      tipo: String(pick(m.tipo, base.tipo)||'').toUpperCase(),
-      monto: pick(m.monto, base.monto!=null?base.monto:0),
-      estado: pick(m.estado, base.estado||''),
-      titular:m.titular||'', destino:m.destino||'', cbu:m.cbu||'', obs:m.obs||'',
-      saldoPre: pick(m.saldoPre, base.saldoPre),
-      saldoPost: pick(m.saldoPost, base.saldoPost),
+    out.set(kk,{
+      id: pick(m.id, base.id || k),usuario:m.usuario,pc_codigo:base.pc_codigo || m.pc_codigo || m.pc,
+      solicitudId:pick(m.solicitudId,base.solicitudId),
+      tipo: String(pick(base.tipo, m.tipo)||'').toUpperCase(),
+      monto: pick(base.monto, m.monto!=null?m.monto:0),
+      estado: pick(base.estado, m.estado||''),
+      titular:m.titular||base.titular||'', destino:m.destino||base.destino||'', cbu:m.cbu||base.cbu||'', obs:m.obs||base.obs||'',
+      saldoPre: pick(base.saldoPre, m.saldoPre),
+      saldoPost: pick(base.saldoPost, m.saldoPost),
       billeteraNombre: pick(m.billeteraNombre, base.billeteraNombre||''),
       operador: pick(m.operador, base.operador||''),
       chuniorId: pick(m.chuniorId, base.chuniorId||null),
       bonoPct: m.bonoPct||null,
       notas: pick(m.notas, base.notas||''),
-      fecha: pick(m._fecha, base.fecha), origen: pick(m.origen, base.origen||''),
+      fecha: pick(base.fecha, m._fecha), origen: pick(m.origen, base.origen||''),
       _local: !base.id
-    };
+    });
   });
-  return Object.values(out).sort(function(a,b){ return new Date(b.fecha||0)-new Date(a.fecha||0); });
+  const result=Array.from(out.values());
+  return incluirLocales?result.sort(function(a,b){ return new Date(b.fecha||0)-new Date(a.fecha||0); }):result;
 }
-// Carga ON-DEMAND el historial COMPLETO de UN usuario (todas sus ops de historial_ops de la
-// oficina, día 1 → hoy), más allá de las 200 globales de _historialData. Cachea por usuario.
-// onDone(hayNuevas) se llama al terminar (hayNuevas=true si trajo filas nuevas → re-render).
+function _pjLocalesDeOficina(usuario,ops){
+  const ids=new Set((ops||[]).map(function(row){return String(row.id);}));
+  return Object.entries(_movStoreAll()).filter(function(pair){ const m=pair[1]; return _pjUsuario(m.usuario)===_pjUsuario(usuario) && _pjDeOficina(m) && !ids.has(String(m.id==null?pair[0]:m.id)); })
+    .map(function(pair){ const m=pair[1]; return Object.assign({},m,{id:m.id==null?pair[0]:m.id,fecha:m._fecha||m.fecha}); })
+    .sort(function(a,b){return new Date(b.fecha||0)-new Date(a.fecha||0);});
+}
+function _pjLocalesSinOficina(usuario,ops){
+  const ids=new Set((ops||[]).map(function(row){return String(row.id);}));
+  return Object.entries(_movStoreAll()).filter(function(pair){ const m=pair[1]; return _pjUsuario(m.usuario)===_pjUsuario(usuario) && !(m.pc_codigo || m.pc) && !ids.has(String(m.id==null?pair[0]:m.id)); })
+    .map(function(pair){ const m=pair[1]; return Object.assign({},m,{id:m.id==null?pair[0]:m.id,fecha:m._fecha||m.fecha}); })
+    .sort(function(a,b){return new Date(b.fecha||0)-new Date(a.fecha||0);});
+}
+function arbolUsuario(usuario){
+  if(!_pjUsuario(usuario))return [];
+  const estado=_pjEstado(usuario);
+  if(estado.mode!=='legacy')return _pjUnirOperaciones(usuario,estado.rows||[],false);
+  const cache=window._arbolFullCache[_pjClave(usuario)] || [];
+  return _pjUnirOperaciones(usuario,cache.concat(typeof _historialData!=='undefined'?_historialData:[]),true);
+}
+// Compatibilidad legacy: consulta acotada y explícitamente parcial. La beta usa páginas.
 window._arbolFullCache = window._arbolFullCache || {};
 window.cargarArbolCompletoUsuario = async function(usuario, onDone){
-  const u = normalizar(usuario||''); if(!u){ if(onDone)onDone(false); return; }
-  const cache = window._arbolFullCache[u];
-  if(cache && cache.__loaded){ if(onDone)onDone(false); return; }   // ya cargado, no repetir
-  if(cache && cache.__loading){ if(onDone)onDone(false); return; }
-  window._arbolFullCache[u] = Object.assign(cache||[], {__loading:true});
+  const u = _pjUsuario(usuario), pc=_pjOficina(), key=_pjClave(usuario);
+  if(!u || !pc){ if(onDone)onDone(false); return; }
+  if(window.NodoPerfilConsulta && await window.NodoPerfilConsulta.ready()){
+    const result=await window.NodoPerfilConsulta.load(usuario);
+    if(onDone && pc===_pjOficina())onDone(!result.error && result.rows.length>0);
+    return result;
+  }
+  if(pc!==_pjOficina())return;
+  const cache=window._arbolFullCache[key];
+  if(cache && (cache.__loaded || cache.__loading)){ if(onDone)onDone(false); return; }
+  const rows=window._arbolFullCache[key]=Object.assign(cache||[],{__loading:true,__error:false});
   try{
     const { data, error } = await supabaseClient
       .from("historial_ops").select("*")
       .in("pc_codigo", (typeof pcAliasesHist==='function'?pcAliasesHist():[]))
-      .ilike("usuario", String(usuario||'').trim())   // igualdad case-insensitive (sin comodines)
+      .ilike("usuario", String(usuario||'').trim().replace(/[\\%_]/g,'\\$&'))
       .order("created_at", { ascending:false })
       .limit(3000);
-    if(!error && Array.isArray(data)){
-      data.__loaded = true;
-      window._arbolFullCache[u] = data;
+    if(pc!==_pjOficina() || window._arbolFullCache[key]!==rows)return;
+    if(!error && Array.isArray(data) && data.every(function(row){return _pjUsuario(row.usuario)===u && _pjDeOficina(row);})){
+      Object.assign(data,{__loaded:true,__loading:false,__truncated:data.length===3000});
+      window._arbolFullCache[key] = data;
       if(onDone) onDone(data.length>0);
     } else {
-      window._arbolFullCache[u] = Object.assign([], {__loaded:true});   // marca cargado (vacío) para no reintentar en loop
+      rows.__loading=false; rows.__error=true;
       if(onDone) onDone(false);
     }
   }catch(_e){
-    try{ delete window._arbolFullCache[u]; }catch(__e){}   // permite reintentar en el próximo open
+    if(pc!==_pjOficina() || window._arbolFullCache[key]!==rows)return;
+    rows.__loading=false; rows.__error=true;
     if(onDone) onDone(false);
   }
 };
 window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
   const esc = escapeHtml;
+  const perfilEstado=usuarioArg?_pjEstado(usuarioArg):null;
+  const detalleRows=(perfilEstado && perfilEstado.mode!=='legacy' ? perfilEstado.rows : (window._arbolFullCache[_pjClave(usuarioArg)] || [])).concat(_historialData||[]);
+  const hRow=histId?detalleRows.find(function(x){ return String(x.id)===String(histId) && _pjDeOficina(x) && (!usuarioArg || _pjUsuario(x.usuario)===_pjUsuario(usuarioArg)); }):null;
   // Red por si algo lo llama igual: esta ficha es de plata. Para un cambio de clave o una
   // consulta armaba "Carga · $ 0" con el árbol de otras operaciones abajo, que no tiene
   // nada que ver con la fila que se abrió.
   try{
-    const _h = (_historialData||[]).find(function(x){ return String(x.id)===String(histId); });
+    const _h = hRow;
     const _t = String((_h && _h.tipo) || "").toUpperCase();
     if(_t && ["CARGA","RETIRO","MOV_BILLETERA","CAMBIO_BILLETERA","DEPOSITO_SR",
               "PROPINA","RECARGA_FICHAS"].indexOf(_t) === -1){
@@ -4365,7 +4577,7 @@ window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
 
   const map = _movStoreAll();
   let mov = histId ? (map[String(histId)] || null) : null;
-  const hRow = histId ? (_historialData||[]).find(function(x){ return String(x.id)===String(histId); }) : null;
+  if(mov && !_pjDeOficina(mov) && !(hRow && _pjUsuario(hRow.usuario)===_pjUsuario(mov.usuario) && !(mov.pc_codigo || mov.pc)))mov=null;
 
   // 4/10 · La fila que tocó el operador manda sobre cualquier cosa guardada.
   //
@@ -4473,14 +4685,18 @@ window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
           cbuWarnHtml = '<div style="margin-top:6px;padding:7px 10px;border-radius:8px;background:rgba(245,197,24,.12);border:1px solid rgba(245,197,24,.5);color:#fde68a;font-size:12px;font-weight:700">⚠️ Destino NUEVO — nunca cobró en esta cuenta. Confirmá con el usuario.</div>';
         else
           cbuWarnHtml = '<div style="margin-top:5px;font-size:11px;color:#22c55e;font-weight:700">✓ Ya cobró en este destino ×'+_chk.veces+'</div>';
+        window.mostrarDestinosUsuario = window.mostrarDestinosUsuario || function(u){ return window.abrirPerfilJugador && window.abrirPerfilJugador(u); };
         cbuWarnHtml += '<button type="button" class="mini-btn" style="margin-top:6px;font-size:11px;background:#1e293b;color:#93c5fd" onclick="mostrarDestinosUsuario(\''+_uEsc+'\')">📇 Todos los destinos del usuario</button>';
       }
     }catch(_e){}
   }
 
   const arbol = arbolUsuario(usuario);
+  const perfilResumen=_pjEstado(usuario);
+  const resumenServidor=perfilResumen.mode==='beta'?perfilResumen.resumen:null;
   let totC=0, totR=0;
-  arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+  if(resumenServidor){ totC=resumenServidor.montoCargas;totR=resumenServidor.montoRetiros; }
+  else if(perfilResumen.mode==='legacy') arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
   const filasArbol = arbol.map(function(o){
     const t = String(o.tipo||'').toUpperCase();
     const ico = t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•';
@@ -4567,12 +4783,13 @@ window.verDetalleMovimiento = function(histId, usuarioArg, solicitudIdArg){
     + rechazoHtml
     + ((esRetiro && hRow && hRow.solicitud_id && window.nodoRetiroHistoriaHtml) ? window.nodoRetiroHistoriaHtml(hRow.solicitud_id, hRow.id) : '')
     + '<div style="display:flex;justify-content:space-between;gap:8px;margin-top:12px;padding:8px 11px;background:#161b22;border-radius:9px;font-size:12px">'
-    +   '<span>📊 <b>'+arbol.length+'</b> operación/es</span>'
-    +   '<span style="color:#22c55e">⬆️ '+money(totC)+'</span>'
+    +   '<span>📊 <b>'+(resumenServidor?resumenServidor.totalOps:arbol.length)+'</b> '+(resumenServidor?'registros en el historial':'operaciones disponibles')+'</span>'
+    +   (resumenServidor && resumenServidor.requiere_revision?'<span style="color:#fbbf24">Reversiones pendientes de cotejo. Importes del resumen pendientes.</span>':resumenServidor || perfilResumen.mode==='legacy'?'<span style="color:#22c55e">⬆️ '+money(totC)+'</span>'
     +   '<span style="color:#fb923c">⬇️ '+money(totR)+'</span>'
-    +   '<span style="color:#e6edf3">neto <b>'+money(totC-totR)+'</b></span>'
+    +   '<span style="color:#e6edf3">neto <b>'+money(resumenServidor?resumenServidor.neto:totC-totR)+'</b></span>':'<span>Resumen sin consultar</span>')
     + '</div>'
-    + '<div style="font-weight:800;margin:12px 0 2px;color:#c9d1d9">🌳 Árbol de operaciones de '+esc(usuario)+'</div>'
+    + '<div style="font-weight:800;margin:12px 0 2px;color:#c9d1d9">🌳 Detalle cargado de '+esc(usuario)+' · '+arbol.length+' operaciones</div>'
+    + '<button class="mini-btn blue" onclick="cerrarModal();abrirPerfilJugador('+_pjTextoAccion(usuario)+')">Ver perfil y más operaciones</button>'
     + filasArbol
     + '</div>';
 
@@ -4624,16 +4841,25 @@ function _archivoHistorialMerge(nuevas){
 function _arbolResumenHtml(usuario){
   try{
     if(typeof arbolUsuario!=='function') return '';
+    const perfil = window.NodoPerfilConsulta?.snapshot(usuario);
+    const resumen = perfil?.mode==='beta' ? perfil.resumen : null;
     const arbol = arbolUsuario(usuario);
-    if(!arbol.length) return '';
+    if(!arbol.length && !resumen) return '';
     let totC=0, totR=0;
-    arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+    const disponible = (!!resumen && !resumen.requiere_revision) || !perfil || perfil.mode==='legacy';
+    if(resumen){ totC=resumen.montoCargas; totR=resumen.montoRetiros; }
+    else if(disponible) arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+    const titulo = resumen ? resumen.totalOps+' registros'+(resumen.requiere_revision?'':' · importes confirmados') : arbol.length+' registros cargados';
+    const importes = disponible
+      ? '<span style="color:#22c55e">⬆️ '+money(totC)+'</span><span style="color:#fb923c">⬇️ '+money(totR)+'</span><span style="color:#e6edf3">neto <b>'+money(resumen ? resumen.neto : totC-totR)+'</b></span>'
+      : '<span>'+(resumen?.requiere_revision?'Reversiones pendientes de cotejo':'Resumen del servidor pendiente')+'</span>';
     const ult = arbol.slice(0,6).map(function(o){
       const t=String(o.tipo||'').toUpperCase(); const ico=t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•';
       return '<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;color:#94a3b8"><span>'+ico+' '+escapeHtml(t||'—')+' · '+formatFecha(o.fecha)+'</span><span style="font-weight:700;color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</span></div>';
     }).join('');
     return '<div style="margin-top:10px;padding:8px 10px;background:#0d1117;border:1px solid #21262d;border-radius:9px">'
-      + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;margin-bottom:4px;flex-wrap:wrap"><b style="color:#c9d1d9">🌳 '+arbol.length+' ops</b><span style="color:#22c55e">⬆️ '+money(totC)+'</span><span style="color:#fb923c">⬇️ '+money(totR)+'</span><span style="color:#e6edf3">neto <b>'+money(totC-totR)+'</b></span></div>'
+      + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;margin-bottom:4px;flex-wrap:wrap"><b style="color:#c9d1d9">🌳 '+titulo+'</b>'+importes+'</div>'
+      + (perfil?.mode==='beta' ? '<div class="small">Detalle cargado: '+arbol.length+(perfil.error?' · actualización pendiente':'')+'</div>' : '')
       + ult + '</div>';
   }catch(_e){ return ''; }
 }
@@ -4843,56 +5069,129 @@ window._retiroParcialSigueAbierto = function(s){
     return !!(pp.hasProg && pp.total>0 && pp.pagado < pp.total - 0.5);
   }catch(_e){ return false; }
 };
-// Modal de los retiros que se están pagando POR PARTES. Salen de "Solicitudes pendientes" (podían
-// quedar abiertos días y tapaban las solicitudes nuevas) y se agrupan acá, con su progreso y el
-// botón para seguir pagando. La lista la arma el render del Inicio en window._parcialesEnProceso.
+// Caja "En proceso": lo que YA tiene alguien trabajando, separado de lo que nadie tocó.
+//   · TOMADAS: cargas y retiros que alguien tomó con el botón Tomar y todavía no se terminaron.
+//   · PAGÁNDOSE POR PARTES: retiros que se están pagando en pagos parciales.
+// Las dos salen de "Solicitudes pendientes": ahí quedan sólo las que nadie agarró, que es lo que hace
+// falta ver cuando entran tres o cinco juntas (Juan, 25/10). Los parciales además podían quedar
+// abiertos días y tapaban las nuevas. La lista la arma el render del Inicio
+// (window._tomadasEnProceso y window._parcialesEnProceso).
+function _enProcesoFilaParcial(s){
+  const id  = Number(s.ID || s.SOLICITUD_ID || 0);
+  const pp  = window._retiroParcialInfo ? window._retiroParcialInfo(s) : {total:0,pagado:0,restante:0};
+  const pct = pp.total > 0 ? Math.min(100, Math.round(pp.pagado * 100 / pp.total)) : 0;
+  const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
+  const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
+  const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
+  // Ya cobró todo pero la solicitud quedó abierta → se ofrece cerrarla, no pagar más.
+  // "saldadoPorAlguna": una de las dos fuentes del progreso dice que ya está pago.
+  const saldado = pp.restante <= 0.5 || pp.saldadoPorAlguna;
+  const acento  = saldado ? '#22c55e' : '#7c3aed';
+  return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid '+acento+';border-radius:10px;padding:10px 12px;margin-bottom:8px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
+    +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b>'
+    +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + '</div>'
+    +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:'+acento+'">'
+    +       (saldado ? '✔ saldado' : 'falta '+money(pp.restante))+'</div>'
+    +     '<div class="small" style="color:#8b949e">'+money(pp.pagado)+' de '+money(pp.total)+'</div></div>'
+    + '</div>'
+    + '<div style="height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin-top:8px">'
+    +   '<div style="height:100%;width:'+pct+'%;background:'+(saldado?'#22c55e':'linear-gradient(90deg,#7c3aed,#a78bfa)')+'"></div></div>'
+    // Las dos fuentes del progreso no coinciden → no se decide por una: se muestran las dos y el
+    // operador elige (cobró todo → Cerrar · falta → Pagar más).
+    + (pp.discrepa
+        ? ('<div style="margin-top:8px;padding:6px 9px;border-radius:8px;background:rgba(245,197,24,.10);border:1px solid rgba(245,197,24,.35);font-size:11.5px;color:#fde68a">'
+           + '⚠ El progreso no coincide: <b>'+money(pp.pagadoRpc)+'</b> según el contador de parciales'
+           + (pp.pagadoAlt>0.5 && Math.abs(pp.pagadoAlt-pp.pagadoRpc)>1 ? ', <b>'+money(pp.pagadoAlt)+'</b> según el retiro normal' : '')
+           + (pp.histCompleto && pp.pagadoHistorial>0.5 && Math.abs(pp.pagadoHistorial-pp.pagadoRpc)>1 ? ', <b>'+money(pp.pagadoHistorial)+'</b> sumando el historial' : '')
+           + '. '
+           + 'Fijate en el historial cuánto cobró y elegí.</div>')
+        : '')
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap">'
+    +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
+    +   '<span style="display:flex;gap:6px">'
+    // El "Cerrar" está SIEMPRE disponible: sin esa salida, un retiro con el progreso mal
+    // registrado quedaba trabado en la bandeja sin forma de sacarlo.
+    +     '<button class="mini-btn" style="background:'+(saldado?'#12b76a':'transparent')+';color:'+(saldado?'#fff':'#8b949e')+';border:'+(saldado?'none':'1px solid #30363d')+';font-size:11px" title="Marcar la solicitud como pagada (no mueve fichas ni plata)" onclick="cerrarRetiroSaldado('+id+')">✔ Cerrar'+(saldado?' · ya cobró todo':'')+'</button>'
+    +     (saldado ? '' : '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>')
+    +   '</span>'
+    + '</div></div>';
+}
+
+// Una solicitud TOMADA: lo que hace falta para terminarla sin volver a la lista. Cada botón es algo
+// que se puede hacer CON esta fila: aprobarla, cambiarle el monto, pagarla por partes (sólo retiro),
+// verla, rechazarla, o soltarla si se tomó por error.
+function _enProcesoFilaTomada(s){
+  const id  = Number(s.ID || s.SOLICITUD_ID || 0);
+  const tipo = String(s.TIPO || s.TIPO_SOLICITUD || '').toUpperCase();
+  const esRet = tipo === 'RETIRO';
+  const acento = esRet ? '#fb923c' : '#22c55e';
+  const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
+  const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
+  const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
+  const monto   = Number(s.MONTO_REAL || s.MONTO_DECLARADO || 0);
+  // Quién la tiene: evita que dos operadores trabajen la misma.
+  const quien = String(s.OPERADOR || '').trim();
+  const yo = String((window.operador && (window.operador.usuario || window.operador.nombre)) || '').trim().toLowerCase();
+  const suya = quien && yo && quien.toLowerCase() === yo;
+  const lineaQuien = quien
+    ? '<div class="small" style="color:'+(suya?'#7cc4ff':'#fbbf24')+'">'+(suya ? 'La tomaste vos' : 'La tiene <b>'+escapeHtml(quien)+'</b>')+'</div>'
+    : '';
+  // Las fichas del jugador, si ya se leyeron (en un retiro es lo que decide cómo se paga).
+  let fichas = '';
+  if(esRet){
+    try{
+      const c = (window._retiroSaldoCheck || {})[String(s.USUARIO || '').toLowerCase()];
+      if(c && c.confiable !== false){
+        const alcanza = c.saldo + 0.5 >= Math.abs(monto);
+        fichas = '<div style="font-size:10.5px;font-weight:800;margin-top:2px;color:'+(alcanza?'#22c55e':'#ef4444')+'">fichas '+escapeHtml(String(c.raw || money(c.saldo)))+(alcanza?' ✓':' ⚠ no alcanza')+'</div>';
+      }
+    }catch(_e){}
+  }
+  const btn = function(txt, llamada, estilo, titulo){
+    return '<button class="mini-btn" style="font-size:11px;'+estilo+'"'+(titulo?' title="'+escapeHtml(titulo)+'"':'')
+      + ' onclick="cerrarModal();'+llamada.replace('#', id)+'">'+txt+'</button>';
+  };
+  const gris = 'background:transparent;color:#8b949e;border:1px solid #30363d';
+  return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid '+acento+';border-radius:10px;padding:10px 12px;margin-bottom:8px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
+    +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b> '
+    +     '<span style="font-size:10px;font-weight:900;border-radius:999px;padding:1px 8px;background:'+acento+'22;color:'+acento+';border:1px solid '+acento+'66">'+escapeHtml(tipo)+'</span>'
+    +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + lineaQuien + '</div>'
+    +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:'+acento+'">'+money(monto)+'</div>'+fichas+'</div>'
+    + '</div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap">'
+    +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
+    +   '<span style="display:flex;gap:6px;flex-wrap:wrap">'
+    +     btn('Soltar', 'v154pSoltarSolicitud(#)', gris, 'La devuelve a la lista de pendientes para que otro operador la tome')
+    +     btn('Ver', 'v154pDetalleSolicitud(#,true)', gris)
+    +     btn('Rechazar', 'v154pRechazarSolicitud(#)', 'background:transparent;color:#fca5a5;border:1px solid #7f1d1d')
+    +     (esRet ? btn('💸 Parcial', 'v154pRegistrarParcial(#)', 'background:#7c3aed;color:#fff;border:none') : '')
+    // Igual que en la lista de Inicio: Aprobar abre el cartel para cotejar. De una, sólo desde "Ver".
+    +     btn('✓ Aprobar', 'v154pCrearJobSolicitud(#)', 'background:#12b76a;color:#fff;border:none')
+    +   '</span>'
+    + '</div></div>';
+}
+
 window.verRetirosParciales = function(){
-  const arr = (window._parcialesEnProceso || []).slice();
-  if(!arr.length){ try{ toast('No hay retiros pagándose por partes.','blue'); }catch(_e){} return; }
-  const filas = arr.map(function(s){
-    const id  = Number(s.ID || s.SOLICITUD_ID || 0);
-    const pp  = window._retiroParcialInfo ? window._retiroParcialInfo(s) : {total:0,pagado:0,restante:0};
-    const pct = pp.total > 0 ? Math.min(100, Math.round(pp.pagado * 100 / pp.total)) : 0;
-    const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
-    const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
-    const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
-    // Ya cobró todo pero la solicitud quedó abierta → se ofrece cerrarla, no pagar más.
-    // "saldadoPorAlguna": una de las dos fuentes del progreso dice que ya está pago.
-    const saldado = pp.restante <= 0.5 || pp.saldadoPorAlguna;
-    const acento  = saldado ? '#22c55e' : '#7c3aed';
-    return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid '+acento+';border-radius:10px;padding:10px 12px;margin-bottom:8px">'
-      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
-      +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b>'
-      +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + '</div>'
-      +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:'+acento+'">'
-      +       (saldado ? '✔ saldado' : 'falta '+money(pp.restante))+'</div>'
-      +     '<div class="small" style="color:#8b949e">'+money(pp.pagado)+' de '+money(pp.total)+'</div></div>'
-      + '</div>'
-      + '<div style="height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin-top:8px">'
-      +   '<div style="height:100%;width:'+pct+'%;background:'+(saldado?'#22c55e':'linear-gradient(90deg,#7c3aed,#a78bfa)')+'"></div></div>'
-      // Las dos fuentes del progreso no coinciden → no se decide por una: se muestran las dos y el
-      // operador elige (cobró todo → Cerrar · falta → Pagar más).
-      + (pp.discrepa
-          ? ('<div style="margin-top:8px;padding:6px 9px;border-radius:8px;background:rgba(245,197,24,.10);border:1px solid rgba(245,197,24,.35);font-size:11.5px;color:#fde68a">'
-             + '⚠ El progreso no coincide: <b>'+money(pp.pagadoRpc)+'</b> según el contador de parciales'
-             + (pp.pagadoAlt>0.5 && Math.abs(pp.pagadoAlt-pp.pagadoRpc)>1 ? ', <b>'+money(pp.pagadoAlt)+'</b> según el retiro normal' : '')
-             + (pp.histCompleto && pp.pagadoHistorial>0.5 && Math.abs(pp.pagadoHistorial-pp.pagadoRpc)>1 ? ', <b>'+money(pp.pagadoHistorial)+'</b> sumando el historial' : '')
-             + '. '
-             + 'Fijate en el historial cuánto cobró y elegí.</div>')
-          : '')
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap">'
-      +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
-      +   '<span style="display:flex;gap:6px">'
-      // El "Cerrar" está SIEMPRE disponible: sin esa salida, un retiro con el progreso mal
-      // registrado quedaba trabado en la bandeja sin forma de sacarlo.
-      +     '<button class="mini-btn" style="background:'+(saldado?'#12b76a':'transparent')+';color:'+(saldado?'#fff':'#8b949e')+';border:'+(saldado?'none':'1px solid #30363d')+';font-size:11px" title="Marcar la solicitud como pagada (no mueve fichas ni plata)" onclick="cerrarRetiroSaldado('+id+')">✔ Cerrar'+(saldado?' · ya cobró todo':'')+'</button>'
-      +     (saldado ? '' : '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>')
-      +   '</span>'
-      + '</div></div>';
-  }).join('');
-  const _sald = arr.filter(function(s){ const p=window._retiroParcialInfo?window._retiroParcialInfo(s):null; return p && p.restante<=0.5; }).length;
-  abrirModal('💸 Retiros pagándose por partes · '+arr.length
-    + (_sald ? ' <span style="font-size:12px;color:#22c55e">('+_sald+' ya saldado'+(_sald>1?'s':'')+')</span>' : ''), filas, null, '');
+  const parc = (window._parcialesEnProceso || []).slice();
+  const tom  = (window._tomadasEnProceso || []).slice();
+  if(!parc.length && !tom.length){ try{ toast('No hay nada en proceso.','blue'); }catch(_e){} return; }
+  // Los títulos de sección sólo aparecen si hay de las dos clases: con una sola, el título del
+  // cartel ya lo dice.
+  const mixta = parc.length && tom.length;
+  const sec = function(txt, n){
+    return '<div style="font-size:11px;font-weight:800;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin:'+(mixta?'4px':'0')+' 2px 7px">'+txt+' · '+n+'</div>';
+  };
+  let cuerpo = '';
+  if(tom.length)  cuerpo += (mixta ? sec('Tomadas · esperando que las termines', tom.length) : '') + tom.map(_enProcesoFilaTomada).join('');
+  if(parc.length) cuerpo += (mixta ? sec('Pagándose por partes', parc.length) : '') + parc.map(_enProcesoFilaParcial).join('');
+  const _sald = parc.filter(function(s){ const p=window._retiroParcialInfo?window._retiroParcialInfo(s):null; return p && p.restante<=0.5; }).length;
+  const titulo = !parc.length ? '💸 Tomadas · '+tom.length
+               : !tom.length  ? '💸 Retiros pagándose por partes · '+parc.length
+               : '💸 En proceso · '+(tom.length+parc.length);
+  abrirModal(titulo
+    + (_sald ? ' <span style="font-size:12px;color:#22c55e">('+_sald+' ya saldado'+(_sald>1?'s':'')+')</span>' : ''), cuerpo, null, '');
 };
 // ── La historia de un retiro pagado en partes (D-90) ─────────────────────────────────────────
 // Pedido, ajuste con su motivo, cada pago y el cierre. Se pinta en cualquier
@@ -4908,7 +5207,9 @@ window.nodoRetiroHistoriaLlenar = async function(root){
     let prog = window._retiroHistoriaCache[sid];
     if(!prog || Date.now() - prog._ts > 30000){
       try{
+        const _retHealth = window.NodoSalud?.begin('RETIROS');
         const r = await supabaseClient.rpc('landing_retiro_progreso', { p_solicitud_id: Number(sid) });
+        _retHealth?.reply(r?.error);
         const row = Array.isArray(r.data) ? r.data[0] : r.data;
         if(r.error || !row || row.ok === false) continue;
         prog = Object.assign({ _ts: Date.now() }, row);
@@ -5343,12 +5644,12 @@ window.nodoCopiar = async function(texto, opciones){
     _wdLock();
     try{
       toast('Leyendo saldo de '+it.usuario+'...', 'blue');
-      const b = await callDrex('buscarUsuario', it.usuario, { skipBalance:false });
-      if(b && b.exists && b.balance && b.balance.raw){
-        colaPendientesPatch(qid, { saldoLeido: b.balance.raw.trim(), saldoLeidoHora: new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) });
-        toast('Saldo de '+it.usuario+': '+b.balance.raw.trim(), 'blue');
-      } else { toast('No se pudo leer el saldo'+(b&&b.needsLogin?' (sesión caída)':''), 'red'); }
-    }catch(e){ toast('Error leyendo saldo: '+(e.message||''), 'red'); }
+      const lectura = await window.leerFichasJugador(it.usuario);
+      if(lectura.confiable === true){
+        colaPendientesPatch(qid, { saldoLeido: lectura.raw, saldoLeidoHora: new Date().toLocaleTimeString('es-AR',{hour:'2-digit',minute:'2-digit'}) });
+        toast('Saldo de '+it.usuario+': '+lectura.raw, 'blue');
+      } else { toast(lectura.error, 'red'); }
+    }catch(_e){ toast('No se pudo leer el saldo. Probá de nuevo.', 'red'); }
     finally{ _wdUnlock(); _drexGlobalUnlock(); }
   };
   // Reintentar SEGURO (nuestro): en vez de re-ejecutar la carga a ciegas, PRECARGA el formulario
@@ -5452,6 +5753,7 @@ async function registrarEnHistorial(op){
 
   // Intento 1: completo, quitando columnas ya detectadas como inexistentes.
   let intento = { ...baseRow };
+  window.NodoSalud?.begin('HISTORIAL')?.record('EFFECT','OK','HISTORIAL_REGISTRO');
   _HISTORIAL_COLS_INEXISTENTES.forEach(c => delete intento[c]);
 
   for(let i = 0; i <= _HISTORIAL_COLS_OPCIONALES.length; i++){
@@ -5706,7 +6008,103 @@ window.solOpsHoyRefrescar = async function(){
 };
 try{ setInterval(function(){ try{ window.solOpsHoyRefrescar(); }catch(_e){} }, 60000); }catch(_e){}
 
+function _histFiltrosActivos(){
+  const _w = _histVentana();
+  const out = { periodo: String(window._HIST_PERIODO || 'TURNO').toUpperCase(), desde: _w.desde };
+  const g = function(id){ const el = document.getElementById(id); return el && el.value ? String(el.value).trim() : ''; };
+  if(g('filtHistTipo')) out.tipo = g('filtHistTipo');
+  if(g('filtHistEstado')) out.estado = g('filtHistEstado');
+  if(g('filtHistOrigen')) out.origen = g('filtHistOrigen');
+  if(g('filtHistBilletera')) out.billetera = g('filtHistBilletera');
+  if(g('filtHistUsuario')) out.usuario = g('filtHistUsuario');
+  if(g('filtHistTurno')) out.turno = g('filtHistTurno');
+  if(g('filtHistVista')) out.vista = g('filtHistVista');
+  if(g('filtHistSaldo')) out.saldo = g('filtHistSaldo');
+  if(g('filtHistDesde')) out.desde = g('filtHistDesde');
+  if(g('filtHistHasta')) out.hasta = g('filtHistHasta');
+  if(g('filtHistMontoMin')) out.min = g('filtHistMontoMin');
+  if(g('filtHistMontoMax')) out.max = g('filtHistMontoMax');
+  return out;
+}
+window._histBetaCapCache = window._histBetaCapCache || {};
+async function _histBetaConsultar(cursor){
+  const pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase();
+  if(!pc || !window.panelAPI || typeof window.panelAPI.rpc !== 'function') return { mode: 'legacy' };
+  try{
+    if(typeof window.panelAPI.getContext === 'function'){
+      const rawCtx = await window.panelAPI.getContext();
+      const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
+      if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(pc))) return { mode: 'legacy' };
+    }
+    if(window._histBetaCapCache[pc] !== true){
+      const capRes = await window.panelAPI.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: pc, p_activate: false });
+      const capData = capRes && capRes.data;
+      const caps = (capData && Array.isArray(capData.capabilities)) ? capData.capabilities : [];
+      if(!capData || capData.ok !== true || capData.enabled !== true || !caps.includes('historial.filters.v1')){
+        return { mode: 'legacy' };
+      }
+      window._histBetaCapCache[pc] = true;
+    }
+    const r = await window.panelAPI.rpc('nodo_beta_historial_v1', {
+      p_pc_codigo: pc,
+      p_filtros: _histFiltrosActivos(),
+      p_limit: 200,
+      p_cursor: cursor || null
+    });
+    if(r && r.error){
+      if(r.error.code === 'PGRST202' || r.error.code === '42883') return { mode: 'legacy' };
+      return { mode: 'beta', data: null, error: r.error };
+    }
+    const d = r && r.data;
+    if(!d || d.ok !== true || !Array.isArray(d.rows)){
+      return { mode: 'beta', data: null, error: { code: 'HISTORIAL_INVALID_DATA', message: 'Respuesta beta inválida' } };
+    }
+    return {
+      mode: 'beta',
+      data: d.rows,
+      error: null,
+      totals: d.totals || null,
+      billeteras: Array.isArray(d.billeteras) ? d.billeteras : [],
+      hasMore: d.has_more === true,
+      nextCursor: d.next_cursor || null
+    };
+  }catch(_e){
+    return { mode: 'legacy' };
+  }
+}
+window.cargarMasHistorialBeta = async function(){
+  if(!window._histBetaHasMore || !window._histBetaNextCursor) return;
+  const health = window.NodoSalud?.begin('HISTORIAL');
+  try{
+    const res = await _histBetaConsultar(window._histBetaNextCursor);
+    if(res.mode !== 'beta' || res.error || !Array.isArray(res.data)){
+      health?.reply(res.error);
+      if(res.error) health?.record('DATA', 'ERROR', health.errorCode(res.error));
+      return;
+    }
+    health?.reply(null);
+    health?.record('DATA', 'OK', 'HISTORIAL_PAGE_VALID');
+    const seen = new Set((_historialData || []).map(function(x){ return String(x.id); }));
+    res.data.forEach(function(row){
+      if(row && row.id != null && !seen.has(String(row.id))){
+        seen.add(String(row.id));
+        _historialData.push(row);
+      }
+    });
+    window._historialData = _historialData;
+    window._histBetaTotals = res.totals || window._histBetaTotals;
+    window._histBetaHasMore = res.hasMore;
+    window._histBetaNextCursor = res.nextCursor;
+    filtrarHistorial();
+    health?.record('RENDER', 'OK', 'HISTORIAL_DOM_UPDATED');
+  }catch(e){
+    health?.record('DATA', 'ERROR', health.errorCode(e));
+  }
+};
 async function cargarHistorial(){
+  const health=window.NodoSalud?.begin('HISTORIAL');
+  let healthStage='DATA';
+  try{
   _historialCargado = true;
   const el = document.getElementById("historialTable");
   if(el) el.innerHTML = '<div class="small" style="text-align:center;padding:20px;color:var(--muted)">Cargando...</div>';
@@ -5716,6 +6114,31 @@ async function cargarHistorial(){
   // Incluimos LANDING/PORTAL para diferenciar claramente operaciones manuales
   // de operaciones que nacen desde solicitudes del portal.
   const _v = _histVentana();
+  const _betaRes = await _histBetaConsultar(null);
+  let data, error;
+  if(_betaRes.mode === 'beta'){
+    data = _betaRes.data;
+    error = _betaRes.error;
+    window._histBetaTotals = _betaRes.totals || null;
+    window._histBetaBilleteras = _betaRes.billeteras || [];
+    window._histBetaHasMore = !!_betaRes.hasMore;
+    window._histBetaNextCursor = _betaRes.nextCursor || null;
+  } else {
+    window._histBetaTotals = null;
+    window._histBetaBilleteras = null;
+    window._histBetaHasMore = false;
+    window._histBetaNextCursor = null;
+    const _legRes = await supabaseClient
+      .from("historial_ops")
+      .select("*")
+      .in("pc_codigo", pcAliasesHist())
+      .gte("created_at", _v.desde)
+      .order("created_at", { ascending: false })
+      .limit(_v.limite);
+    data = _legRes.data;
+    error = _legRes.error;
+  }
+  if(false){
   const { data, error } = await supabaseClient
     .from("historial_ops")
     .select("*")
@@ -5723,12 +6146,22 @@ async function cargarHistorial(){
     .gte("created_at", _v.desde)
     .order("created_at", { ascending: false })
     .limit(_v.limite);
+  }
 
+  health?.reply(error);
+  if(health && !health.current())return;
   if(error){
+    health?.record('DATA','ERROR',health.errorCode(error));
     if(el) el.innerHTML = '<div class="err-box">Error: '+escapeHtml(error.message||'')+'</div>';
     return;
   }
-  _historialData = data || [];
+  if(!Array.isArray(data) || data.some(row=>!row || typeof row!=='object' || Array.isArray(row) || row.id==null)){
+    health?.record('DATA','ERROR','HISTORIAL_INVALID_DATA');
+    if(el)el.innerHTML='<div class="err-box">El servidor no devolvió un historial válido. Se conserva la copia anterior.</div>';
+    return;
+  }
+  health?.record('DATA','OK','HISTORIAL_LIST_VALID');
+  _historialData = data;
   // Mismo caso: el CRM y el expediente leen window._historialData y siempre les daba undefined.
   try{ window._historialData = _historialData; }catch(_e){}
   try{ window.solOpsHoyRefrescar(); }catch(_e){}
@@ -5762,17 +6195,25 @@ async function cargarHistorial(){
     }
   }catch(_e){}
 
+  healthStage='RENDER';
   const bilSel = document.getElementById("filtHistBilletera");
   if(bilSel){
-    const bils = [...new Set(_historialData.map(function(h){return h.billetera_nombre;}).filter(Boolean))];
+    const bils = (Array.isArray(window._histBetaBilleteras) && window._histBetaBilleteras.length)
+      ? window._histBetaBilleteras
+      : [...new Set(_historialData.map(function(h){return h.billetera_nombre;}).filter(Boolean))];
     bilSel.innerHTML = '<option value="">Todas las billeteras</option>' +
       bils.map(function(b){ return '<option value="'+escapeHtml(b)+'">'+escapeHtml(b)+'</option>'; }).join('');
   }
   filtrarHistorial();
+  health?.record('RENDER',el && el.innerHTML?'OK':'UNKNOWN',el && el.innerHTML?'HISTORIAL_DOM_UPDATED':'HISTORIAL_DOM_UNAVAILABLE');
   // Refrescar la vista unificada de solicitudes si ya tiene datos cargados
   try{ if(solicitudes.length || _historialData.length) renderHistorialUnificado(); }catch(_e){}
   // Cargar operaciones de agente (CSV) en paralelo → alimentan el CRM/segmentación
   try{ cargarOperacionesAgente(); }catch(_e){}
+  }catch(error){
+    health?.record(healthStage,'ERROR',healthStage==='RENDER'?'HISTORIAL_RENDER_FAILED':health.errorCode(error));
+    throw error;
+  }
 }
 
 // Operaciones de agentes importadas por CSV (admi) → solo alimentan el CRM, no el historial operativo.
@@ -6053,6 +6494,13 @@ function renderHistorial(lista){
       '</tr>';
   });
   html += '</tbody></table></div>';
+  if(window._histBetaTotals){
+    const _bt = window._histBetaTotals;
+    html = '<div class="small" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;margin-bottom:8px;background:#161b22;border:1px solid #262d3a;border-radius:8px;color:#c9d1d9">'
+      + '<span>📊 <b>Totales en servidor:</b> ' + Number(_bt.total_rows||0) + ' filas · <span style="color:#22c55e">⬆ ' + Number(_bt.cargas||0) + ' (' + money(Number(_bt.monto_cargas||0)) + ')</span> · <span style="color:#fb923c">⬇ ' + Number(_bt.retiros||0) + ' (' + money(Number(_bt.monto_retiros||0)) + ')</span> · Neto <b>' + money(Number(_bt.neto||0)) + '</b></span>'
+      + (window._histBetaHasMore ? '<button class="mini-btn blue" onclick="cargarMasHistorialBeta()">Ver más del servidor</button>' : '<span style="color:#8b949e">Página completa</span>')
+      + '</div>' + html;
+  }
   el.innerHTML = html;
 }
 
@@ -7207,7 +7655,9 @@ window.buscarHistorialServidor = async function(){
     }else{
       q = q.ilike("usuario", "%" + texto + "%");
     }
+    const _huHealth = window.NodoSalud?.begin('HISTORIAL');
     const { data, error } = await q;
+    _huHealth?.reply(error);
     if(error) throw error;
     window._histBusquedaServidor = data || [];
     const n = window._histBusquedaServidor.length;
@@ -8654,19 +9104,124 @@ function tomarImagenChatFile(){
   const file=document.getElementById("chatFile").files[0];
   if(file)leerImagenChat(file);
 }
+function dataUrlToBlob(dataUrl){
+  const parts = String(dataUrl||"").split(",");
+  if(parts.length < 2) return null;
+  const mime = (parts[0].match(/:(.*?);/) || [])[1] || "image/jpeg";
+  const binary = atob(parts[1]);
+  const array = new Uint8Array(binary.length);
+  for(let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+  return new Blob([array], { type: mime });
+}
+
 async function subirImagenPanelChat(base64DataUrl){
+  window.NodoSalud?.begin('CHAT')?.record('EFFECT','OK','CHAT_UPLOAD_IMAGE');
   if(!supabaseClient||!base64DataUrl)return null;
   try{
-    const res=await fetch(base64DataUrl);
-    const blob=await res.blob();
-    const ext=(blob.type.split('/')[1]||'jpg').replace('jpeg','jpg');
-    const path=`op/${Date.now()}_${Math.random().toString(36).slice(2,6)}.${ext}`;
-    const{error}=await supabaseClient.storage.from('chat-imagenes').upload(path,blob,{cacheControl:'3600',upsert:true,contentType:blob.type});
-    if(error){console.error('[img upload panel]',error.message||error);return null;}
-    const{data:ud}=supabaseClient.storage.from('chat-imagenes').getPublicUrl(path);
-    return ud?.publicUrl||null;
+    let blob = null;
+    try{ blob = dataUrlToBlob(base64DataUrl); }catch(_e){}
+    if(!blob){
+      const res = await fetch(base64DataUrl);
+      blob = await res.blob();
+    }
+    const contentType = blob.type || 'image/jpeg';
+    const ext = (contentType.split('/')[1]||'jpg').replace('jpeg','jpg');
+    const path = `op/${Date.now()}_${Math.random().toString(36).slice(2,6)}.${ext}`;
+
+    // 1. Intento en chat-imagenes
+    try{
+      const up = await supabaseClient.storage.from('chat-imagenes').upload(path, blob, { cacheControl:'3600', upsert:true, contentType });
+      if(!up.error){
+        const { data: ud } = supabaseClient.storage.from('chat-imagenes').getPublicUrl(path);
+        if(ud?.publicUrl) return ud.publicUrl;
+      }
+    }catch(_e){}
+
+    // 2. Fallback en comprobantes
+    try{
+      const up2 = await supabaseClient.storage.from('comprobantes').upload(path, blob, { cacheControl:'3600', upsert:true, contentType });
+      if(!up2.error){
+        const { data: ud2 } = supabaseClient.storage.from('comprobantes').getPublicUrl(path);
+        if(ud2?.publicUrl) return ud2.publicUrl;
+      }
+    }catch(_e){}
+
+    return null;
   }catch(e){console.warn('[img upload panel]',e);return null;}
 }
+
+// ── Visor de imágenes modal (Lightbox seguro para Electron) ────────────────
+// El visor de verdad es una VENTANA APARTE (ver main/image-window.js).
+//
+// Juan, 25/10: "cualquier cosa que se despliegue asi de esa manera estorba en aceptar otras
+// cargas... es mas logico que se despliegue en otra ventana... deberias de dejar un maximo de 1,
+// que la anterior muera antes de redesplegarse otra."
+//
+// El cartel de abajo tapaba el panel entero (position:fixed;inset:0;z-index:999999): mirar un
+// comprobante dejaba al operador sin poder tomar una carga ni contestar un chat. El tope de una
+// sola ventana lo hace cumplir main, no esta función.
+window.nodoVerImagenCompleta = function(src, titulo){
+  if(!src) return;
+  try{
+    if(window.panelAPI && typeof window.panelAPI.verImagen === 'function'){
+      window.panelAPI.verImagen(String(src), String(titulo||''))
+        .then(function(r){
+          // Si main no la pudo abrir, que el operador vea algo igual en vez de un clic muerto.
+          if(!r || r.ok !== true) window._nodoVerImagenEnCartel(src);
+        })
+        .catch(function(){ window._nodoVerImagenEnCartel(src); });
+      return;
+    }
+  }catch(_e){}
+  window._nodoVerImagenEnCartel(src);
+};
+
+// Respaldo: el cartel viejo, adentro del panel. Queda sólo para cuando no hay puente con main
+// (desarrollo, o un proceso principal más viejo que el panel). Es el que estorba — por eso no es
+// el primero, pero sacarlo del todo dejaría la imagen sin forma de verse.
+window._nodoVerImagenEnCartel = function(src){
+  if(!src) return;
+  let modal = document.getElementById('nodoImgModal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'nodoImgModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(8,11,17,0.88);backdrop-filter:blur(4px);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;';
+    modal.innerHTML = `
+      <div style="position:relative;max-width:94vw;max-height:92vh;display:flex;flex-direction:column;align-items:center;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:12px;box-shadow:0 20px 45px rgba(0,0,0,0.85)">
+        <div style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #1e293b">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:14px">🖼️</span>
+            <span style="color:#f1f5f9;font-size:12px;font-weight:700">Visualizador de Comprobante / Imagen</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button id="nodoImgModalCopy" type="button" style="background:#1e293b;color:#93c5fd;border:1px solid #3b82f6;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">📋 Copiar enlace</button>
+            <button id="nodoImgModalClose" type="button" style="background:#ef4444;color:#fff;border:0;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:bold;cursor:pointer">✕ Cerrar</button>
+          </div>
+        </div>
+        <div style="overflow:auto;max-width:92vw;max-height:82vh;display:flex;justify-content:center;align-items:center">
+          <img id="nodoImgModalSrc" src="" style="max-width:100%;max-height:80vh;border-radius:8px;object-fit:contain;cursor:zoom-in" onclick="this.style.maxHeight=this.style.maxHeight==='none'?'80vh':'none';this.style.cursor=this.style.maxHeight==='none'?'zoom-out':'zoom-in'">
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if(e.target === modal) modal.style.display = 'none'; });
+    modal.querySelector('#nodoImgModalClose').addEventListener('click', () => { modal.style.display = 'none'; });
+    modal.querySelector('#nodoImgModalCopy').addEventListener('click', () => {
+      const s = modal.querySelector('#nodoImgModalSrc').src;
+      if(navigator.clipboard && s){
+        navigator.clipboard.writeText(s).then(() => { if(typeof toast === 'function') toast('Enlace copiado al portapapeles','green'); });
+      }
+    });
+    document.addEventListener('keydown', e => { if(e.key === 'Escape' && modal.style.display !== 'none') modal.style.display = 'none'; });
+  }
+  const imgEl = modal.querySelector('#nodoImgModalSrc');
+  if(imgEl){
+    imgEl.src = src;
+    imgEl.style.maxHeight = '80vh';
+    imgEl.style.cursor = 'zoom-in';
+  }
+  modal.style.display = 'flex';
+};
 function leerImagenChat(file){
   if(!file.type.startsWith("image/")){
     alert("Pegá o adjuntá una imagen válida.");
@@ -8698,7 +9253,9 @@ function quitarImagenChat(){
   document.getElementById("chatPreview").classList.remove("show");
 }
 document.addEventListener("paste",async e=>{
-  const visible=!document.getElementById("viewChat").classList.contains("hidden");
+  const chatView = document.getElementById("viewChat");
+  const inicioView = document.getElementById("viewInicio");
+  const visible = (chatView && !chatView.classList.contains("hidden")) || (inicioView && !inicioView.classList.contains("hidden") && document.body.classList.contains("nodo-chat-open")) || document.activeElement?.id === "chatInput" || document.activeElement?.id === "v15ChatInput";
   if(!visible)return;
   // intento 1: clipboardData (funciona en muchos contextos)
   const items=[...(e.clipboardData?.items||[])];
@@ -8731,30 +9288,398 @@ function verificarSolicitudes(silencioso=false){
   const pendientes=solicitudes.filter(s=>esPendiente(s) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
   const ids=new Set(pendientes.map(s=>String(s.ID||s.SOLICITUD_ID||"")).filter(Boolean));
   const badge=document.getElementById("badgeSolicitudes");
-  if(pendientes.length){badge.classList.remove("hidden");badge.innerText=pendientes.length}else badge.classList.add("hidden");
+  // El número del menú cuenta lo que nadie tomó, igual que la lista de Inicio. El aviso de "nueva
+  // solicitud" de abajo sigue usando todas las pendientes: una tomada que se suelta no es nueva.
+  const sinTocar=window.nodoSolicitudesSinTocar?window.nodoSolicitudesSinTocar(pendientes):pendientes;
+  if(sinTocar.length){badge.classList.remove("hidden");badge.innerText=sinTocar.length}else badge.classList.add("hidden");
   let nuevas=0;ids.forEach(id=>{if(!lastPendientesIds.has(id))nuevas++});
   if(!silencioso||lastPendientesIds.size===0){lastPendientesIds=ids;return}
   if(nuevas>0){toast(`🔔 ${nuevas} nueva/s solicitud/es`);sonido("solicitud")}
   lastPendientesIds=ids;
 }
 function verificarChats(silencioso=false){
-  const unread=chats.reduce((a,c)=>a+Number(c.SIN_LEER||0),0);
-  const badge=document.getElementById("badgeChat");
-  if(unread){badge.classList.remove("hidden");badge.innerText=unread}else badge.classList.add("hidden");
+  const unread=window.nodoChatUnreadSnapshot?.().total || 0;
+  window.nodoChatRefreshUnread?.();
   if(silencioso && unread>lastChatUnread){toast("💬 Nuevo mensaje de chat");sonido("chat")}
   lastChatUnread=unread;
 }
+// ── Sistema de Sonidos y Tonos de Notificación ─────────────────────────────────
+const _NODO_TONOS = {
+  // Campanilla suave: doble armónico suave y decreciente
+  chime: function(ctx, vol, tipo){
+    const baseFreq = tipo === "chat" ? 880 : 698.46;
+    [baseFreq, baseFreq * 1.5].forEach(function(freq, idx){
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.08);
+      gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.08);
+      gain.gain.linearRampToValueAtTime(vol * 0.45, ctx.currentTime + idx * 0.08 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.08 + 0.38);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + idx * 0.08);
+      osc.stop(ctx.currentTime + idx * 0.08 + 0.4);
+    });
+  },
+  // Ping corporativo: cristalino y seco
+  ping: function(ctx, vol, tipo){
+    const freq = tipo === "chat" ? 987.77 : 783.99;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(vol * 0.5, ctx.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.3);
+  },
+  // Pálpito acústico: cálido, estilo madera
+  acoustic: function(ctx, vol, tipo){
+    const freq = tipo === "chat" ? 523.25 : 392.00;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(vol * 0.6, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.25);
+  },
+  // Pop seco: ultra discreto y minimalista
+  pop: function(ctx, vol, tipo){
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const freq = tipo === "chat" ? 480 : 380;
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(120, ctx.currentTime + 0.07);
+    gain.gain.setValueAtTime(vol * 0.55, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.07);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.08);
+  },
+  // Doble tono corporativo: ding-dong oficina
+  twotone: function(ctx, vol, tipo){
+    const f1 = tipo === "chat" ? 784 : 659.25;
+    const f2 = tipo === "chat" ? 659.25 : 523.25;
+    [[f1, 0], [f2, 0.12]].forEach(function(pair){
+      const freq = pair[0], delay = pair[1];
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
+      gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+      gain.gain.linearRampToValueAtTime(vol * 0.45, ctx.currentTime + delay + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.26);
+    });
+  },
+  // Burbuja moderna: gota sutil ascendente
+  bubble: function(ctx, vol, tipo){
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const startF = tipo === "chat" ? 440 : 350;
+    const endF = tipo === "chat" ? 880 : 700;
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(startF, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(endF, ctx.currentTime + 0.09);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(vol * 0.5, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.14);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  },
+  // NODO clásico: el beep senoidal tradicional
+  nodo: function(ctx, vol, tipo){
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = tipo === "chat" ? 660 : 520;
+    gain.gain.value = vol * 0.25;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    setTimeout(function(){ try{ osc.stop(); }catch(_e){} }, 220);
+  }
+};
+
 function sonido(tipo="msg"){
   try{
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
-    const osc=ctx.createOscillator();
-    const gain=ctx.createGain();
-    osc.connect(gain);gain.connect(ctx.destination);
-    osc.type="sine";osc.frequency.value=tipo==="chat"?660:520;gain.gain.value=.08;
-    osc.start();setTimeout(()=>{osc.stop();ctx.close()},220);
-  }catch(e){}
+    const tonoElegido = localStorage.getItem("nodo_notif_tone") || "chime";
+    if(tonoElegido === "mute") return;
+
+    const volNum = parseInt(localStorage.getItem("nodo_notif_volume") || "80", 10);
+    const vol = Math.max(0, Math.min(100, isNaN(volNum) ? 80 : volNum)) / 100;
+    if(vol <= 0) return;
+
+    if(tonoElegido === "custom"){
+      const audioData = localStorage.getItem("nodo_custom_audio_data");
+      if(audioData){
+        const aud = new Audio(audioData);
+        aud.volume = vol;
+        aud.play().catch(function(){});
+        return;
+      }
+    }
+
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const synth = _NODO_TONOS[tonoElegido] || _NODO_TONOS.chime;
+    synth(ctx, vol, tipo);
+    setTimeout(function(){ try{ ctx.close(); }catch(_e){} }, 700);
+  }catch(_e){}
 }
 
+const _TONO_OPCIONES = [
+  { id: 'chime', ico: '🔔', label: 'Campanilla suave', desc: 'Discreto · Doble armónico suave' },
+  { id: 'ping', ico: '✨', label: 'Ping corporativo', desc: 'Moderno · Cristalino y seco' },
+  { id: 'acoustic', ico: '🪵', label: 'Pálpito acústico', desc: 'Cálido · Tono grave madera' },
+  { id: 'pop', ico: '🔘', label: 'Pop seco', desc: 'Minimalista · Micro-pulsación' },
+  { id: 'twotone', ico: '🏢', label: 'Doble tono', desc: 'Oficina · Ding-dong ejecutivo' },
+  { id: 'bubble', ico: '💧', label: 'Burbuja moderna', desc: 'Gota ascendente agradable' },
+  { id: 'nodo', ico: '📻', label: 'NODO clásico', desc: 'Original · Beep senoidal' },
+  { id: 'mute', ico: '🔇', label: 'Silencio', desc: 'Sin sonido de notificación' }
+];
+
+window.nodoAbrirAjustes = function(){
+  try{
+    const ov = document.getElementById("modalAjustesOverlay");
+    if(ov) ov.classList.remove("hidden");
+    nodoSincronizarAjustesTonos();
+    try{ window.nodoCargarBackendAgentes && window.nodoCargarBackendAgentes(); }catch(_e){}
+    try{ window.verificarEstadoBackoffice && window.verificarEstadoBackoffice(); }catch(_e){}
+    try{ nodoPintarEstadoSistema(); }catch(_e){}
+  }catch(_e){}
+};
+
+// Lo que el semáforo le muestra a una persona: si anda y, si no, qué parte se cortó. Una línea y, para
+// el que quiera mirar, el detalle plegado. Nada de ramas, etapas ni códigos (Juan, 1/11). "Funciona"
+// sólo lo dice una prueba: que algo se haya usado sin errores es "sin fallas", no una garantía.
+function nodoPintarEstadoSistema(probando){
+  const box = document.getElementById("ajustesEstadoSistema");
+  if(!box || !window.NodoSalud) return;
+  const r = window.NodoSalud.resumen();
+  const abierto = !!box.querySelector("details")?.open;
+  r.partes.forEach(function(p){
+    const prueba = window.NodoPruebas?.vigente(p.nombre);
+    if(prueba){ p.estado = prueba.ok ? "probada" : "falla"; p.detalle = prueba.detalle || ""; }
+  });
+  const fallas = r.partes.filter(function(p){ return p.estado === "falla"; });
+  const probadas = r.partes.filter(function(p){ return p.estado === "probada"; });
+  const andan = r.partes.filter(function(p){ return p.estado === "anda"; });
+  const fila = function(p){
+    const color = p.estado === "falla" ? "#f87171" : p.estado === "probada" ? "#22c55e" : p.estado === "anda" ? "#94a3b8" : "#64748b";
+    const texto = p.estado === "falla" ? p.detalle : p.estado === "probada" ? "Funciona · recién probado" : p.estado === "anda" ? "Sin fallas" : "Sin actividad todavía";
+    return '<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0">'
+      + '<span style="color:#cbd5e1">' + escapeHtml(p.nombre) + '</span>'
+      + '<span style="color:' + color + '">' + escapeHtml(texto) + '</span></div>';
+  };
+  const titulo = fallas.length
+    ? '<div style="font-size:12px;font-weight:800;color:#f87171">Hay ' + fallas.length + (fallas.length === 1 ? ' parte con problemas' : ' partes con problemas') + '</div>'
+      + fallas.map(fila).join("")
+    : '<div style="font-size:12px;font-weight:800;color:' + (probadas.length ? '#22c55e' : '#94a3b8') + '">'
+      + (probadas.length ? 'Las pruebas dieron bien' : andan.length ? 'Sin fallas registradas' : 'Todavía no hay actividad para revisar') + '</div>';
+  box.innerHTML = titulo
+    + '<details style="margin-top:6px"' + (abierto ? ' open' : '') + '><summary class="small" style="cursor:pointer;color:#94a3b8">Ver detalle</summary>'
+    + '<div class="small" style="margin-top:6px">' + r.partes.map(fila).join("") + '</div></details>'
+    + '<button class="mini-btn blue" style="margin-top:10px;width:100%;padding:9px"' + (probando ? ' disabled' : '') + ' onclick="nodoProbarSistema()">'
+    + (probando ? 'Probando ' + escapeHtml(probando.toLowerCase()) + '…' : '▶ Probar ahora') + '</button>';
+}
+
+window.nodoProbarSistema = async function(){
+  if(!window.NodoPruebas || window.NodoPruebas.ocupado()) return;
+  await window.NodoPruebas.correr(function(parte){ try{ nodoPintarEstadoSistema(parte); }catch(_e){} });
+};
+
+window.nodoCerrarAjustes = function(){
+  try{
+    const ov = document.getElementById("modalAjustesOverlay");
+    if(ov) ov.classList.add("hidden");
+  }catch(_e){}
+};
+
+window.nodoSeleccionarTono = function(tonoId){
+  try{
+    localStorage.setItem("nodo_notif_tone", tonoId);
+    nodoSincronizarAjustesTonos();
+    sonido("solicitud");
+  }catch(_e){}
+};
+
+window.nodoPreviewTono = function(tonoId, ev){
+  if(ev && ev.stopPropagation) ev.stopPropagation();
+  try{
+    if(tonoId === "mute") return;
+    const volNum = parseInt(localStorage.getItem("nodo_notif_volume") || "80", 10);
+    const vol = Math.max(0, Math.min(100, isNaN(volNum) ? 80 : volNum)) / 100;
+    if(vol <= 0) return;
+
+    if(tonoId === "custom"){
+      const audioData = localStorage.getItem("nodo_custom_audio_data");
+      if(audioData){
+        const aud = new Audio(audioData);
+        aud.volume = vol;
+        aud.play().catch(function(){});
+        return;
+      }
+    }
+
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const synth = _NODO_TONOS[tonoId] || _NODO_TONOS.chime;
+    synth(ctx, vol, "solicitud");
+    setTimeout(function(){ try{ ctx.close(); }catch(_e){} }, 700);
+  }catch(_e){}
+};
+
+window.nodoCambiarVolumen = function(val){
+  const v = parseInt(val, 10);
+  const txt = document.getElementById("txtVolumenTono");
+  if(txt) txt.textContent = v + "%";
+  try{ localStorage.setItem("nodo_notif_volume", String(v)); }catch(_e){}
+};
+
+// Validación estricta: extensión + MIME + Magic Bytes (evita cualquier archivo arbitrario)
+window.nodoCargarAudioArchivo = function(input){
+  const file = input && input.files && input.files[0];
+  if(!file) return;
+
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if(!['mp3', 'wav', 'ogg'].includes(ext)){
+    alert("Archivo rechazado: solo se permiten audios en formato .mp3, .wav o .ogg.");
+    input.value = "";
+    return;
+  }
+  if(file.size > 2 * 1024 * 1024){
+    alert("Archivo rechazado: el audio supera el límite de 2 MB.");
+    input.value = "";
+    return;
+  }
+
+  // Verificación de cabecera binaria (magic bytes): evita archivos arbitrarios renombrados a .mp3/.wav
+  const slice = file.slice(0, 12);
+  const headReader = new FileReader();
+  headReader.onload = function(evt){
+    try{
+      const b = new Uint8Array(evt.target.result);
+      const isWav = b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46; // RIFF
+      const isMp3 = (b[0]===0x49 && b[1]===0x44 && b[2]===0x33) || (b[0]===0xFF && (b[1]&0xE0)===0xE0); // ID3 o sync frame
+      const isOgg = b[0]===0x4F && b[1]===0x67 && b[2]===0x67 && b[3]===0x53; // OggS
+      if(!isWav && !isMp3 && !isOgg){
+        alert("Archivo rechazado: el contenido no corresponde a un archivo de audio genuino.");
+        input.value = "";
+        return;
+      }
+
+      // Audio genuino confirmado
+      const reader = new FileReader();
+      reader.onload = function(e){
+        try{
+          const dataUrl = e.target.result;
+          localStorage.setItem("nodo_custom_audio_data", dataUrl);
+          localStorage.setItem("nodo_custom_audio_name", file.name);
+          localStorage.setItem("nodo_notif_tone", "custom");
+          window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos();
+          sonido("solicitud");
+          toast && toast("Tono propio cargado con éxito.","green");
+        }catch(_err){
+          alert("No se pudo guardar el archivo en memoria local.");
+        }
+      };
+      reader.readAsDataURL(file);
+    }catch(_err){
+      alert("Error al verificar la integridad del archivo.");
+    }
+  };
+  headReader.readAsArrayBuffer(slice);
+};
+
+window.nodoQuitarAudioCustom = function(){
+  try{
+    localStorage.removeItem("nodo_custom_audio_data");
+    localStorage.removeItem("nodo_custom_audio_name");
+    localStorage.setItem("nodo_notif_tone", "chime");
+    window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos();
+    toast && toast("Tono restablecido a Campanilla suave.","blue");
+  }catch(_e){}
+};
+
+window.nodoSincronizarAjustesTonos = function(){
+  try{
+    const listEl = document.getElementById("tonoPickerList");
+    if(listEl){
+      const current = localStorage.getItem("nodo_notif_tone") || "chime";
+      const customName = localStorage.getItem("nodo_custom_audio_name");
+      const customData = localStorage.getItem("nodo_custom_audio_data");
+
+      let items = _TONO_OPCIONES.slice();
+      if(customName && customData){
+        items.unshift({ id: 'custom', ico: '📁', label: customName, desc: 'Audio propio cargado' });
+      }
+
+      listEl.innerHTML = items.map(function(t){
+        const isSel = (t.id === current);
+        return '<div class="tono-row' + (isSel ? ' selected' : '') + '" onclick="nodoSeleccionarTono(\'' + t.id + '\')">'
+          + '<div class="tono-row-left">'
+          + '<span class="tono-row-ico">' + t.ico + '</span>'
+          + '<div class="tono-row-info">'
+          + '<span class="tono-row-title">' + escapeHtml(t.label) + '</span>'
+          + '<span class="tono-row-desc">' + escapeHtml(t.desc) + '</span>'
+          + '</div>'
+          + '</div>'
+          + '<div class="tono-row-right">'
+          + (t.id !== 'mute' ? '<button class="tono-play-btn" onclick="nodoPreviewTono(\'' + t.id + '\', event)" title="Escuchar">▶ Probar</button>' : '')
+          + '<div class="tono-check-badge">' + (isSel ? '✓' : '') + '</div>'
+          + '</div>'
+          + '</div>';
+      }).join('');
+    }
+
+    const vol = localStorage.getItem("nodo_notif_volume") || "80";
+    const slider = document.getElementById("sliderVolumenTono");
+    const txtVol = document.getElementById("txtVolumenTono");
+    if(slider) slider.value = vol;
+    if(txtVol) txtVol.textContent = vol + "%";
+
+    const customName = localStorage.getItem("nodo_custom_audio_name");
+    const txtName = document.getElementById("txtAudioPersonalizado");
+    const btnQuitar = document.getElementById("btnQuitarAudioCustom");
+    if(customName){
+      if(txtName) txtName.textContent = customName;
+      if(btnQuitar) btnQuitar.style.display = "inline-flex";
+    } else {
+      if(txtName) txtName.textContent = "Formatos .mp3, .wav, .ogg (máx 2 MB)";
+      if(btnQuitar) btnQuitar.style.display = "none";
+    }
+  }catch(_e){}
+};
+
+document.addEventListener("keydown", function(e){
+  if(e.key === "Escape"){
+    const ov = document.getElementById("modalAjustesOverlay");
+    if(ov && !ov.classList.contains("hidden")){
+      nodoCerrarAjustes();
+      e.stopPropagation();
+    }
+  }
+});
+
+document.addEventListener("DOMContentLoaded", function(){
+  setTimeout(function(){ try{ window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos(); }catch(_e){} }, 400);
+});
+if(document.readyState !== "loading") setTimeout(function(){ try{ window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos(); }catch(_e){} }, 400);
 function abrirModal(title,body,saveFn,saveText="Guardar"){
   setBox("modalTitle",title);setBox("modalBody",body);
   const btn=document.getElementById("modalSaveBtn");
@@ -8877,9 +9802,9 @@ window._revisarFichasRetiros = async function(pendientes){
   if(!_drexGlobalLock('rev-fichas-retiro')) return;   // alguien lo tomó entre medio → al próximo ciclo
   _wdLock();
   try{
-    const b = await callDrex('buscarUsuario', usuario, { skipBalance:false });
-    if(!b || !b.exists || typeof b.balance?.value !== 'number') return;
-    const saldo = b.balance.value;
+    const lectura = await window.leerFichasJugador(usuario);
+    if(lectura.confiable !== true) return;
+    const saldo = lectura.saldo;
     const pp = window._retiroParcialInfo ? window._retiroParcialInfo(s) : null;
     const falta = pp ? pp.restante : Number(s.MONTO_REAL||s.MONTO_DECLARADO||0);
     // Lo único que importa acá: ¿le quedaron fichas como para cubrir lo que todavía se le debe?
@@ -8929,9 +9854,11 @@ async function _watchdogLeer(){
     // una carga/retiro, navegando la ventana y volándole el modal a la operación en curso.
     const _colaOcupada = !!(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes > 0));
     if(window.ctrlElectron?.drexAutomation && !_colaOcupada){
+      const _wdHealth = window.NodoSalud?.begin('WORKERS');
       const r = await _drexEncolar('obtenerSaldoAgente(watchdog)', function(){
         return window.ctrlElectron.drexAutomation('obtenerSaldoAgente');
       }, { silencioso:true });   // tarea de fondo: no molesta al operador con toasts
+      _wdHealth?.record('ALIVE', r ? 'OK' : 'DEGRADED', 'WATCHDOG_POLL');
       if(r){
         if(r.needsLogin) drexNeedsLogin = true;
         if(r.balance && typeof r.balance.value === 'number') drexFichas = r.balance.value;
@@ -9158,96 +10085,6 @@ if(enElectron){
   // Arranca el watchdog 12s después del load (da tiempo a que la ventana de Chunior esté lista)
   setTimeout(_watchdogIniciar, 12000);
 }
-
-// ── Scroll snap con histéresis del Inicio ─────────────────────────────────────
-// Cuando el operador scrollea hacia abajo y CRUZARÍA la card de "Operación
-// manual", lo frena seco en esa altura. Para destrabar (subir y mostrar
-// billeteras/KPIs) hay que scrollear hacia ARRIBA dos veces seguidas. Bajar
-// más allá del snap requiere también dos scrolls (no se "escapa" con uno).
-(function initScrollSnap(){
-  const main = document.querySelector('.main');
-  if(!main) return;
-
-  const HYST  = 2;     // cantidad de scrolls "consumidos" antes de destrabar
-  const RESET = 600;   // ms sin scrollear para resetear contadores
-
-  let snapY      = 0;
-  let snapped    = false;
-  let upAttempts = 0;
-  let dnAttempts = 0;
-  let resetTimer = null;
-
-  function recalcSnapY(){
-    const target = document.getElementById('cardOperacionManual');
-    if(!target) return;
-    const targetTop = target.offsetTop;
-    const mainPad   = 12;
-    snapY = Math.max(0, targetTop - mainPad);
-  }
-
-  function resetCounters(){ upAttempts = 0; dnAttempts = 0; }
-
-  recalcSnapY();
-  window.addEventListener('resize', recalcSnapY);
-  const mo = new MutationObserver(() => { recalcSnapY(); });
-  mo.observe(document.body, { childList: true, subtree: true, characterData: false });
-
-  main.addEventListener('wheel', function(e){
-    if(snapY <= 0) return;
-    const viewInicioVisible = !document.getElementById('viewInicio')?.classList.contains('hidden');
-    if(!viewInicioVisible){ snapped = false; return; }
-
-    const y           = main.scrollTop;
-    const goingDown   = e.deltaY > 0;
-    const futureY     = y + e.deltaY;
-    // Detectar CRUCE del snap point en cualquier dirección
-    const cruzaAbajo  = goingDown && y < snapY && futureY >= snapY;
-    const cruzaArriba = !goingDown && y > snapY && futureY <= snapY;
-
-    clearTimeout(resetTimer);
-    resetTimer = setTimeout(resetCounters, RESET);
-
-    if(!snapped){
-      // No enganchado todavía: si la rueda nos quiere meter del otro lado
-      // del snap point, lo agarramos en seco.
-      if(cruzaAbajo){
-        e.preventDefault();
-        main.scrollTop = snapY; // instantáneo, sin smooth
-        snapped = true;
-        upAttempts = 0;
-        dnAttempts = 0;
-      }
-      // (cruzaArriba viniendo de abajo sin estar snapped no debería pasar
-      //  porque al pasar por snap going down ya nos enganchamos, pero por
-      //  las dudas no hacemos nada y dejamos pasar)
-    } else {
-      // Enganchado: cualquier scroll requiere HYST repeticiones
-      if(!goingDown){
-        upAttempts++;
-        dnAttempts = 0;
-        if(upAttempts >= HYST){
-          snapped = false;
-          upAttempts = 0;
-        } else {
-          e.preventDefault();
-          main.scrollTop = snapY; // re-fijar por si el navegador ya movió algo
-        }
-      } else {
-        dnAttempts++;
-        upAttempts = 0;
-        if(dnAttempts >= HYST){
-          snapped = false;
-          dnAttempts = 0;
-        } else {
-          e.preventDefault();
-          main.scrollTop = snapY; // re-fijar
-        }
-      }
-    }
-  }, { passive: false });
-})();
-
-// ── Acciones rápidas desde el chat ────────────────────────────────────────────
 function chatUsuarioActivo(){
   const c = chats.find(x=>String(x.ID_CHAT)===String(chatActualId));
   return c?.USUARIO || "";
@@ -9358,6 +10195,7 @@ window._altaMarcarResuelto=function(usuario,telefono){
     const m=_altaResLeer();
     m[_altaResKey(d.u,d.t)]={ usuario:String(usuario||''), telefono:String(telefono||''), cuando:Date.now() };
     _altaResGuardar(m);
+    try{ window.NodoPersistenciaSync?.scheduleSync?.(); }catch(_e){}
   }catch(_e){}
 };
 // El verde no se cree solo: se confirma contra el cotejo recién traído. Si el vínculo se deshizo
@@ -10489,17 +11327,25 @@ window._altaCrearDesdeCotejo = function(usuario, telefono){
         solicitudes: (window.V154P && window.V154P.solicitudes) || [],
         version: window._versionApp || '',
         pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : '') || window.pcOperativa || '',
-        // El MISMO criterio con el que la pantalla decide qué es un parcial. Un retiro pagándose
-        // por partes ya se aceptó: no está esperando que alguien lo agarre.
+        // El MISMO criterio con el que la pantalla decide qué queda en la lista de pendientes. Un
+        // retiro pagándose por partes ya se aceptó, y una solicitud TOMADA también: ninguna está
+        // esperando que alguien la agarre. Se pregunta por el mismo reparto que usa la lista, así no
+        // puede decir "5 pendientes" cuando la pantalla muestra 2.
         esParcial: function(s){
           try{
             const par = window.NodoDomain && window.NodoDomain.parciales;
             if(!par) return false;
-            return par.enProceso(s, {
-              info: window._retiroParcialInfo,
-              cerrado: window._retiroCerradoAMano,
-              sigueAbierto: window._retiroParcialSigueAbierto
+            const r = par.repartirAbiertas([s], {
+              esParcial: function(x){
+                return par.enProceso(x, {
+                  info: window._retiroParcialInfo,
+                  cerrado: window._retiroCerradoAMano,
+                  sigueAbierto: window._retiroParcialSigueAbierto
+                });
+              },
+              enCola: function(x){ return !!(window._colaCargaEstado || {})[String(x.ID || x.SOLICITUD_ID || '')]; }
             });
+            return r.pendientes.length === 0;
           }catch(_e){ return false; }
         }
       });
@@ -10515,6 +11361,7 @@ window._altaCrearDesdeCotejo = function(usuario, telefono){
       // Mandar lo mismo una y otra vez es ruido: Discord lo descarta igual.
       if(!forzar && dom && !dom.distinta(p, ultima)) return;
       ultima = p;
+      window.NodoSalud?.begin('ADMIN')?.record('ALIVE','OK','DISCORD_PRESENCIA');
       window.ctrlElectron.discordPresencia(p).catch(function(){});
     }catch(_e){}
   };
@@ -10716,6 +11563,7 @@ async function callDrex(method, ...args){
     // el camino sin tocar cada operación. No se anotan los argumentos (en iniciarSesion viaja la
     // clave): sólo el método y dónde quedó la pantalla.
     const _cnT0 = Date.now();
+    const _wHealth = window.NodoSalud?.begin('WORKERS');
     try{ if(window._cnPaso) window._cnPaso(method, 'inicio'); }catch(_e){}
     // Solo buscarUsuario resuelve el alias inteligentemente.
     // crearUsuario / cambiarClave NO se tocan.
@@ -10729,6 +11577,7 @@ async function callDrex(method, ...args){
       _r = await window.ctrlElectron.drexAutomation(method, ...args);
     }
     }catch(_cnE){
+      _wHealth?.reply(_cnE);
       // El corte puede venir de main (timeout, recarga, ventana cerrada) o del preload. De quién
       // fue lo deduce la caja negra por la firma del mensaje: lo que no reconoce queda
       // 'desconocida' en vez de colgárselo a alguien.
@@ -10741,6 +11590,7 @@ async function callDrex(method, ...args){
       // estadoPagina e iniciarSesion devuelven needsLogin como parte NORMAL de su trabajo: eso no
       // es una falla (mismo criterio que _esChequeo, unas líneas más abajo).
       const _cnChequeo = (method==='estadoPagina' || method==='iniciarSesion');
+      _wHealth?.record('EFFECT', (_r && _r.ok === false && !_cnChequeo) ? 'ERROR' : 'OK', (_r && _r.ok === false && !_cnChequeo) ? 'WORKER_DREX_FAILED' : 'WORKER_DREX_OK');
       if(_r && _r.ok === false && !_cnChequeo){
         if(window._cnFalla) window._cnFalla(method, _r.message || 'devolvió ok:false', { ms:_cnMs, pantalla:_cnPant, capa:'preload' });
       } else if(window._cnPaso){
@@ -11574,7 +12424,9 @@ async function retirarSaldoRapido(usuario, monto){
     return;
   }
 
+  const _autoHealth = window.NodoSalud?.begin('AUTOMATISMOS');
   const r = await callDrex("retirarSaldo", monto);
+  _autoHealth?.record('EFFECT', (r && r.ok === false) ? 'ERROR' : 'OK', (r && r.ok === false) ? 'AUTO_RETIRO_FAILED' : 'AUTO_RETIRO_OK');
   if(r && r.ok === false){ toast("Error: " + (r.message||"falló"), "red"); return; }
 
   // Esto insertaba en la tabla `solicitudes`, muerta desde el 30 de mayo: el retiro salía y no
@@ -11756,7 +12608,9 @@ async function ejecutarAutoRetiro(id){
   }
 
   toast(`Retirando $${monto.toLocaleString("es-AR")}...`,"blue");
+  const _autoHealth = window.NodoSalud?.begin('AUTOMATISMOS');
   const r = await callDrex("retirarSaldo", monto);
+  _autoHealth?.record('EFFECT', (r && r.ok === false) ? 'ERROR' : 'OK', (r && r.ok === false) ? 'AUTO_RETIRO_FAILED' : 'AUTO_RETIRO_OK');
 
   if(r && r.ok === false){
     await actualizarSolicitudSupabase(id, {
@@ -11927,6 +12781,7 @@ function cerrarSesion(){
 
 // ── Panel de verificaciones ───────────────────────────────────────────────────
 async function cargarVerificaciones(){
+  window.NodoSalud?.begin('VALIDACION')?.record('DATA','OK','VERIFICACIONES_LOAD');
   const hoy = inicioDiaArgentina(); // medianoche AR, no del SO local
   const { data } = await supabaseClient
     .from("verificaciones")
@@ -12051,6 +12906,7 @@ function activarChunior(){
 
 // Después del login, chequear si Chunior está esperando selección de puesto y arrancar el flujo
 async function _checkPuestoPostLogin(){
+  window.NodoSalud?.begin('CONEXION')?.record('CONNECTED','OK','CHUNIOR_PUESTO_CHECK');
   if(!window.chunior) return;
   await new Promise(function(r){setTimeout(r,500);});
   try {
@@ -12282,6 +13138,7 @@ async function sincronizarBilleterasChunior(silencioso){
   }
 
   if(!silencioso) toast('Sincronizando billeteras con Chunior...','blue');
+  const salud = window.NodoSalud?.begin('BILLETERAS');
 
   const addUrl = CHUNIOR_BASE + '/transacciones/movimientoficha/add/';
   const cur = await window.chunior.getUrl();
@@ -12321,11 +13178,13 @@ async function sincronizarBilleterasChunior(silencioso){
       '})()'
     );
   } catch(e){
+    salud?.record('EFFECT','ERROR','BILLETERAS_SIN_SINCRONIZAR');
     if(!silencioso) toast('Error leyendo Chunior: '+(e.message||''), 'red');
     return;
   }
 
   if(!data || !data.opts || !data.opts.length){
+    salud?.record('EFFECT','ERROR','BILLETERAS_SIN_SINCRONIZAR');
     if(!silencioso) toast('No se pudieron leer billeteras de Chunior. ¿Estás en la página correcta?', 'red');
     return;
   }
@@ -12370,6 +13229,7 @@ async function sincronizarBilleterasChunior(silencioso){
       p_wallets: walletsChunior
     });
     if(rpcErr) throw rpcErr;
+    salud?.record('EFFECT','OK');
   }catch(e){
     console.warn('panel_nodo_sync_chunior_wallets falló, usando fallback directo:', e);
     try{
@@ -12382,7 +13242,8 @@ async function sincronizarBilleterasChunior(silencioso){
           .eq('chunior_uid', uid)
           .neq('estado','FUSIONADA');
       }
-    }catch(e2){ console.warn('fallback sync saldo también falló:', e2); }
+      salud?.record('EFFECT','OK');
+    }catch(e2){ salud?.record('EFFECT','ERROR','BILLETERAS_SIN_SINCRONIZAR'); console.warn('fallback sync saldo también falló:', e2); }
   }
 
   await cargarBilleteras(false);
@@ -12575,12 +13436,15 @@ function _cotejoLsLoad(turno){ try{ return JSON.parse(localStorage.getItem(_cote
 function _cotejoLsSave(turno, st){ try{ localStorage.setItem(_cotejoLsKey(turno), JSON.stringify(st)); }catch(_e){} }
 function _cotejoOp(){ return (window.operador&&(window.operador.usuario||window.operador.nombre))||'panel'; }
 async function _cotejoRpc(fn, params){
+  const health = window.NodoSalud?.begin('CONCILIACION');
   try{
     const r = await supabaseClient.rpc(fn, Object.assign({p_secret:window.PANEL_DATA_SECRET}, params||{}));
+    health?.reply(r.error);
     if(r.error) throw r.error;
     let d=r.data; try{ if(typeof d==='string') d=JSON.parse(d); }catch(_e){}
+    health?.record('DATA', 'OK', 'COTEJO_RPC_OK');
     return d;
-  }catch(e){ console.warn('[cotejo] RPC '+fn+' falló (¿SQL_cotejo_casos.sql aplicado?):', e&&e.message); return null; }
+  }catch(e){ health?.record('DATA', 'ERROR', 'COTEJO_RPC_FAILED'); console.warn('[cotejo] RPC '+fn+' falló (¿SQL_cotejo_casos.sql aplicado?):', e&&e.message); return null; }
 }
 // Editar el MONTO de un movimiento admin de Chunior (reduce un depo s/reclamar al asignar una parte
 // — opción A confirmada) + agrega la nota del caso. Misma mecánica que _anularMovimientoChunior.
@@ -13280,6 +14144,7 @@ function _chuVariantesMonto(monto){
 //     texto de fila si la fila no trae notas).
 // Devuelve { existe, movimientoId, creacion?, vinculadoAOtro? } (existe/movimientoId = compat con el caller).
 async function verificarMovimientoEnChunior(usuario, monto, tCargaMs, ventanaMs, excluirIds){
+  window.NodoSalud?.begin('AUTOMATISMOS')?.record('DATA','OK','CHUNIOR_VERIFY_MOV');
   // "No pude verificar" NO es lo mismo que "no está": si el que llama no puede distinguirlo,
   // vuelve a anotar un movimiento que ya existe y duplica la plata (D-107). Por eso va `ok`.
   if(!window.chunior || !usuario) return { ok:false, existe:false, encontrado:false, movimientoId:null, motivo:'sin ventana de Chunior' };
@@ -13845,11 +14710,13 @@ function _readyChuniorJs(uid){
     + '&&document.getElementById("id_monto")&&document.getElementById("id_notas"));})()';
 }
 async function _registrarAdminChunior(addUrl, chunior_uid, monto, notas, opts){
+  const _admHealth = window.NodoSalud?.begin('ADMIN');
   // Bloqueo del cotejo (igual que en registrarCargaEnChunior): esperar la declaración abierta.
   for(let _w=0; window._cotejoDeclarando && _w<90; _w++){ await new Promise(function(r){setTimeout(r,1000);}); }
   if(!window.chunior) return { ok:false, movimientoId:null, error:'Ventana de Chunior no disponible' };
   if(!chunior_uid) return { ok:false, movimientoId:null, error:'La billetera no tiene chunior_uid configurado' };
   await window.chunior.navigate(addUrl);
+  _admHealth?.record('CONNECTED', 'OK', 'CHUNIOR_NAV_OK');
   const t0 = Date.now(); let ready = false;
   while(Date.now() - t0 < 10000){
     // El desplegable de billetera no se llama igual en todas las pantallas (gastos locales tiene el
@@ -14681,12 +15548,12 @@ async function verificarSaldoRetiroOcioso(){
     { const _p = window._retiroSaldoDone[sid] || {intentos:0}; window._retiroSaldoDone[sid] = {confiable:false, intentos:_p.intentos+1, ts:Date.now()}; }
     _wdLock();
     try{
-      const b = await callDrex('buscarUsuario', usuario, { skipBalance:false });
-      if(b && b.exists && typeof b.balance?.value === 'number'){
-        const saldo = b.balance.value;
-        const saldoConfiable = /\d/.test(String(b.balance.raw||'')) && Number.isFinite(saldo); // se leyó DE VERDAD (no un 0 por lectura fallida/lenta)
+      const lectura = await leerFichasJugador(usuario);
+      if(typeof lectura.saldo === 'number'){
+        const saldo = lectura.saldo;
+        const saldoConfiable = lectura.confiable === true; // se leyó DE VERDAD (no un 0 por lectura fallida/lenta)
         const suficiente = saldo + 0.5 >= monto;
-        window._retiroSaldoCheck[usuario.toLowerCase()] = { saldo:saldo, monto:monto, suficiente:suficiente, confiable:saldoConfiable, ts:Date.now(), raw:(b.balance.raw||'').trim() };
+        window._retiroSaldoCheck[usuario.toLowerCase()] = { saldo:saldo, monto:monto, suficiente:suficiente, confiable:saldoConfiable, ts:Date.now(), raw:lectura.raw };
         try{ if(window._retiroSaldoDone && window._retiroSaldoDone[sid]) window._retiroSaldoDone[sid].confiable = saldoConfiable; }catch(_e){} // lectura confiable → no re-escanear este retiro
         try{ if(typeof window.v154pRenderSolicitudesPortalEnInicio==='function') window.v154pRenderSolicitudesPortalEnInicio(); }catch(_e){}
         // Auto-rechazo ANTI-FRAUDE — SOLO el caso INEQUÍVOCO: el usuario NO tiene fichas (saldo ~0).
@@ -14699,14 +15566,12 @@ async function verificarSaldoRetiroOcioso(){
         if(saldoConfiable && saldo < _PISO_SIN_FICHAS && saldo < monto){
           // 2ª lectura de confirmación: re-entra a Agentes y vuelve a leer. Solo rechazamos si TAMBIÉN
           // la ve casi vacía. Si la 2ª no confirma (o no se pudo leer), NO se rechaza.
-          let confirmado = false, saldo2 = saldo, raw2 = (b.balance.raw||'').trim();
-          try{
-            const b2 = await callDrex('buscarUsuario', usuario, { skipBalance:false });
-            if(b2 && b2.exists && typeof b2.balance?.value === 'number' && /\d/.test(String(b2.balance.raw||''))){
-              saldo2 = b2.balance.value; raw2 = (b2.balance.raw||'').trim();
-              confirmado = Number.isFinite(saldo2) && saldo2 < _PISO_SIN_FICHAS;
-            }
-          }catch(_e){ confirmado = false; }
+          let confirmado = false, saldo2 = saldo, raw2 = lectura.raw;
+          const lectura2 = await leerFichasJugador(usuario);
+          if(lectura2.confiable === true){
+            saldo2 = lectura2.saldo; raw2 = lectura2.raw;
+            confirmado = saldo2 < _PISO_SIN_FICHAS;
+          }
           if(confirmado){
             const sid = objetivo.ID || objetivo.SOLICITUD_ID || objetivo.ID_SOLICITUD;
             const _saldoTxt = (raw2||money(saldo2)).trim();
@@ -14725,7 +15590,7 @@ async function verificarSaldoRetiroOcioso(){
                 // reclama tres días después.
                 notas:'AUTO-RECHAZO · SIN FICHAS'
                   + ' · pidió '+money(Number(objetivo.MONTO_REAL||objetivo.MONTO_DECLARADO||0))
-                  + ' · saldo leído '+_saldoTxt+' (2 lecturas: "'+((b.balance&&b.balance.raw)||'').trim()+'" y "'+raw2+'")'
+                  + ' · saldo leído '+_saldoTxt+' (2 lecturas: "'+lectura.raw+'" y "'+raw2+'")'
                   + ' · piso '+money(_PISO_SIN_FICHAS)
                   + (objetivo.TITULAR?(' · titular declarado: '+objetivo.TITULAR):'')
                   + ' · se le avisó por el chat'
@@ -14734,12 +15599,12 @@ async function verificarSaldoRetiroOcioso(){
               toast('❌ Retiro de '+usuario+' rechazado · SIN fichas (saldo '+_saldoTxt+', confirmado x2)', 'red');
             }catch(_e){}
           } else {
-            toast('⚠ '+usuario+': 1ª lectura casi vacía ('+ (b.balance.raw||'').trim() +') NO confirmada en 2ª ('+raw2+') · NO auto-rechazo', 'yellow');
+            toast('⚠ '+usuario+': 1ª lectura casi vacía ('+ lectura.raw +') NO confirmada en 2ª ('+raw2+') · NO auto-rechazo', 'yellow');
           }
         } else if(!saldoConfiable){
           toast('⚠ No pude leer bien el saldo de '+usuario+' — NO auto-rechazo. Revisalo a mano.', 'yellow');
         } else {
-          toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(b.balance.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · tiene fichas pero menos que lo pedido → retiro PARCIAL'), suficiente?'blue':'red');
+          toast((suficiente?'✓':'⚠')+' Retiro '+usuario+': saldo '+(lectura.raw||money(saldo)).trim()+(suficiente?' (alcanza)':' · tiene fichas pero menos que lo pedido → retiro PARCIAL'), suficiente?'blue':'red');
         }
       }
     }catch(_e){}
@@ -14747,6 +15612,121 @@ async function verificarSaldoRetiroOcioso(){
   }catch(_e){}
 }
 window.verificarSaldoRetiroOcioso = verificarSaldoRetiroOcioso;
+
+// ── Fichas de UN jugador, a pedido ──────────────────────────────────────────────────────────
+// El "Ver" de un retiro lee las fichas que tiene el jugador AHORA (Juan, 25/10): es lo que decide si
+// se paga entero, por partes o no se paga. El escaneo de arriba hace lo mismo solo, pero espera a que
+// el agente esté ocioso, sólo mira retiros de las últimas 2 h y lee una vez cada 4 minutos. Esto lo
+// pidió una persona mirando la pantalla: lee ya (esperando unos segundos si el agente está en otra
+// cosa) y deja el resultado donde lo lee el resto del panel (_retiroSaldoCheck), así la tarjeta
+// también muestra "saldo … ✓/⚠".
+//
+// Sólo LEE. No rechaza nada: el auto-rechazo del escaneo sigue siendo cosa del escaneo.
+//
+// La lista de cargas para reintentar no cuenta como "ocupado": es trabajo guardado, no algo que esté
+// usando el agente ahora. Contándola, una carga vieja sin resolver dejaba todas las lecturas en
+// "agente ocupado" para siempre.
+function _fichasAgenteOcupado(){
+  try{
+    if(window._drexGlobalBusy) return true;
+    if(typeof _loteEnCurso!=='undefined' && _loteEnCurso) return true;
+    if(typeof _operacionManualEnCurso!=='undefined' && _operacionManualEnCurso) return true;
+    if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0) return true;
+    if(window._v154pParcialBusy) return true;
+  }catch(_e){}
+  return false;
+}
+window._fichasLeyendo = window._fichasLeyendo || {};
+window.revisarFichasRetiro = function(opciones){
+  const o = opciones || {};
+  const usuario = String(o.usuario || '').trim();
+  if(!usuario) return Promise.resolve({ error: 'Falta el usuario' });
+  if(!window.ctrlElectron) return Promise.resolve({ error: 'Las fichas sólo se pueden leer desde la app de escritorio' });
+  const clave = usuario.toLowerCase();
+  window._retiroSaldoCheck = window._retiroSaldoCheck || {};
+  const previo = window._retiroSaldoCheck[clave];
+  if(!o.forzar && previo && previo.confiable && (Date.now() - previo.ts) < 3*60*1000) return Promise.resolve(previo);
+  // Dos "Ver" seguidos sobre el mismo jugador comparten UNA lectura: el agente es uno solo.
+  if(window._fichasLeyendo[clave]) return window._fichasLeyendo[clave];
+
+  const lectura = (async function(){
+    // El agente puede estar cargando otra cosa: se espera hasta ~20 s a que se libere en vez de
+    // fallar de entrada. Pasado ese tiempo se dice la verdad y queda el botón para reintentar.
+    const limite = Date.now() + 20000;
+    while(_fichasAgenteOcupado() || !_drexGlobalLock('revisar-fichas')){
+      if(Date.now() > limite){
+        window.NodoSalud?.record('RETIROS', 'CONNECTED', 'DEGRADED', { code:'AGENTE_OCUPADO' });
+        return { error: 'El agente está ocupado con otra operación. Probá de nuevo en un momento.', ocupado: true, motivo: 'ocupado' };
+      }
+      await new Promise(function(r){ setTimeout(r, 1500); });
+    }
+    _wdLock();
+    try{
+      const l = await leerFichasJugador(usuario);
+      if(typeof l.saldo !== 'number') return { error: l.error, motivo: l.motivo };
+      const monto = Math.abs(Number(o.monto || 0));
+      const confiable = l.confiable === true;
+      const reg = { saldo:l.saldo, monto:monto, suficiente: l.saldo + 0.5 >= monto, confiable:confiable, ts:Date.now(), raw:l.raw };
+      // Una lectura dudosa se le dice al que mira, pero NO se guarda: la tarjeta de la lista mostraría
+      // "saldo ⚠ no alcanza" con un 0 que en realidad es una lectura fallida.
+      if(confiable){
+        window._retiroSaldoCheck[clave] = reg;
+        // La tarjeta de la lista muestra "saldo … ✓/⚠" con este mismo dato.
+        try{ if(typeof window.v154pRenderSolicitudesPortalEnInicio==='function') window.v154pRenderSolicitudesPortalEnInicio(); }catch(_e){}
+      } else reg.motivo = l.motivo;
+      return reg;
+    }finally{ _wdUnlock(); _drexGlobalUnlock(); }
+  })();
+  window._fichasLeyendo[clave] = lectura;
+  lectura.then(function(){ delete window._fichasLeyendo[clave]; }, function(){ delete window._fichasLeyendo[clave]; });
+  return lectura;
+};
+
+// ── LA lectura de fichas ────────────────────────────────────────────────────────────────────
+// Todo lo que pregunta "cuántas fichas tiene este jugador" sin mover plata pasa por acá: el modal de
+// retiro, el cartel de aprobar, "Ver", el escaneo de fondo, el relevo del watchdog y las cargas para
+// reintentar. Eran cinco copias con cinco criterios: el escaneo podía creerle a una lectura con la
+// sesión caída y el modal decía "no pudimos leer" cuando el jugador no existe en Agentes (Juan, 1/11:
+// "claramente esto esta utilizando otra cosa"). Si el motor se para, se para acá y queda en NodoSalud.
+//
+// Devuelve { saldo, raw, confiable } o { motivo, error }; una lectura dudosa trae las dos cosas.
+// No toma candados: de eso se encarga quien la llama.
+async function leerFichasJugador(usuario){
+  const salud = window.NodoSalud?.begin('RETIROS');
+  let b;
+  try{ b = await callDrex('buscarUsuario', usuario, { skipBalance:false }); }
+  catch(e){
+    salud?.reply(e);
+    return { motivo:'sin_respuesta', error:'El casino no contestó. Probá de nuevo.' };
+  }
+  salud?.reply(null);
+  if(!b){
+    salud?.record('DATA', 'ERROR', 'FICHAS_SIN_RESPUESTA');
+    return { motivo:'sin_respuesta', error:'El casino no contestó. Probá de nuevo.' };
+  }
+  // Sesión caída o página de error NO es "el usuario no existe".
+  if(b.needsLogin || b.pageError){
+    salud?.record('DATA', 'ERROR', 'FICHAS_SIN_SESION');
+    return { motivo:'sesion', error:'Se cayó la sesión de Agentes: entrá de nuevo y volvé a leer' };
+  }
+  if(!b.exists){
+    salud?.record('DATA', 'OK', 'USUARIO_INEXISTENTE');
+    return { motivo:'no_existe', error:'El casino no encuentra al usuario ' + usuario };
+  }
+  if(typeof b.balance?.value !== 'number'){
+    salud?.record('DATA', 'DEGRADED', 'FICHAS_ILEGIBLES');
+    return { motivo:'ilegible', error:'No pude leer el saldo del jugador' };
+  }
+  const saldo = b.balance.value, raw = String(b.balance.raw || '').trim();
+  // Se leyó DE VERDAD (no un 0 por lectura fallida o lenta).
+  if(!/\d/.test(raw) || !Number.isFinite(saldo)){
+    salud?.record('DATA', 'DEGRADED', 'FICHAS_ILEGIBLES');
+    return { saldo:saldo, raw:raw, confiable:false, motivo:'ilegible', error:'No pude leer bien el saldo del jugador' };
+  }
+  salud?.record('DATA', 'OK');
+  return { saldo:saldo, raw:raw, confiable:true };
+}
+window.leerFichasJugador = leerFichasJugador;
 // Trigger conservador cada 90s (gated por TODOS los guards + 5 min por usuario).
 try{ setInterval(function(){ try{ verificarSaldoRetiroOcioso(); }catch(_e){} }, 90000); }catch(_e){}
 
@@ -15155,6 +16135,7 @@ function chuniorNav(path){
 let macrosList = [];
 
 async function cargarMacros(){
+  window.NodoSalud?.begin('WORKERS')?.record('DATA','OK','MACROS_LOAD');
   try {
     const { data } = await supabaseClient.from('macros')
       .select('*')

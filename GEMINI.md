@@ -1,0 +1,1 @@
+Leer [AGENTS.md](AGENTS.md). Aplicá siempre criterio propio, búsqueda de referencias reales antes de diseñar UI, consulta AST con `npm run codigo` y derivación supervisada por subagentes en el mismo hilo sin hacer que Juan copie y pegue entre modelos.

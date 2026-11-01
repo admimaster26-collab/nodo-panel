@@ -114,6 +114,52 @@
     }catch(_e){ return false; }
   }
 
+  // ── Solicitudes TOMADAS ─────────────────────────────────────────────────────────────────────
+  // Tomar una solicitud (carga o retiro) la saca de la lista de pendientes y la manda al mismo
+  // apartado donde están los retiros pagándose por partes: las dos cosas son lo mismo para el
+  // operador, trabajo que ya alguien agarró. La lista principal queda sólo con lo que NADIE tocó,
+  // que es lo que hace falta ver cuando entran tres o cinco juntas (Juan, 25/10).
+  //
+  // Tomar → EN_REVISION; los pagos por partes la llevan a EN_PROCESO. Las dos significan "ya la tiene
+  // alguien".
+  const TOMADA = /^(EN_REVISION|EN_PROCESO)$/;
+
+  // Sólo cargas y retiros: el cambio de clave no se "toma" y el soporte va al chat.
+  function tomada(s){
+    const t = tipoDe(s);
+    if(t !== 'CARGA' && t !== 'RETIRO') return false;
+    return TOMADA.test(texto(s && s.ESTADO).toUpperCase());
+  }
+
+  // Reparte lo abierto en tres lugares: pagándose por partes, tomadas, y sin tocar.
+  //
+  // Lo que está en la COLA DE CARGA se queda en la lista principal aunque esté tomada: ahí es donde
+  // la tarjeta dice "2º en la cola" / "Cargando…", y si desapareciera de ahí el operador apretaría
+  // de nuevo creyendo que el clic se perdió.
+  //
+  // Ante la duda, la lista principal: un callback que falla NO puede esconder una solicitud.
+  function repartirAbiertas(abiertas, opciones){
+    const o = opciones || {};
+    // Un criterio que no se pasó es "no" (no hay parciales ni cola). Un criterio que se pasó y FALLÓ
+    // es "no sé": ahí gana la lista principal, que es donde nada se pierde de vista.
+    const preguntar = function(fn, s){
+      if(typeof fn !== 'function') return { dudoso: false, si: false };
+      try{ return { dudoso: false, si: !!fn(s) }; }catch(_e){ return { dudoso: true, si: false }; }
+    };
+    const parciales = [], tomadas = [], pendientes = [];
+    for(const s of (Array.isArray(abiertas) ? abiertas : [])){
+      const p = preguntar(o.esParcial, s);
+      if(p.dudoso){ pendientes.push(s); continue; }
+      if(p.si){ parciales.push(s); continue; }
+      if(tomada(s)){
+        const c = preguntar(o.enCola, s);
+        if(!c.dudoso && !c.si){ tomadas.push(s); continue; }
+      }
+      pendientes.push(s);
+    }
+    return { parciales: parciales, tomadas: tomadas, pendientes: pendientes };
+  }
+
   // La nota que queda registrada y que ve el jugador. Sin nombres de operadores ni billeteras.
   function notaCierre(caso, money){
     const m = typeof money === 'function' ? money : function(n){ return String(n); };
@@ -122,5 +168,5 @@
          + '; quedaron sin pagar ' + m(caso.restante) + '.';
   }
 
-  return { aCerrarPorCarga, enProceso, notaCierre, MOTIVO, ETIQUETA };
+  return { aCerrarPorCarga, enProceso, tomada, repartirAbiertas, notaCierre, MOTIVO, ETIQUETA };
 });

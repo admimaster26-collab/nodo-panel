@@ -178,19 +178,124 @@ function tomarImagenChatFile(){
   const file=document.getElementById("chatFile").files[0];
   if(file)leerImagenChat(file);
 }
+function dataUrlToBlob(dataUrl){
+  const parts = String(dataUrl||"").split(",");
+  if(parts.length < 2) return null;
+  const mime = (parts[0].match(/:(.*?);/) || [])[1] || "image/jpeg";
+  const binary = atob(parts[1]);
+  const array = new Uint8Array(binary.length);
+  for(let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+  return new Blob([array], { type: mime });
+}
+
 async function subirImagenPanelChat(base64DataUrl){
+  window.NodoSalud?.begin('CHAT')?.record('EFFECT','OK','CHAT_UPLOAD_IMAGE');
   if(!supabaseClient||!base64DataUrl)return null;
   try{
-    const res=await fetch(base64DataUrl);
-    const blob=await res.blob();
-    const ext=(blob.type.split('/')[1]||'jpg').replace('jpeg','jpg');
-    const path=`op/${Date.now()}_${Math.random().toString(36).slice(2,6)}.${ext}`;
-    const{error}=await supabaseClient.storage.from('chat-imagenes').upload(path,blob,{cacheControl:'3600',upsert:true,contentType:blob.type});
-    if(error){console.error('[img upload panel]',error.message||error);return null;}
-    const{data:ud}=supabaseClient.storage.from('chat-imagenes').getPublicUrl(path);
-    return ud?.publicUrl||null;
+    let blob = null;
+    try{ blob = dataUrlToBlob(base64DataUrl); }catch(_e){}
+    if(!blob){
+      const res = await fetch(base64DataUrl);
+      blob = await res.blob();
+    }
+    const contentType = blob.type || 'image/jpeg';
+    const ext = (contentType.split('/')[1]||'jpg').replace('jpeg','jpg');
+    const path = `op/${Date.now()}_${Math.random().toString(36).slice(2,6)}.${ext}`;
+
+    // 1. Intento en chat-imagenes
+    try{
+      const up = await supabaseClient.storage.from('chat-imagenes').upload(path, blob, { cacheControl:'3600', upsert:true, contentType });
+      if(!up.error){
+        const { data: ud } = supabaseClient.storage.from('chat-imagenes').getPublicUrl(path);
+        if(ud?.publicUrl) return ud.publicUrl;
+      }
+    }catch(_e){}
+
+    // 2. Fallback en comprobantes
+    try{
+      const up2 = await supabaseClient.storage.from('comprobantes').upload(path, blob, { cacheControl:'3600', upsert:true, contentType });
+      if(!up2.error){
+        const { data: ud2 } = supabaseClient.storage.from('comprobantes').getPublicUrl(path);
+        if(ud2?.publicUrl) return ud2.publicUrl;
+      }
+    }catch(_e){}
+
+    return null;
   }catch(e){console.warn('[img upload panel]',e);return null;}
 }
+
+// ── Visor de imágenes modal (Lightbox seguro para Electron) ────────────────
+// El visor de verdad es una VENTANA APARTE (ver main/image-window.js).
+//
+// Juan, 25/10: "cualquier cosa que se despliegue asi de esa manera estorba en aceptar otras
+// cargas... es mas logico que se despliegue en otra ventana... deberias de dejar un maximo de 1,
+// que la anterior muera antes de redesplegarse otra."
+//
+// El cartel de abajo tapaba el panel entero (position:fixed;inset:0;z-index:999999): mirar un
+// comprobante dejaba al operador sin poder tomar una carga ni contestar un chat. El tope de una
+// sola ventana lo hace cumplir main, no esta función.
+window.nodoVerImagenCompleta = function(src, titulo){
+  if(!src) return;
+  try{
+    if(window.panelAPI && typeof window.panelAPI.verImagen === 'function'){
+      window.panelAPI.verImagen(String(src), String(titulo||''))
+        .then(function(r){
+          // Si main no la pudo abrir, que el operador vea algo igual en vez de un clic muerto.
+          if(!r || r.ok !== true) window._nodoVerImagenEnCartel(src);
+        })
+        .catch(function(){ window._nodoVerImagenEnCartel(src); });
+      return;
+    }
+  }catch(_e){}
+  window._nodoVerImagenEnCartel(src);
+};
+
+// Respaldo: el cartel viejo, adentro del panel. Queda sólo para cuando no hay puente con main
+// (desarrollo, o un proceso principal más viejo que el panel). Es el que estorba — por eso no es
+// el primero, pero sacarlo del todo dejaría la imagen sin forma de verse.
+window._nodoVerImagenEnCartel = function(src){
+  if(!src) return;
+  let modal = document.getElementById('nodoImgModal');
+  if(!modal){
+    modal = document.createElement('div');
+    modal.id = 'nodoImgModal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(8,11,17,0.88);backdrop-filter:blur(4px);z-index:999999;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:16px;';
+    modal.innerHTML = `
+      <div style="position:relative;max-width:94vw;max-height:92vh;display:flex;flex-direction:column;align-items:center;background:#0f172a;border:1px solid #334155;border-radius:12px;padding:12px;box-shadow:0 20px 45px rgba(0,0,0,0.85)">
+        <div style="width:100%;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid #1e293b">
+          <div style="display:flex;align-items:center;gap:6px">
+            <span style="font-size:14px">🖼️</span>
+            <span style="color:#f1f5f9;font-size:12px;font-weight:700">Visualizador de Comprobante / Imagen</span>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button id="nodoImgModalCopy" type="button" style="background:#1e293b;color:#93c5fd;border:1px solid #3b82f6;border-radius:6px;padding:4px 10px;font-size:11px;font-weight:700;cursor:pointer">📋 Copiar enlace</button>
+            <button id="nodoImgModalClose" type="button" style="background:#ef4444;color:#fff;border:0;border-radius:6px;padding:4px 12px;font-size:12px;font-weight:bold;cursor:pointer">✕ Cerrar</button>
+          </div>
+        </div>
+        <div style="overflow:auto;max-width:92vw;max-height:82vh;display:flex;justify-content:center;align-items:center">
+          <img id="nodoImgModalSrc" src="" style="max-width:100%;max-height:80vh;border-radius:8px;object-fit:contain;cursor:zoom-in" onclick="this.style.maxHeight=this.style.maxHeight==='none'?'80vh':'none';this.style.cursor=this.style.maxHeight==='none'?'zoom-out':'zoom-in'">
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    modal.addEventListener('click', e => { if(e.target === modal) modal.style.display = 'none'; });
+    modal.querySelector('#nodoImgModalClose').addEventListener('click', () => { modal.style.display = 'none'; });
+    modal.querySelector('#nodoImgModalCopy').addEventListener('click', () => {
+      const s = modal.querySelector('#nodoImgModalSrc').src;
+      if(navigator.clipboard && s){
+        navigator.clipboard.writeText(s).then(() => { if(typeof toast === 'function') toast('Enlace copiado al portapapeles','green'); });
+      }
+    });
+    document.addEventListener('keydown', e => { if(e.key === 'Escape' && modal.style.display !== 'none') modal.style.display = 'none'; });
+  }
+  const imgEl = modal.querySelector('#nodoImgModalSrc');
+  if(imgEl){
+    imgEl.src = src;
+    imgEl.style.maxHeight = '80vh';
+    imgEl.style.cursor = 'zoom-in';
+  }
+  modal.style.display = 'flex';
+};
 function leerImagenChat(file){
   if(!file.type.startsWith("image/")){
     alert("Pegá o adjuntá una imagen válida.");
@@ -222,7 +327,9 @@ function quitarImagenChat(){
   document.getElementById("chatPreview").classList.remove("show");
 }
 document.addEventListener("paste",async e=>{
-  const visible=!document.getElementById("viewChat").classList.contains("hidden");
+  const chatView = document.getElementById("viewChat");
+  const inicioView = document.getElementById("viewInicio");
+  const visible = (chatView && !chatView.classList.contains("hidden")) || (inicioView && !inicioView.classList.contains("hidden") && document.body.classList.contains("nodo-chat-open")) || document.activeElement?.id === "chatInput" || document.activeElement?.id === "v15ChatInput";
   if(!visible)return;
   // intento 1: clipboardData (funciona en muchos contextos)
   const items=[...(e.clipboardData?.items||[])];

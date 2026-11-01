@@ -84,5 +84,6 @@ test('el panel versionado coincide con sus fuentes y todos sus scripts compilan'
   const result = build({ check: true });
   assert.equal(result.changed, false);
   // Canario deliberado: si cambia la cantidad de bloques, revisar el manifiesto y subirlo a mano.
-  assert.equal(result.blocks, 33);
+  // 25/10 · 34: entró js:chat-redimensionable (la manija para estirar la columna del chat).
+  assert.equal(result.blocks, 34);
 });

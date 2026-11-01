@@ -243,7 +243,10 @@
     try{ renderHistorial(lista); }catch(e){ console.error("renderHistorial filtros avanzados",e); }
 
     const total=document.getElementById("histFilterTotal");
-    if(total)total.textContent = lista.length+" resultado"+(lista.length===1?"":"s");
+    if(total){
+      const srvTotal = window._histBetaTotals && window._histBetaTotals.total_rows != null ? Number(window._histBetaTotals.total_rows) : null;
+      total.textContent = lista.length+" resultado"+(lista.length===1?"":"s") + (srvTotal !== null && srvTotal !== lista.length ? " (de "+srvTotal+" en servidor)" : "");
+    }
 
     const sum=document.getElementById("histFilterSummary");
     if(sum){

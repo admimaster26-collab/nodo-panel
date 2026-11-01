@@ -436,11 +436,14 @@ function _rv2ActualizarBotonAprobar(){
 function _rv2Veredicto(){
   const st=deps.withdrawalState.current; if(!st) return null;
   const tot=_rv2TotalSel(), falta=Math.max(0, st.objetivo-tot);
+  if(st.saldoReal==null && st.saldoFallo==='no_existe')
+    return {n:'mal', c:'#f87171', ico:'🚫', tit:'ESTE USUARIO NO ESTÁ EN AGENTES', reintentar:true,
+      det:'Buscamos a '+deps.escapeHtml(st.usuario)+' y no aparece. Revisá el nombre antes de pagar.'};
   if(st.saldoReal==null && st.saldoFallo)
-    return {n:'espera', c:'#8b949e', ico:'❓', tit:'NO PUDIMOS LEER SUS FICHAS',
-      det: st.saldoFallo==='ocupado' ? 'Hay otra operación en curso. Podés pagar igual, pero a ciegas.'
-         : st.saldoFallo==='sesion'  ? 'Se cayó la sesión de Agentes. Tocá Pagar: se abre el login y sigo desde acá.'
-                                     : 'No se pudo leer el saldo en Agentes. Podés pagar igual, pero a ciegas.'};
+    return {n:'espera', c:'#f59e0b', ico:'❓', tit:'NO PUDIMOS LEER SUS FICHAS', reintentar:true,
+      det: st.saldoFallo==='ocupado' ? 'Hay otra operación en curso. Esperá un momento y reintentá.'
+         : st.saldoFallo==='sesion'  ? 'Se cayó la sesión de Agentes. Tocá Reintentar: se abre el login y sigo desde acá.'
+                                     : 'El casino no devolvió el saldo. Reintentá antes de pagar.'};
   if(st.saldoReal==null)
     return {n:'espera', c:'#8b949e', ico:'⏳', tit:'LEYENDO LAS FICHAS DEL USUARIO', det:'Un segundo…'};
   if(st.saldoReal<=0.5)
@@ -481,8 +484,10 @@ function _rv2VeredictoHtml(){
   const v=_rv2Veredicto(); if(!v) return '';
   const st=deps.withdrawalState.current;
   return '<div style="border-radius:12px;padding:12px 14px;border:1.5px solid '+v.c+'55;background:'+v.c+'12">'
+    + '<div style="font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#8b949e;margin-bottom:3px">Cotejo de fichas</div>'
     + '<div style="font-size:14px;font-weight:900;color:'+v.c+';letter-spacing:.02em">'+v.ico+' '+v.tit+'</div>'
     + '<div style="font-size:13px;color:#e6edf3;margin-top:3px">'+v.det+'</div>'
+    + (v.reintentar ? '<button class="mini-btn" style="margin-top:8px;background:#21262d;border:1px solid #30363d;color:#e6edf3;font-weight:800;font-size:12px" onclick="_rv2ReleerFichas()">🔄 Reintentar</button>' : '')
     + (v.sug ? '<button class="mini-btn" style="margin-top:8px;background:#ea580c;color:#fff;font-weight:800;font-size:12px" onclick="_rv2AjustarASaldo('+v.sug.monto+')">'
         + (v.sug.motivo==='ceros' ? ('✔ Le sobró un cero — pagar '+deps.money(v.sug.monto)) : ('✔ Pagarle todo lo que tiene · '+deps.money(v.sug.monto)))
         + '</button>' : '')
@@ -618,7 +623,6 @@ function _rv2Render(){
     +     '<div id="rv2Resumen">'+_rv2ResumenPago()+'</div>'
     +   '</div>'
     + '</div>'
-    + cbuHtml
     // En modo PARCIAL este campo es lo que FALTA pagar y va bloqueado. Editable, se prestaba a un
     // error grave: el operador ponía acá "lo que pago ahora" (ej. 25.000 de un retiro de 50.000) y
     // el cierre tomaba ese número como TOTAL del retiro → lo daba por PAGADO con la mitad. Lo que

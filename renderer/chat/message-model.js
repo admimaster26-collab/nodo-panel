@@ -41,7 +41,7 @@
     });
     if(m.auto !== undefined || m.AUTO !== undefined || meta.auto !== undefined) out.auto = m.auto ?? m.AUTO ?? meta.auto;
     if(m.auto_caso || meta.auto_caso) out.auto_caso = m.auto_caso || meta.auto_caso;
-    const img = m.imagen_url || m.imagen || m.IMAGEN_URL;
+    const img = m.imagen_url || m.imagen || m.IMAGEN_URL || meta.imagen_url || meta.comprobante_url || m.comprobante_url || m.COMPROBANTE_URL;
     if(img) out.imagen_url = img;
     return out;
   }
@@ -58,6 +58,13 @@
     const m = normalize(message);
     return [role(m), m.fecha, m.mensaje, m.imagen_url || ''].join('|');
   }
+  // Textos que el sistema puso en boca del jugador: una solicitud sin mensaje se rellenaba con esto
+  // y quedaba guardado en el hilo con origen USUARIO. El jugador nunca lo escribió (D-130).
+  const FILLER = /^(consulta desde portal( v16)?|\[conversaci[oó]n iniciada por el operador[^\]]*\])$/i;
+  function isFiller(message){
+    const m = normalize(message);
+    return role(m) === 'USUARIO' && !m.imagen_url && FILLER.test(m.mensaje.trim());
+  }
   function merge(existing, incoming){
     const result = Object.assign({}, existing);
     for(const [name,value] of Object.entries(incoming || {})){
@@ -72,5 +79,5 @@
     return text.replace(/⟦AYUDA:inicio⟧/g, '[Botón: Ver opciones de ayuda]')
       .replace(/⟦AYUDA:revisar_envio⟧/g, '[Botón: Revisar una transferencia enviada]');
   }
-  return Object.freeze({ role, normalize, author, className, key, merge, visibleText });
+  return Object.freeze({ role, normalize, author, className, key, isFiller, merge, visibleText });
 });

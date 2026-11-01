@@ -1,6 +1,6 @@
 # Dependencias
 node_modules/
-package-lock.json
+# Versionar package-lock.json para instalaciones reproducibles de herramientas y app.
 
 # Salida de build (electron-builder) — se distribuyen como Releases en GitHub
 dist/

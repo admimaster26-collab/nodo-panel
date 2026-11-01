@@ -29,6 +29,7 @@ async function login(){
 
   // Validar contra Chunior. No guardamos la clave en ningún lado.
   let okBackoffice = false;
+  const _connHealth = window.NodoSalud?.begin('CONEXION');
   try {
     okBackoffice = await validarLoginChunior(usuario, clave);
   } catch(e){
@@ -75,6 +76,7 @@ async function login(){
   setBox("loginMsg",`<div class="alert-box">Chunior OK. Esperando selección de puesto...</div>`);
   // Disparar el flujo de Chunior post-login. _chuniorConfirmarPuesto
   // se encarga de setear pcOperativa, asegurar la oficina y finalizar el login.
+  _connHealth?.record('CONNECTED','OK','CHUNIOR_LOGIN_OK');
   _checkPuestoPostLogin();
 }
 

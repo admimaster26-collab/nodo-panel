@@ -99,7 +99,10 @@ test('las funciones que usa la pantalla quedan definidas', () => {
   const necesarias = [
     'cargarHistorial', 'renderHistorialUnificado', 'setHistorialPeriodo',
     'buscarHistorialServidor', 'expedienteBuscarMovChunior', 'expedienteEditarMovimiento',
-    'expedienteVerEdiciones', 'cerrarRetiroSaldado', 'getBilleraLanding', '_billeteraVieja'
+    'expedienteVerEdiciones', 'cerrarRetiroSaldado', 'getBilleraLanding', '_billeteraVieja',
+    'abrirModal', 'cerrarModal', 'refrescarSaldoAgente', 'rechequearFichas',
+    '_wdLock', '_wdUnlock', '_wdForceUnlock', '_watchdogLeer', '_watchdogPoll',
+    '_watchdogIniciar', '_watchdogTrigger'
   ];
   const faltan = necesarias.filter((f) => typeof sb[f] !== 'function');
   assert.deepEqual(faltan, [], 'quedaron sin definir: ' + faltan.join(', '));
@@ -1394,9 +1397,9 @@ test('parcial · "pagarle todo lo que tiene" corrige el TOTAL y lo escribe en la
 
 test('parcial · un saldo leído con la sesión caída no se cree', () => {
   const b = _bundlePortal();
-  assert.match(b, /!b\.needsLogin && !b\.pageError/,
+  assert.match(b, /r\.confiable===true/,
     'con la sesión inválida el preload devolvía 0 y el modal decía "NO TIENE FICHAS"');
-  assert.match(b, /Se cayó la sesión de Agentes\. Tocá Pagar: se abre el login y sigo desde acá\./);
+  assert.match(b, /Se cayó la sesión de Agentes\. Tocá Reintentar: se abre el login y sigo desde acá\./);
 });
 
 test('Drex · detecta "session is invalid" aunque haya OTRO modal abierto antes', () => {
@@ -1866,8 +1869,31 @@ test('cotejo · "otro número" dice de dónde sale; un modal sin texto de botón
   const cot = fs.readFileSync(path.join(RAIZ, 'renderer', 'core', 'cotejo-alta.js'), 'utf8');
   assert.match(cot, /ESTE USUARIO OPERÓ CON OTRO NÚMERO/);
   assert.match(cot, /En esta oficina operó con/);
-  const av = fs.readFileSync(path.join(RAIZ, 'renderer', 'core', 'avisos-y-watchdog.js'), 'utf8');
+  const av = fs.readFileSync(path.join(RAIZ, 'renderer', 'core', 'modal-y-watchdog.js'), 'utf8');
   assert.match(av, /btn\.style\.display = saveText \? '' : 'none';/);
+});
+
+test('modales y watchdog · conserva candados y un único arranque sin polling periódico duplicado', () => {
+  const src = fs.readFileSync(path.join(RAIZ, 'renderer', 'core', 'modal-y-watchdog.js'), 'utf8');
+  const timers = [], intervals = [];
+  const sb = {
+    window: { ctrlElectron: {} },
+    document: { getElementById: () => null },
+    setTimeout: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    setInterval: (fn, ms) => { intervals.push({ fn, ms }); return intervals.length; }
+  };
+  vm.createContext(sb);
+  vm.runInContext(src, sb);
+  assert.deepEqual(intervals.map((t) => t.ms), [60000], 'sólo el widget conserva su timer periódico');
+  assert.deepEqual(timers.map((t) => t.ms), [4000, 12000]);
+  sb._watchdogIniciar();
+  sb._watchdogIniciar();
+  assert.deepEqual(timers.map((t) => t.ms), [4000, 12000, 8000], 'el baseline se programa una sola vez');
+  sb._wdLock(); sb._wdLock(); sb._wdUnlock();
+  assert.equal(vm.runInContext('_watchdog.busy', sb), 1);
+  sb._wdForceUnlock(); sb._wdUnlock();
+  assert.equal(vm.runInContext('_watchdog.busy', sb), 0, 'el candado nunca queda negativo');
+  assert.doesNotMatch(src, /initScrollSnap|addEventListener\(['"]wheel/, 'no restaura el scroll retirado');
 });
 
 // ── D-94 · la sesión muerta se cierra y se vuelve a entrar ──────────────────────────────────
@@ -3379,6 +3405,55 @@ test('sin usuario o sin texto no se manda nada', async () => {
   await sb.notificarUsuarioEnChat('', 'algo');
   await sb.notificarUsuarioEnChat('milo30kc', '');
   assert.equal(alPortal.length, 0);
+});
+
+// ── D-130: lo que el sistema escribía en nombre del jugador ───────────────────
+// Juan, 1/11: "[Conversación iniciada por el operador juancarlos]" del lado del jugador, debajo del
+// "buenas" del propio operador. El panel lo inventaba al armar el hilo y lo guardaba al contestar.
+
+function soporteConHilo(id, usuario, mensajeInicial, hilo) {
+  const meta = { chat_thread: hilo, chat_estado: 'RESPONDIDO_PANEL', chat_master_id: id };
+  return { ...solicitudDeSoporte(id, usuario, mensajeInicial), metadata: meta, METADATA: meta };
+}
+const FRASE_OPERADOR = '[Conversación iniciada por el operador juancarlos]';
+const hiloIniciadoPorOperador = () => [
+  { origen: 'OPERADOR', tipo: 'OPERADOR', usuario: 'milo', operador: 'juancarlos', mensaje: 'buenas', fecha: '2026-11-01T09:04:14.037Z' },
+  { origen: 'USUARIO', usuario: 'milo', mensaje: FRASE_OPERADOR, fecha: '2026-11-01T09:04:14.037375+00:00', solicitud_id: 7 }
+];
+const textos = (ticket) => JSON.stringify(ticket.thread.map((m) => m.mensaje));
+
+test('relleno · un hilo que arrancó el operador no le atribuye nada al jugador', () => {
+  const sb = panelConDosCaminos([soporteConHilo(7, 'milo', FRASE_OPERADOR, hiloIniciadoPorOperador())], []);
+  const t = sb.ticketsAgrupados().find((x) => x.usuario === 'milo');
+  assert.equal(textos(t), JSON.stringify(['buenas']));
+  assert.equal(t.unread, 0, 'tampoco es un mensaje nuevo para el operador');
+});
+
+test('relleno · una consulta sin mensaje no inventa uno, y la lista sigue teniendo qué mostrar', () => {
+  const sb = panelConDosCaminos([solicitudDeSoporte(8, 'vacio', '')], []);
+  const t = sb.ticketsAgrupados().find((x) => x.usuario === 'vacio');
+  assert.equal(textos(t), '[]');
+  assert.equal(t.unread, 0);
+  assert.equal(t.mensaje, 'Consulta desde portal');
+});
+
+test('relleno · lo que el jugador escribió de verdad se queda', () => {
+  const sb = panelConDosCaminos([
+    solicitudDeSoporte(9, 'conTexto', 'no me llegó la carga'),
+    soporteConHilo(10, 'conFoto', '', [{ origen: 'USUARIO', mensaje: 'Consulta desde portal', imagen_url: 'https://sb.co/c.png', fecha: '2026-11-01T09:00:00Z', solicitud_id: 10 }])
+  ], []);
+  const lista = sb.ticketsAgrupados();
+  assert.equal(textos(lista.find((x) => x.usuario === 'conTexto')), JSON.stringify(['no me llegó la carga']));
+  assert.equal(lista.find((x) => x.usuario === 'conFoto').thread.length, 1, 'una imagen no se pierde por el texto que la acompaña');
+});
+
+test('relleno · al contestar, lo inventado que estaba guardado no se vuelve a escribir', async () => {
+  const sb = panelConDosCaminos([soporteConHilo(7, 'milo', FRASE_OPERADOR, hiloIniciadoPorOperador())], []);
+  let escrito = null;
+  sb.actualizarSolicitudPortal = async (id, estado, extra) => { escrito = extra; return {}; };
+  const r = await sb.nodoEnviarMensajePortal('milo', 'te escribo de nuevo', false);
+  assert.equal(r.ok, true);
+  assert.equal(JSON.stringify(escrito.chat_thread.map((m) => m.mensaje)), JSON.stringify(['buenas', 'te escribo de nuevo']));
 });
 
 // ── NODO escuchando los DOS caminos del chat ─────────────────────────────────

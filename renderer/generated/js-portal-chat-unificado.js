@@ -229,6 +229,7 @@
     if(/^\d+$/.test(raw) && local && String(local.ID_BILLETERA || local.id || '') === raw && !String(raw).startsWith('CH_')){
       // Ojo: puede ser UID numérico también. Confirmamos que exista como id.
       const q = await supabaseClient.from('billeteras').select('id').eq('id', Number(raw)).limit(1);
+      window.NodoSalud?.begin('BILLETERAS')?.reply(q?.error);
       if(!q.error && q.data && q.data.length) return Number(raw);
     }
 

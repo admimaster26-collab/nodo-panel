@@ -22,6 +22,7 @@ function _chuVariantesMonto(monto){
 //     texto de fila si la fila no trae notas).
 // Devuelve { existe, movimientoId, creacion?, vinculadoAOtro? } (existe/movimientoId = compat con el caller).
 async function verificarMovimientoEnChunior(usuario, monto, tCargaMs, ventanaMs, excluirIds){
+  window.NodoSalud?.begin('AUTOMATISMOS')?.record('DATA','OK','CHUNIOR_VERIFY_MOV');
   // "No pude verificar" NO es lo mismo que "no está": si el que llama no puede distinguirlo,
   // vuelve a anotar un movimiento que ya existe y duplica la plata (D-107). Por eso va `ok`.
   if(!window.chunior || !usuario) return { ok:false, existe:false, encontrado:false, movimientoId:null, motivo:'sin ventana de Chunior' };

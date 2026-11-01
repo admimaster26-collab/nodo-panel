@@ -17,10 +17,7 @@
   function notifyKey(){return "nodo_chat_notified_keys_v1"}
   function getJson(key,def){try{return JSON.parse(localStorage.getItem(key)||JSON.stringify(def))}catch(_e){return def}}
   function setJson(key,val){try{localStorage.setItem(key,JSON.stringify(val))}catch(_e){}}
-  function chatKey(t){
-    const id = t?.masterId || t?.solicitudId || t?.usuario || "chat";
-    return U(t?.usuario||"usuario")+"_"+String(id).replace(/[^A-Z0-9]/gi,"_");
-  }
+  function chatKey(t){ return NodoChatMetrics.chatKey(t); }
   function userMsgs(t){
     return (t?.thread||[]).filter(m=>U(m.origen)==="USUARIO").sort((a,b)=>toDate(a.fecha)-toDate(b.fecha));
   }
@@ -28,46 +25,50 @@
     const msgs=userMsgs(t);
     return msgs.length ? (msgs[msgs.length-1].fecha||"") : "";
   }
-  // La respuesta del operador tambien cuenta como "leido". La marca de leido vive en el
-  // localStorage de CADA PC: una consulta atendida en otro turno, en otra PC o antes de
-  // reinstalar no tiene marca aca, asi que `rd` quedaba en 1970 y TODA la conversacion volvia a
-  // contar como sin leer. Y como esas consultas ademas no se cierran nunca (eran 3.925 al 2/10),
-  // el icono de chats sin leer titilaba para siempre por mensajes ya contestados (Juan, 2/10).
-  //
-  // Si lo ultimo que se dijo en el hilo lo dijo el operador, no hay nada sin leer: alguien la
-  // atendio. Es el mismo criterio que usa el auto-cierre — manda el hilo, no la marca.
-  function ultimaRespuestaOperador(t){
-    let cuando = 0;
-    for(const m of (t?.thread||[])){
-      if(U(m.origen) !== "OPERADOR") continue;
-      const x = toDate(m.fecha).getTime();
-      if(x > cuando) cuando = x;
-    }
-    return cuando;
-  }
-  function unreadForTicket(t){
-    if(!t || !t.accepted) return 0;
-    const marks=getJson(readKey(),{});
-    const readAt=marks[chatKey(t)]||"";
-    const rd=toDate(readAt);
-    const corte = Math.max(rd.getTime(), ultimaRespuestaOperador(t));
-    return userMsgs(t).filter(m=>toDate(m.fecha).getTime()>corte).length;
-  }
+  function unreadForTicket(t){ return NodoChatMetrics.unreadForTicket(t, getJson(readKey(),{})); }
   function allTickets(){
     try{
       if(typeof window.ticketsAgrupados==="function") return window.ticketsAgrupados()||[];
     }catch(_e){}
     return [];
   }
-  function unreadTotal(){
-    return allTickets().filter(t=>t.accepted).reduce((a,t)=>a+unreadForTicket(t),0);
+  function unreadSnapshot(){
+    const tickets=allTickets(), marks=getJson(readKey(),{});
+    for(const t of tickets){
+      if(t._beta){
+        const cutoff=toDate(marks[chatKey(t)]||0).getTime();
+        const lastMsgTime=toDate(lastUserMsgTime(t)||0).getTime();
+        if(cutoff && lastMsgTime && cutoff >= lastMsgTime){
+          t._unreadServidor = 0;
+        } else {
+          const count=window.NodoBetaChat?.count(t._chatId);
+          if(Number.isSafeInteger(count))t._unreadServidor=count;
+        }
+      }
+    }
+    const snapshot=NodoChatMetrics.snapshot(tickets,marks);
+    const serverTotal=window.NodoBetaChat?.total();
+    const hasUnreadLocally=snapshot.total > 0;
+    if(window.NodoBetaChat?.active() && Number.isSafeInteger(serverTotal)){
+      if(!hasUnreadLocally && Object.keys(marks).length > 0){
+        snapshot.total = 0;
+      } else {
+        snapshot.total=serverTotal+NodoChatMetrics.snapshot(tickets.filter(t=>!t._beta&&!t._betaLinked),marks).total;
+      }
+    }
+    return snapshot;
   }
+  window.nodoChatUnreadSnapshot = unreadSnapshot;
   function markRead(t){
     if(!t) return;
     const last=lastUserMsgTime(t) || nowIso();
     const marks=getJson(readKey(),{});
     marks[chatKey(t)] = last;
     setJson(readKey(),marks);
+    if(t._beta){
+      t._unreadServidor = 0;
+      void window.NodoBetaChat?.flushVisible();
+    }
     updateChatUnreadBadges();
   }
   window.nodoChatMarkReadCurrent=function(){
@@ -79,21 +80,23 @@
     try{
       const tickets=allTickets().filter(t=>t.accepted);
       const marks=getJson(readKey(),{});
-      tickets.forEach(t=>{ marks[chatKey(t)] = lastUserMsgTime(t) || nowIso(); });
+      tickets.forEach(t=>{
+        marks[chatKey(t)] = lastUserMsgTime(t) || nowIso();
+        if(t._beta) t._unreadServidor = 0;
+      });
       setJson(readKey(),marks);
+      if(window.NodoBetaChat?.flushVisible) void window.NodoBetaChat.flushVisible();
       updateChatUnreadBadges();
       if(typeof renderChatListStep2Final==="function") renderChatListStep2Final();
-      try{ if(typeof toast==="function") toast("✓ Todas marcadas como leídas","green"); }catch(_e){}
+      try{
+        if(typeof toast==="function") toast("✓ Todas marcadas como leídas","green");
+      }catch(_e){}
     }catch(_e){ console.warn("markAllRead",_e); }
   };
 
   // Hasta dónde está leído: la marca de esta PC o la última vez que contestó el operador,
   // lo que sea más nuevo. Es el mismo corte que usa unreadForTicket.
-  function corteLeido(t){
-    const marks=getJson(readKey(),{});
-    const rd=toDate(marks[chatKey(t)]||"").getTime();
-    return Math.max(rd, ultimaRespuestaOperador(t));
-  }
+  function corteLeido(t){ return NodoChatMetrics.readCutoff(t, getJson(readKey(),{})); }
 
   // La lista de avisados no se limpiaba nunca: una clave por mensaje, para siempre, en el
   // localStorage de la PC. Se queda con las últimas 4000 y tira el resto.
@@ -140,7 +143,8 @@
   }
 
   function updateChatUnreadBadges(){
-    const total=unreadTotal();
+    const snapshot=unreadSnapshot();
+    const total=snapshot.total;
 
     // Badge lateral Chat
     const badge=document.getElementById("badgeChat");
@@ -153,7 +157,7 @@
     const stat=document.getElementById("statChats");
     if(stat) stat.textContent=String(total);
 
-    const sub=stat?.parentElement?.querySelector(".stat-sub");
+    const sub=stat?.parentElement?.querySelector(".stat-mini-sub, .stat-sub");
     if(sub) sub.textContent = total>0 ? "Mensajes nuevos portal" : "Consultas portal";
 
     // Botón nav chat highlight
@@ -167,15 +171,32 @@
     if(list){
       const tabs=list.querySelectorAll(".wq2-tab");
       if(tabs && tabs.length>=2){
-        const abiertos=allTickets().filter(t=>t.accepted).length;
-        tabs[1].innerHTML = `Abiertos ${abiertos?`<span class="wq2-count">${abiertos}</span>`:""}${total?` <span class="wq2-count" style="background:#ef4444">${total}</span>`:""}`;
+        // Cada solapa cuenta lo de SUS filas. "Abiertos" mostraba el total de toda la oficina,
+        // con lo que los mensajes de los chats que esperan aparecían en la solapa equivocada y
+        // la suma de lo que se ve no daba con ese número. El total de todo sigue en el costado.
+        let enEspera=0, enEsperaSinLeer=0, abiertos=0, abiertosSinLeer=0;
+        for(const x of snapshot.tickets){
+          if(x.cerrado) continue;
+          const n=snapshot.unread.get(x)||0;
+          if(x.accepted){ abiertos++; abiertosSinLeer+=n; }
+          else{ enEspera++; enEsperaSinLeer+=n; }
+        }
+        const solapa=(nombre,cuantos,sinLeer)=>`${nombre} ${cuantos?`<span class="wq2-count">${cuantos}</span>`:""}${sinLeer?` <span class="wq2-count" style="background:#ef4444">${sinLeer}</span>`:""}`;
+        tabs[0].innerHTML = solapa("En espera",enEspera,enEsperaSinLeer);
+        tabs[1].innerHTML = solapa("Abiertos",abiertos,abiertosSinLeer);
       }
 
+      // El ticket de cada fila se busca entre los de ESTA pasada (snapshot.tickets). Antes se
+      // pedían de nuevo con allTickets(): salen objetos nuevos, `snapshot.unread.get(t)` no
+      // encontraba nada y ninguna fila mostraba su número aunque el total del costado dijera 25.
+      const porId=new Map();
+      for(const x of snapshot.tickets){ if(!porId.has(x.id)) porId.set(x.id,x); }
       list.querySelectorAll(".wq2-item").forEach(item=>{
         const name=item.querySelector(".wq2-name")?.textContent?.trim();
-        const t=allTickets().find(x=>U(x.usuario)===U(name));
+        const ticketId=item.dataset?.ticketId;
+        const t=ticketId?porId.get(ticketId):snapshot.byUser.get(U(name));
         if(!t) return;
-        const u=unreadForTicket(t);
+        const u=snapshot.unread.get(t)||0;
         let marker=item.querySelector(".wq2-unread-final");
         if(u>0){
           if(!marker){
@@ -185,14 +206,17 @@
             meta.appendChild(marker);
           }
           marker.textContent=String(u);
-          const state=item.querySelector(".wq2-state");
-          if(state && !state.textContent.includes("nuevo")){
-            state.textContent += ` · ${u} nuevo${u>1?"s":""}`;
-          }
         }else if(marker){marker.remove();}
+        const state=item.querySelector(".wq2-state");
+        if(state){
+          const base=state.textContent.replace(/ · \d+ nuevos?$/, "");
+          state.textContent=base+(u>0?` · ${u} nuevo${u>1?"s":""}`:"");
+        }
       });
     }
   }
+
+  window.nodoChatRefreshUnread = updateChatUnreadBadges;
 
   function ensureCss(){
     if(document.getElementById("chatStep6UnreadCss"))return;
@@ -215,6 +239,15 @@
       }
       .wq2-item:has(.wq2-unread-final){
         box-shadow:inset 0 0 0 1px rgba(239,68,68,.22);
+      }
+      /* En la lista, el globito va debajo de la hora y pegado a la derecha, como en cualquier
+         bandeja de mensajes. La columna de la hora mide 92 px y "7/8 11:27 a. m." ya la llena:
+         al lado no entra. */
+      .wq2-meta .wq2-unread-final{
+        display:flex;
+        width:max-content;
+        margin:4px 0 0 auto;
+        padding:0 6px;
       }
     `;
     document.head.appendChild(st);
@@ -277,7 +310,8 @@
     try{
       notifyNewMessages();
       const puestos = (document.querySelectorAll('.wq2-unread-final')||[]).length;
-      const firma = allTickets().filter(t=>t.accepted)
+      // Entran también los que esperan: ahora su fila muestra el número que trae el servidor.
+      const firma = allTickets().filter(t=>!t.cerrado)
         .map(function(t){ return chatKey(t)+':'+unreadForTicket(t); }).join('|') + '#' + puestos;
       if(firma === _firmaNoLeidos) return;
       _firmaNoLeidos = firma;

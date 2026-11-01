@@ -42,16 +42,25 @@ function _archivoHistorialMerge(nuevas){
 function _arbolResumenHtml(usuario){
   try{
     if(typeof arbolUsuario!=='function') return '';
+    const perfil = window.NodoPerfilConsulta?.snapshot(usuario);
+    const resumen = perfil?.mode==='beta' ? perfil.resumen : null;
     const arbol = arbolUsuario(usuario);
-    if(!arbol.length) return '';
+    if(!arbol.length && !resumen) return '';
     let totC=0, totR=0;
-    arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+    const disponible = (!!resumen && !resumen.requiere_revision) || !perfil || perfil.mode==='legacy';
+    if(resumen){ totC=resumen.montoCargas; totR=resumen.montoRetiros; }
+    else if(disponible) arbol.forEach(function(o){ const m=Math.abs(Number(o.monto||0)); const t=String(o.tipo||'').toUpperCase(); if(t==='CARGA')totC+=m; else if(t==='RETIRO')totR+=m; });
+    const titulo = resumen ? resumen.totalOps+' registros'+(resumen.requiere_revision?'':' · importes confirmados') : arbol.length+' registros cargados';
+    const importes = disponible
+      ? '<span style="color:#22c55e">⬆️ '+money(totC)+'</span><span style="color:#fb923c">⬇️ '+money(totR)+'</span><span style="color:#e6edf3">neto <b>'+money(resumen ? resumen.neto : totC-totR)+'</b></span>'
+      : '<span>'+(resumen?.requiere_revision?'Reversiones pendientes de cotejo':'Resumen del servidor pendiente')+'</span>';
     const ult = arbol.slice(0,6).map(function(o){
       const t=String(o.tipo||'').toUpperCase(); const ico=t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•';
       return '<div style="display:flex;justify-content:space-between;font-size:11px;padding:2px 0;color:#94a3b8"><span>'+ico+' '+escapeHtml(t||'—')+' · '+formatFecha(o.fecha)+'</span><span style="font-weight:700;color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</span></div>';
     }).join('');
     return '<div style="margin-top:10px;padding:8px 10px;background:#0d1117;border:1px solid #21262d;border-radius:9px">'
-      + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;margin-bottom:4px;flex-wrap:wrap"><b style="color:#c9d1d9">🌳 '+arbol.length+' ops</b><span style="color:#22c55e">⬆️ '+money(totC)+'</span><span style="color:#fb923c">⬇️ '+money(totR)+'</span><span style="color:#e6edf3">neto <b>'+money(totC-totR)+'</b></span></div>'
+      + '<div style="display:flex;justify-content:space-between;gap:6px;font-size:11px;margin-bottom:4px;flex-wrap:wrap"><b style="color:#c9d1d9">🌳 '+titulo+'</b>'+importes+'</div>'
+      + (perfil?.mode==='beta' ? '<div class="small">Detalle cargado: '+arbol.length+(perfil.error?' · actualización pendiente':'')+'</div>' : '')
       + ult + '</div>';
   }catch(_e){ return ''; }
 }
@@ -261,56 +270,129 @@ window._retiroParcialSigueAbierto = function(s){
     return !!(pp.hasProg && pp.total>0 && pp.pagado < pp.total - 0.5);
   }catch(_e){ return false; }
 };
-// Modal de los retiros que se están pagando POR PARTES. Salen de "Solicitudes pendientes" (podían
-// quedar abiertos días y tapaban las solicitudes nuevas) y se agrupan acá, con su progreso y el
-// botón para seguir pagando. La lista la arma el render del Inicio en window._parcialesEnProceso.
+// Caja "En proceso": lo que YA tiene alguien trabajando, separado de lo que nadie tocó.
+//   · TOMADAS: cargas y retiros que alguien tomó con el botón Tomar y todavía no se terminaron.
+//   · PAGÁNDOSE POR PARTES: retiros que se están pagando en pagos parciales.
+// Las dos salen de "Solicitudes pendientes": ahí quedan sólo las que nadie agarró, que es lo que hace
+// falta ver cuando entran tres o cinco juntas (Juan, 25/10). Los parciales además podían quedar
+// abiertos días y tapaban las nuevas. La lista la arma el render del Inicio
+// (window._tomadasEnProceso y window._parcialesEnProceso).
+function _enProcesoFilaParcial(s){
+  const id  = Number(s.ID || s.SOLICITUD_ID || 0);
+  const pp  = window._retiroParcialInfo ? window._retiroParcialInfo(s) : {total:0,pagado:0,restante:0};
+  const pct = pp.total > 0 ? Math.min(100, Math.round(pp.pagado * 100 / pp.total)) : 0;
+  const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
+  const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
+  const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
+  // Ya cobró todo pero la solicitud quedó abierta → se ofrece cerrarla, no pagar más.
+  // "saldadoPorAlguna": una de las dos fuentes del progreso dice que ya está pago.
+  const saldado = pp.restante <= 0.5 || pp.saldadoPorAlguna;
+  const acento  = saldado ? '#22c55e' : '#7c3aed';
+  return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid '+acento+';border-radius:10px;padding:10px 12px;margin-bottom:8px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
+    +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b>'
+    +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + '</div>'
+    +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:'+acento+'">'
+    +       (saldado ? '✔ saldado' : 'falta '+money(pp.restante))+'</div>'
+    +     '<div class="small" style="color:#8b949e">'+money(pp.pagado)+' de '+money(pp.total)+'</div></div>'
+    + '</div>'
+    + '<div style="height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin-top:8px">'
+    +   '<div style="height:100%;width:'+pct+'%;background:'+(saldado?'#22c55e':'linear-gradient(90deg,#7c3aed,#a78bfa)')+'"></div></div>'
+    // Las dos fuentes del progreso no coinciden → no se decide por una: se muestran las dos y el
+    // operador elige (cobró todo → Cerrar · falta → Pagar más).
+    + (pp.discrepa
+        ? ('<div style="margin-top:8px;padding:6px 9px;border-radius:8px;background:rgba(245,197,24,.10);border:1px solid rgba(245,197,24,.35);font-size:11.5px;color:#fde68a">'
+           + '⚠ El progreso no coincide: <b>'+money(pp.pagadoRpc)+'</b> según el contador de parciales'
+           + (pp.pagadoAlt>0.5 && Math.abs(pp.pagadoAlt-pp.pagadoRpc)>1 ? ', <b>'+money(pp.pagadoAlt)+'</b> según el retiro normal' : '')
+           + (pp.histCompleto && pp.pagadoHistorial>0.5 && Math.abs(pp.pagadoHistorial-pp.pagadoRpc)>1 ? ', <b>'+money(pp.pagadoHistorial)+'</b> sumando el historial' : '')
+           + '. '
+           + 'Fijate en el historial cuánto cobró y elegí.</div>')
+        : '')
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap">'
+    +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
+    +   '<span style="display:flex;gap:6px">'
+    // El "Cerrar" está SIEMPRE disponible: sin esa salida, un retiro con el progreso mal
+    // registrado quedaba trabado en la bandeja sin forma de sacarlo.
+    +     '<button class="mini-btn" style="background:'+(saldado?'#12b76a':'transparent')+';color:'+(saldado?'#fff':'#8b949e')+';border:'+(saldado?'none':'1px solid #30363d')+';font-size:11px" title="Marcar la solicitud como pagada (no mueve fichas ni plata)" onclick="cerrarRetiroSaldado('+id+')">✔ Cerrar'+(saldado?' · ya cobró todo':'')+'</button>'
+    +     (saldado ? '' : '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>')
+    +   '</span>'
+    + '</div></div>';
+}
+
+// Una solicitud TOMADA: lo que hace falta para terminarla sin volver a la lista. Cada botón es algo
+// que se puede hacer CON esta fila: aprobarla, cambiarle el monto, pagarla por partes (sólo retiro),
+// verla, rechazarla, o soltarla si se tomó por error.
+function _enProcesoFilaTomada(s){
+  const id  = Number(s.ID || s.SOLICITUD_ID || 0);
+  const tipo = String(s.TIPO || s.TIPO_SOLICITUD || '').toUpperCase();
+  const esRet = tipo === 'RETIRO';
+  const acento = esRet ? '#fb923c' : '#22c55e';
+  const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
+  const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
+  const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
+  const monto   = Number(s.MONTO_REAL || s.MONTO_DECLARADO || 0);
+  // Quién la tiene: evita que dos operadores trabajen la misma.
+  const quien = String(s.OPERADOR || '').trim();
+  const yo = String((window.operador && (window.operador.usuario || window.operador.nombre)) || '').trim().toLowerCase();
+  const suya = quien && yo && quien.toLowerCase() === yo;
+  const lineaQuien = quien
+    ? '<div class="small" style="color:'+(suya?'#7cc4ff':'#fbbf24')+'">'+(suya ? 'La tomaste vos' : 'La tiene <b>'+escapeHtml(quien)+'</b>')+'</div>'
+    : '';
+  // Las fichas del jugador, si ya se leyeron (en un retiro es lo que decide cómo se paga).
+  let fichas = '';
+  if(esRet){
+    try{
+      const c = (window._retiroSaldoCheck || {})[String(s.USUARIO || '').toLowerCase()];
+      if(c && c.confiable !== false){
+        const alcanza = c.saldo + 0.5 >= Math.abs(monto);
+        fichas = '<div style="font-size:10.5px;font-weight:800;margin-top:2px;color:'+(alcanza?'#22c55e':'#ef4444')+'">fichas '+escapeHtml(String(c.raw || money(c.saldo)))+(alcanza?' ✓':' ⚠ no alcanza')+'</div>';
+      }
+    }catch(_e){}
+  }
+  const btn = function(txt, llamada, estilo, titulo){
+    return '<button class="mini-btn" style="font-size:11px;'+estilo+'"'+(titulo?' title="'+escapeHtml(titulo)+'"':'')
+      + ' onclick="cerrarModal();'+llamada.replace('#', id)+'">'+txt+'</button>';
+  };
+  const gris = 'background:transparent;color:#8b949e;border:1px solid #30363d';
+  return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid '+acento+';border-radius:10px;padding:10px 12px;margin-bottom:8px">'
+    + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
+    +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b> '
+    +     '<span style="font-size:10px;font-weight:900;border-radius:999px;padding:1px 8px;background:'+acento+'22;color:'+acento+';border:1px solid '+acento+'66">'+escapeHtml(tipo)+'</span>'
+    +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + lineaQuien + '</div>'
+    +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:'+acento+'">'+money(monto)+'</div>'+fichas+'</div>'
+    + '</div>'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap">'
+    +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
+    +   '<span style="display:flex;gap:6px;flex-wrap:wrap">'
+    +     btn('Soltar', 'v154pSoltarSolicitud(#)', gris, 'La devuelve a la lista de pendientes para que otro operador la tome')
+    +     btn('Ver', 'v154pDetalleSolicitud(#,true)', gris)
+    +     btn('Rechazar', 'v154pRechazarSolicitud(#)', 'background:transparent;color:#fca5a5;border:1px solid #7f1d1d')
+    +     (esRet ? btn('💸 Parcial', 'v154pRegistrarParcial(#)', 'background:#7c3aed;color:#fff;border:none') : '')
+    // Igual que en la lista de Inicio: Aprobar abre el cartel para cotejar. De una, sólo desde "Ver".
+    +     btn('✓ Aprobar', 'v154pCrearJobSolicitud(#)', 'background:#12b76a;color:#fff;border:none')
+    +   '</span>'
+    + '</div></div>';
+}
+
 window.verRetirosParciales = function(){
-  const arr = (window._parcialesEnProceso || []).slice();
-  if(!arr.length){ try{ toast('No hay retiros pagándose por partes.','blue'); }catch(_e){} return; }
-  const filas = arr.map(function(s){
-    const id  = Number(s.ID || s.SOLICITUD_ID || 0);
-    const pp  = window._retiroParcialInfo ? window._retiroParcialInfo(s) : {total:0,pagado:0,restante:0};
-    const pct = pp.total > 0 ? Math.min(100, Math.round(pp.pagado * 100 / pp.total)) : 0;
-    const usuario = escapeHtml(String(s.USUARIO || s.USUARIO_JUGADOR || ''));
-    const titular = escapeHtml(String(s.TITULAR || s.NOMBRE_COMPLETO || ''));
-    const fecha   = s.FECHA_CREACION || s.created_at || s.FECHA || '';
-    // Ya cobró todo pero la solicitud quedó abierta → se ofrece cerrarla, no pagar más.
-    // "saldadoPorAlguna": una de las dos fuentes del progreso dice que ya está pago.
-    const saldado = pp.restante <= 0.5 || pp.saldadoPorAlguna;
-    const acento  = saldado ? '#22c55e' : '#7c3aed';
-    return '<div style="background:#161b22;border:1px solid #30363d;border-left:3px solid '+acento+';border-radius:10px;padding:10px 12px;margin-bottom:8px">'
-      + '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;flex-wrap:wrap">'
-      +   '<div style="min-width:0"><b style="font-size:15px;color:#f0f6fc">'+usuario+'</b>'
-      +     (titular ? '<div class="small" style="color:#8b949e">'+titular+'</div>' : '') + '</div>'
-      +   '<div style="text-align:right"><div style="font-weight:900;font-size:15px;color:'+acento+'">'
-      +       (saldado ? '✔ saldado' : 'falta '+money(pp.restante))+'</div>'
-      +     '<div class="small" style="color:#8b949e">'+money(pp.pagado)+' de '+money(pp.total)+'</div></div>'
-      + '</div>'
-      + '<div style="height:6px;background:#0d1117;border-radius:999px;overflow:hidden;margin-top:8px">'
-      +   '<div style="height:100%;width:'+pct+'%;background:'+(saldado?'#22c55e':'linear-gradient(90deg,#7c3aed,#a78bfa)')+'"></div></div>'
-      // Las dos fuentes del progreso no coinciden → no se decide por una: se muestran las dos y el
-      // operador elige (cobró todo → Cerrar · falta → Pagar más).
-      + (pp.discrepa
-          ? ('<div style="margin-top:8px;padding:6px 9px;border-radius:8px;background:rgba(245,197,24,.10);border:1px solid rgba(245,197,24,.35);font-size:11.5px;color:#fde68a">'
-             + '⚠ El progreso no coincide: <b>'+money(pp.pagadoRpc)+'</b> según el contador de parciales'
-             + (pp.pagadoAlt>0.5 && Math.abs(pp.pagadoAlt-pp.pagadoRpc)>1 ? ', <b>'+money(pp.pagadoAlt)+'</b> según el retiro normal' : '')
-             + (pp.histCompleto && pp.pagadoHistorial>0.5 && Math.abs(pp.pagadoHistorial-pp.pagadoRpc)>1 ? ', <b>'+money(pp.pagadoHistorial)+'</b> sumando el historial' : '')
-             + '. '
-             + 'Fijate en el historial cuánto cobró y elegí.</div>')
-          : '')
-      + '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;gap:8px;flex-wrap:wrap">'
-      +   '<span class="small" style="color:#8b949e">#'+id+(fecha ? ' · '+escapeHtml(String(formatFecha(fecha))) : '')+'</span>'
-      +   '<span style="display:flex;gap:6px">'
-      // El "Cerrar" está SIEMPRE disponible: sin esa salida, un retiro con el progreso mal
-      // registrado quedaba trabado en la bandeja sin forma de sacarlo.
-      +     '<button class="mini-btn" style="background:'+(saldado?'#12b76a':'transparent')+';color:'+(saldado?'#fff':'#8b949e')+';border:'+(saldado?'none':'1px solid #30363d')+';font-size:11px" title="Marcar la solicitud como pagada (no mueve fichas ni plata)" onclick="cerrarRetiroSaldado('+id+')">✔ Cerrar'+(saldado?' · ya cobró todo':'')+'</button>'
-      +     (saldado ? '' : '<button class="mini-btn" style="background:#7c3aed;color:#fff;border:none;font-size:11px" onclick="cerrarModal();v154pRegistrarParcial('+id+')">💸 Pagar más</button>')
-      +   '</span>'
-      + '</div></div>';
-  }).join('');
-  const _sald = arr.filter(function(s){ const p=window._retiroParcialInfo?window._retiroParcialInfo(s):null; return p && p.restante<=0.5; }).length;
-  abrirModal('💸 Retiros pagándose por partes · '+arr.length
-    + (_sald ? ' <span style="font-size:12px;color:#22c55e">('+_sald+' ya saldado'+(_sald>1?'s':'')+')</span>' : ''), filas, null, '');
+  const parc = (window._parcialesEnProceso || []).slice();
+  const tom  = (window._tomadasEnProceso || []).slice();
+  if(!parc.length && !tom.length){ try{ toast('No hay nada en proceso.','blue'); }catch(_e){} return; }
+  // Los títulos de sección sólo aparecen si hay de las dos clases: con una sola, el título del
+  // cartel ya lo dice.
+  const mixta = parc.length && tom.length;
+  const sec = function(txt, n){
+    return '<div style="font-size:11px;font-weight:800;color:#8b949e;text-transform:uppercase;letter-spacing:.5px;margin:'+(mixta?'4px':'0')+' 2px 7px">'+txt+' · '+n+'</div>';
+  };
+  let cuerpo = '';
+  if(tom.length)  cuerpo += (mixta ? sec('Tomadas · esperando que las termines', tom.length) : '') + tom.map(_enProcesoFilaTomada).join('');
+  if(parc.length) cuerpo += (mixta ? sec('Pagándose por partes', parc.length) : '') + parc.map(_enProcesoFilaParcial).join('');
+  const _sald = parc.filter(function(s){ const p=window._retiroParcialInfo?window._retiroParcialInfo(s):null; return p && p.restante<=0.5; }).length;
+  const titulo = !parc.length ? '💸 Tomadas · '+tom.length
+               : !tom.length  ? '💸 Retiros pagándose por partes · '+parc.length
+               : '💸 En proceso · '+(tom.length+parc.length);
+  abrirModal(titulo
+    + (_sald ? ' <span style="font-size:12px;color:#22c55e">('+_sald+' ya saldado'+(_sald>1?'s':'')+')</span>' : ''), cuerpo, null, '');
 };
 // ── La historia de un retiro pagado en partes (D-90) ─────────────────────────────────────────
 // Pedido, ajuste con su motivo, cada pago y el cierre. Se pinta en cualquier
@@ -326,7 +408,9 @@ window.nodoRetiroHistoriaLlenar = async function(root){
     let prog = window._retiroHistoriaCache[sid];
     if(!prog || Date.now() - prog._ts > 30000){
       try{
+        const _retHealth = window.NodoSalud?.begin('RETIROS');
         const r = await supabaseClient.rpc('landing_retiro_progreso', { p_solicitud_id: Number(sid) });
+        _retHealth?.reply(r?.error);
         const row = Array.isArray(r.data) ? r.data[0] : r.data;
         if(r.error || !row || row.ok === false) continue;
         prog = Object.assign({ _ts: Date.now() }, row);

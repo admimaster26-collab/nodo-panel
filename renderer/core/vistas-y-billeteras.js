@@ -46,6 +46,10 @@ window.explicarDiferenciaFichas = function(){
 };
 
 function mostrarVista(vista){
+  if(vista==="ajustes"){
+    try{ window.nodoAbrirAjustes && window.nodoAbrirAjustes(); }catch(_e){}
+    return;
+  }
   if(vista==="chat" && window.matchMedia && window.matchMedia("(min-width:1101px)").matches){
     try{ window.nodoChatMin && nodoChatMin(false); }catch(_e){} // tocar Chat restaura el panel si estaba minimizado
     document.querySelectorAll(".nav-btn").forEach(x=>x.classList.remove("active"));
@@ -53,7 +57,7 @@ function mostrarVista(vista){
     cargarChats(true);
     return;
   }
-  ["Inicio","Solicitudes","Billeteras","Chat","Jugadores","Auto"].forEach(v=>{
+  ["Inicio","Solicitudes","Billeteras","Chat","Jugadores"].forEach(v=>{
     document.getElementById("view"+v)?.classList.add("hidden");
     document.getElementById("nav"+v)?.classList.remove("active");
   });
@@ -67,7 +71,11 @@ function mostrarVista(vista){
   if(vista==="billeteras")cargarBilleteras();
   if(vista==="chat")cargarChats();
   if(vista==="jugadores")cargarJugadores();
-  if(vista==="auto"){ verificarEstadoBackoffice(); try{ nodoCargarBackendAgentes(); }catch(_e){} }
+  if(vista==="ajustes"){
+    try{ window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos(); }catch(_e){}
+    try{ window.nodoCargarBackendAgentes && window.nodoCargarBackendAgentes(); }catch(_e){}
+    try{ window.verificarEstadoBackoffice && window.verificarEstadoBackoffice(); }catch(_e){}
+  }
   if(vista==="verificaciones")cargarVerificaciones();
   cerrarMenuMobile();
 }
@@ -146,6 +154,7 @@ async function cargarBilleteras(render=true){
   }
 
   // 1) RPC oficial. Puede devolver {rows:[...]} o string JSON, según cache/API.
+  const health = window.NodoSalud?.begin('BILLETERAS');
   const candidates = _candidateCodes();
   for(const code of candidates){
     if(rows.length) break;
@@ -214,7 +223,8 @@ async function cargarBilleteras(render=true){
     }
   }
 
-  if(!rows.length && errorFinal){ console.error('Error billeteras:', errorFinal); }
+  if(!rows.length && errorFinal){ health?.reply(errorFinal); health?.record('DATA','ERROR','BILLETERAS_LOAD_FAILED'); console.error('Error billeteras:', errorFinal); }
+  else { health?.reply(); health?.record('DATA','OK','BILLETERAS_LOAD_OK'); }
 
   const saldoByUid = window.__nodoChuniorWalletSaldoByUid || {};
   let nombreByUid = window.__nodoChuniorWalletNombreByUid || {};
@@ -323,15 +333,16 @@ function renderInicio(){
     ? window.V154P.solicitudes
     : solicitudes;
   const portalPendientes = fuentePortal.filter(function(s){ return esPendiente(s) && String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase()!=='SOPORTE'; });
-  const pendientes = portalPendientes;
+  // Sólo lo que nadie tomó: lo tomado vive en 💸 En proceso. Si el portal todavía no cargó, queda
+  // la cuenta de siempre (mejor un número de más que ninguno).
+  const pendientes = window.nodoSolicitudesSinTocar ? window.nodoSolicitudesSinTocar(portalPendientes) : portalPendientes;
   const retiros=pendientes.filter(s=>normalizar(s.TIPO_SOLICITUD||s.TIPO)==="RETIRO");
-  // "Sin leer": usar la cuenta ACTUAL del chat nuevo (tickets en espera). El viejo chats[].SIN_LEER
-  // era del sistema legacy y quedaba desfasado (mostraba un número viejo que no coincidía con la lista).
-  const unread=(typeof window.__wq2EnEspera==='number')?window.__wq2EnEspera:chats.reduce((a,c)=>a+Number(c.SIN_LEER||0),0);
+  // Mismo significado que el badge: mensajes pendientes, no chats en espera.
+  const unread=window.nodoChatUnreadSnapshot?.().total || 0;
   const bil=billeteras.find(b=>normalizar(b.SELECCIONADA_MANUAL)==="SI") || billeteras.find(b=>normalizar(b.ACTIVA)==="SI") || {};
   setBox("statPendientes",pendientes.length);
   setBox("statRetiros","Retiros: "+retiros.length);
-  setBox("statChats",unread);
+  window.nodoChatRefreshUnread?.();
   setBox("statBilletera",bil.NOMBRE_VISIBLE||bil.BILLETERA_NOMBRE||"-");
   setBox("statBilleteraTipo",bil.TIPO?(bil.TIPO+" · "+(bil.PC||pcOperativa)):"-");
   setBox("alertas",

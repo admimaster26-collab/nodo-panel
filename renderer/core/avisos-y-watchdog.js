@@ -3,520 +3,395 @@ function verificarSolicitudes(silencioso=false){
   const pendientes=solicitudes.filter(s=>esPendiente(s) && String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()!=="SOPORTE");
   const ids=new Set(pendientes.map(s=>String(s.ID||s.SOLICITUD_ID||"")).filter(Boolean));
   const badge=document.getElementById("badgeSolicitudes");
-  if(pendientes.length){badge.classList.remove("hidden");badge.innerText=pendientes.length}else badge.classList.add("hidden");
+  // El número del menú cuenta lo que nadie tomó, igual que la lista de Inicio. El aviso de "nueva
+  // solicitud" de abajo sigue usando todas las pendientes: una tomada que se suelta no es nueva.
+  const sinTocar=window.nodoSolicitudesSinTocar?window.nodoSolicitudesSinTocar(pendientes):pendientes;
+  if(sinTocar.length){badge.classList.remove("hidden");badge.innerText=sinTocar.length}else badge.classList.add("hidden");
   let nuevas=0;ids.forEach(id=>{if(!lastPendientesIds.has(id))nuevas++});
   if(!silencioso||lastPendientesIds.size===0){lastPendientesIds=ids;return}
   if(nuevas>0){toast(`🔔 ${nuevas} nueva/s solicitud/es`);sonido("solicitud")}
   lastPendientesIds=ids;
 }
 function verificarChats(silencioso=false){
-  const unread=chats.reduce((a,c)=>a+Number(c.SIN_LEER||0),0);
-  const badge=document.getElementById("badgeChat");
-  if(unread){badge.classList.remove("hidden");badge.innerText=unread}else badge.classList.add("hidden");
+  const unread=window.nodoChatUnreadSnapshot?.().total || 0;
+  window.nodoChatRefreshUnread?.();
   if(silencioso && unread>lastChatUnread){toast("💬 Nuevo mensaje de chat");sonido("chat")}
   lastChatUnread=unread;
 }
+// ── Sistema de Sonidos y Tonos de Notificación ─────────────────────────────────
+const _NODO_TONOS = {
+  // Campanilla suave: doble armónico suave y decreciente
+  chime: function(ctx, vol, tipo){
+    const baseFreq = tipo === "chat" ? 880 : 698.46;
+    [baseFreq, baseFreq * 1.5].forEach(function(freq, idx){
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + idx * 0.08);
+      gain.gain.setValueAtTime(0, ctx.currentTime + idx * 0.08);
+      gain.gain.linearRampToValueAtTime(vol * 0.45, ctx.currentTime + idx * 0.08 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + idx * 0.08 + 0.38);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + idx * 0.08);
+      osc.stop(ctx.currentTime + idx * 0.08 + 0.4);
+    });
+  },
+  // Ping corporativo: cristalino y seco
+  ping: function(ctx, vol, tipo){
+    const freq = tipo === "chat" ? 987.77 : 783.99;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(vol * 0.5, ctx.currentTime + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.28);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.3);
+  },
+  // Pálpito acústico: cálido, estilo madera
+  acoustic: function(ctx, vol, tipo){
+    const freq = tipo === "chat" ? 523.25 : 392.00;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(vol * 0.6, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.25);
+  },
+  // Pop seco: ultra discreto y minimalista
+  pop: function(ctx, vol, tipo){
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const freq = tipo === "chat" ? 480 : 380;
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(freq, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(120, ctx.currentTime + 0.07);
+    gain.gain.setValueAtTime(vol * 0.55, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.07);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.08);
+  },
+  // Doble tono corporativo: ding-dong oficina
+  twotone: function(ctx, vol, tipo){
+    const f1 = tipo === "chat" ? 784 : 659.25;
+    const f2 = tipo === "chat" ? 659.25 : 523.25;
+    [[f1, 0], [f2, 0.12]].forEach(function(pair){
+      const freq = pair[0], delay = pair[1];
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, ctx.currentTime + delay);
+      gain.gain.setValueAtTime(0, ctx.currentTime + delay);
+      gain.gain.linearRampToValueAtTime(vol * 0.45, ctx.currentTime + delay + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + delay + 0.25);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + delay);
+      osc.stop(ctx.currentTime + delay + 0.26);
+    });
+  },
+  // Burbuja moderna: gota sutil ascendente
+  bubble: function(ctx, vol, tipo){
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    const startF = tipo === "chat" ? 440 : 350;
+    const endF = tipo === "chat" ? 880 : 700;
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(startF, ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(endF, ctx.currentTime + 0.09);
+    gain.gain.setValueAtTime(0, ctx.currentTime);
+    gain.gain.linearRampToValueAtTime(vol * 0.5, ctx.currentTime + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.14);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(ctx.currentTime);
+    osc.stop(ctx.currentTime + 0.15);
+  },
+  // NODO clásico: el beep senoidal tradicional
+  nodo: function(ctx, vol, tipo){
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = tipo === "chat" ? 660 : 520;
+    gain.gain.value = vol * 0.25;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    setTimeout(function(){ try{ osc.stop(); }catch(_e){} }, 220);
+  }
+};
+
 function sonido(tipo="msg"){
   try{
-    const ctx=new(window.AudioContext||window.webkitAudioContext)();
-    const osc=ctx.createOscillator();
-    const gain=ctx.createGain();
-    osc.connect(gain);gain.connect(ctx.destination);
-    osc.type="sine";osc.frequency.value=tipo==="chat"?660:520;gain.gain.value=.08;
-    osc.start();setTimeout(()=>{osc.stop();ctx.close()},220);
-  }catch(e){}
-}
+    const tonoElegido = localStorage.getItem("nodo_notif_tone") || "chime";
+    if(tonoElegido === "mute") return;
 
-function abrirModal(title,body,saveFn,saveText="Guardar"){
-  setBox("modalTitle",title);setBox("modalBody",body);
-  const btn=document.getElementById("modalSaveBtn");
-  btn.innerText=saveText;
-  btn.disabled=false;
-  btn.style.opacity='';
-  // Sin texto (abrirModal(…, null, '')) el que llama no quiere botón: quedaba uno azul vacío.
-  btn.style.display = saveText ? '' : 'none';
-  // Siempre limpiar onclick antes de asignar el nuevo — evita contaminación entre modales
-  btn.onclick = saveFn || null;
-  // Restaurar el botón Cancelar al comportamiento por defecto
-  const cancelBtn=document.querySelector('#modalOverlay .btn-gray');
-  if(cancelBtn) cancelBtn.onclick=function(){ cerrarModal(); };
-  document.getElementById("modalOverlay").classList.remove("hidden");
-}
-function cerrarModal(){document.getElementById("modalOverlay").classList.add("hidden")}
+    const volNum = parseInt(localStorage.getItem("nodo_notif_volume") || "80", 10);
+    const vol = Math.max(0, Math.min(100, isNaN(volNum) ? 80 : volNum)) / 100;
+    if(vol <= 0) return;
 
-// ── Automatización (solo disponible en Electron) ──────────────────────────────
-const enElectron = !!window.ctrlElectron;
-
-if(enElectron){
-  document.getElementById("navAuto")?.classList.remove("hidden");
-  document.getElementById("agentBalanceCard")?.classList.remove("hidden");
-  // navVerificaciones ya no existe (apartado eliminado) — el ?. lo deja sin efecto igual.
-}
-
-// ── Saldo del agente (widget del sidebar) ─────────────────────────────────────
-async function refrescarSaldoAgente(){
-  if(!enElectron) return;
-  const el = document.getElementById("agentBalanceVal");
-  // Esto es un WIDGET: no puede meterse en el medio de una operación. La cola de Agentes serializa
-  // llamada por llamada, pero una carga son dos llamadas (buscar el usuario y después cargarle), y
-  // este refresco de cada 60 s se colaba justo en el medio. En BET300 leer las fichas obliga a irse
-  // a "tokens-report" y volver, así que la pantalla se movía abajo de la operación: el panel lo veía
-  // como "la página se recargó durante la operación", reintentaba, y al minuto volvía a pasar. Ese
-  // es el loop corto que siguen reportando las oficinas de BET300 (H-7).
-  const _conCandado = typeof _drexGlobalLock === 'function' && typeof _drexGlobalUnlock === 'function';
-  if(_conCandado && !_drexGlobalLock('saldo del agente')){
-    if(el && !el.textContent.trim()) el.textContent = "—";
-    return;                               // hay algo operando: se lee en el próximo minuto
-  }
-  if(el) el.textContent = "Cargando...";
-  try{
-    await window.ctrlElectron.openAgentWindow();
-    const r = await callDrex("obtenerSaldoAgente");
-    if(r && r.balance && r.balance.raw){ if(el) el.textContent = r.balance.raw.trim(); }
-    else if(r && r.needsLogin){ if(el) el.textContent = "🔐 Login"; }
-    else { if(el) el.textContent = "—"; }
-  }catch(e){
-    if(el) el.textContent = "⚠ Error";
-  }finally{
-    if(_conCandado) _drexGlobalUnlock();
-  }
-}
-if(enElectron){
-  // Refresca el saldo del agente cada 60 segundos
-  setInterval(refrescarSaldoAgente, 60000);
-  setTimeout(refrescarSaldoAgente, 4000); // 4s después del load inicial
-}
-
-// Rechequeo MANUAL de fichas (portado de NexoBetaChan): relee Drex + Chunior y compara AHORA.
-window.rechequearFichas = async function(){
-  if(typeof _watchdogPoll !== 'function') return;
-  if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy > 0){ try{ toast('Hay una operación en curso · se compara al terminar', 'yellow'); }catch(_e){} return; }
-  try{ toast('Releyendo fichas de Drex y Chunior...', 'blue'); }catch(_e){}
-  try{ await _watchdogPoll(); }catch(_e){}
-};
-// ── Watchdog de fichas: detecta diferencias entre Drex y Chunior ────────────
-// Cada 60s lee ambos saldos y los compara. En operaciones normales se mueven en
-// direcciones OPUESTAS con el mismo monto (carga: Drex -X, Chunior +X). Si no
-// se cumple, hay alguien moviendo plata fuera de NODO o una carga repetida.
-const _watchdog = {
-  drexFichas: null,      // último Saldo agente leído de Drex (= fichas del agente)
-  chuniorFichas: null,   // último "Saldo Fichas" leído de Chunior (mismo concepto)
-  lastCheck: null,
-  intervalId: null,
-  alertaActiva: false,
-  // Recovery
-  drexLoginInProgress: false,   // evita abrir el modal de login Drex más de una vez
-  chuniorFails: 0,              // contador de polls consecutivos sin Chunior
-  chuniorRecoveryScheduled: false,
-  // Lock: si una operación está usando la ventana de agentes, el watchdog
-  // NO debe hacer su poll (porque navega la página y rompe la operación).
-  busy: 0                        // contador (soporta operaciones anidadas)
-};
-
-// Helpers para que las operaciones se anuncien al watchdog
-// ── Relevo watchdog → revisión de fichas de retiros ──────────────────────────────────────────
-// Cuando el watchdog termina de leer, avisa acá: "ya terminé, empezá lo tuyo". Es un RELEVO, no
-// paralelismo — corre después del ciclo, nunca encimado. Y sólo si el agente está libre: si hay
-// otra solicitud en proceso, esto se saltea y espera al próximo ciclo (pasa cada pocos minutos,
-// no hay apuro). Objetivo: confirmar que las fichas del retiro salieron de verdad de Agentes.
-let _revFichasUltimo = 0;
-function _revisarFichasRetirosTrasWatchdog(){
-  if(Date.now() - _revFichasUltimo < 60000) return;          // como mucho una vez por minuto
-  if(_watchdog.busy > 0) return;                             // el agente sigue tomado
-  if(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes > 0)) return;
-  if(window._v154pParcialBusy) return;                       // hay un parcial en curso
-  if(window._cotejoDeclarando) return;
-  if(window._retiroV2) return;                               // hay un modal de retiro abierto
-  const sols = (window.V154P && V154P.solicitudes) || [];
-  const pend = sols.filter(function(s){
-    if(String(s.TIPO||s.TIPO_SOLICITUD||'').toUpperCase() !== 'RETIRO') return false;
-    return /EN_PROCESO|EN_REVISION|PROCESANDO|TOMAD/.test(String(s.ESTADO||'').toUpperCase());
-  });
-  if(!pend.length) return;                                   // no hay retiro que revisar
-  _revFichasUltimo = Date.now();
-  try{ window._revisarFichasRetiros && window._revisarFichasRetiros(pend); }catch(_e){}
-}
-window._revisarFichasRetirosTrasWatchdog = _revisarFichasRetirosTrasWatchdog;
-
-// Confirma contra Agentes que las fichas del retiro salieron de verdad. Es SOLO LECTURA: lee el
-// saldo del jugador y avisa. No aprueba, no anota, no toca plata — si algo no cuadra decide el
-// operador. Revisa de a UN retiro por ciclo para no acaparar el agente.
-window._revisarFichasRetiros = async function(pendientes){
-  if(!Array.isArray(pendientes) || !pendientes.length) return;
-  if(!window.ctrlElectron) return;
-  const s = pendientes[0];
-  const usuario = String(s.USUARIO||'').trim(); if(!usuario) return;
-  if(!_drexGlobalLock('rev-fichas-retiro')) return;   // alguien lo tomó entre medio → al próximo ciclo
-  _wdLock();
-  try{
-    const b = await callDrex('buscarUsuario', usuario, { skipBalance:false });
-    if(!b || !b.exists || typeof b.balance?.value !== 'number') return;
-    const saldo = b.balance.value;
-    const pp = window._retiroParcialInfo ? window._retiroParcialInfo(s) : null;
-    const falta = pp ? pp.restante : Number(s.MONTO_REAL||s.MONTO_DECLARADO||0);
-    // Lo único que importa acá: ¿le quedaron fichas como para cubrir lo que todavía se le debe?
-    // Si NO le alcanzan, el retiro no se puede terminar y el operador tiene que saberlo antes de
-    // sentarse a transferir.
-    if(falta > 0 && saldo + 0.5 < falta){
-      try{ toast('⚠ '+usuario+': quedan '+money(falta)+' por pagar pero tiene '+money(saldo)+' en fichas','yellow'); }catch(_e){}
-      console.warn('[rev-fichas] '+usuario+' · restan '+falta+' · fichas '+saldo);
-    } else {
-      console.log('[rev-fichas] '+usuario+' OK · restan '+falta+' · fichas '+saldo);
-    }
-    s.__fichasRevisadas = { saldo:saldo, ts:Date.now() };
-  }catch(e){ console.warn('[rev-fichas] falló:', e.message||e); }
-  finally{ _wdUnlock(); _drexGlobalUnlock(); }
-};
-
-function _wdLock(){   _watchdog.busy++; }
-function _wdUnlock(){ if(_watchdog.busy > 0) _watchdog.busy--; }
-// Reset duro a 0 — para los puntos de limpieza GARANTIZADA al final de una operación (o su
-// timeout de seguridad), sin depender de contar bien cuántos _wdLock() anidados quedaron
-// pendientes. Evita dejar el watchdog trabado para siempre por un desbalance de conteo.
-function _wdForceUnlock(){ _watchdog.busy = 0; }
-
-function _wdParseMontoAR(s){
-  const m = String(s||'').match(/\$\s*([\d.,]+)/);
-  if(!m) return null;
-  const n = parseFloat(m[1].replace(/\./g,'').replace(',','.'));
-  return isNaN(n) ? null : n;
-}
-
-// Lee el saldo de fichas del agente desde los DOS sistemas:
-//   - Drex: agentBalance (lo que la página de agentes dice que tiene el agente)
-//   - Chunior: "Saldo Fichas: $X" del header (lo que Chunior dice que tiene el agente)
-// Estos DOS valores representan LO MISMO desde dos sistemas → deben matchear siempre.
-// Las billeteras MP son cash, no fichas — no entran acá.
-async function _watchdogLeer(){
-  let drexFichas = null, chuniorFichas = null;
-  // Si el panel YA sabe que no hay sesión, la cola cancela la lectura de abajo sin tocar Agentes y
-  // r queda vacío: el poll caía en «Sin lectura de Drex» en vez de en la rama que abre el login, y
-  // como nada más lo detectaba, quedaba encerrado ahí para siempre. Se arranca sabiéndolo.
-  let drexNeedsLogin = !!window._drexSinSesion;
-  let chuniorReachable = false;
-  try {
-    // La lectura de fichas es PERIÓDICA: si la cola está ocupada, SALTEA esta vuelta en vez de
-    // encolarse (así no se apilan lecturas viejas que después se disparan todas juntas: era el
-    // "vuelve a lanzarse"). Y si corre, va POR LA COLA — antes iba directo y se metía en medio de
-    // una carga/retiro, navegando la ventana y volándole el modal a la operación en curso.
-    const _colaOcupada = !!(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes > 0));
-    if(window.ctrlElectron?.drexAutomation && !_colaOcupada){
-      const r = await _drexEncolar('obtenerSaldoAgente(watchdog)', function(){
-        return window.ctrlElectron.drexAutomation('obtenerSaldoAgente');
-      }, { silencioso:true });   // tarea de fondo: no molesta al operador con toasts
-      if(r){
-        if(r.needsLogin) drexNeedsLogin = true;
-        if(r.balance && typeof r.balance.value === 'number') drexFichas = r.balance.value;
-      }
-    } else if(_colaOcupada){
-      console.log('[watchdog] fichas: hay una operación en curso → se saltea esta vuelta');
-    }
-  } catch(_){}
-  try {
-    if(window.chunior){
-      const data = await window.chunior.exec(
-        '(function(){' +
-          // Buscar "Saldo Fichas: $X" (con o sin "Fichas"/"Ficha" y con ":" opcional)
-          'var bodyText = document.body.textContent || "";' +
-          'var fichas = null;' +
-          'var sm = bodyText.match(/Saldo\\s*Fichas?\\s*:?\\s*\\$\\s*([\\d.,]+)/i);' +
-          'if(sm){ var n = parseFloat(sm[1].replace(/\\./g,"").replace(",",".")); if(!isNaN(n)) fichas = n; }' +
-          'var ok = !!(document.querySelector(".breadcrumbs") || document.getElementById("id_username") || document.getElementById("id_pt"));' +
-          'return { fichas: fichas, reachable: ok };' +
-        '})()'
-      );
-      if(data){
-        chuniorReachable = !!data.reachable;
-        if(typeof data.fichas === 'number') chuniorFichas = data.fichas;
-      }
-    }
-  } catch(_){}
-  return { drexFichas, chuniorFichas, drexNeedsLogin, chuniorReachable };
-}
-
-function _wdActualizarUI(estado, texto){
-  const ind = document.getElementById("watchdogIndicator");
-  if(ind){
-    ind.className = estado || '';
-    ind.textContent = texto;
-  }
-  try{ renderFichasInicio(estado, texto); }catch(_e){}
-}
-
-// Banner para diferencia absoluta (Drex saldo agente != Chunior Saldo Fichas)
-function _wdMostrarBannerAbs(info){
-  _watchdog.alertaActiva = true;
-  _watchdog.drexFichas = info.drex;
-  _watchdog.chuniorFichas = info.chunior;
-  try{ renderFichasInicio('alerta','Diferencia detectada'); }catch(_e){}
-  let banner = document.getElementById("watchdogBanner");
-  if(!banner){
-    banner = document.createElement('div');
-    banner.id = "watchdogBanner";
-    document.body.appendChild(banner);
-  }
-  const drexTxt    = money(info.drex);
-  const chuniorTxt = money(info.chunior);
-  const diffTxt    = (info.diff >= 0 ? '+' : '−') + money(Math.abs(info.diff));
-  banner.innerHTML =
-    '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">' +
-      '<span style="font-size:18px">⚠️</span>' +
-      '<span><b>DIFERENCIA de fichas detectada</b><br>' +
-        '<span style="font-weight:400;font-size:12px">' +
-          'Drex: <b>'+drexTxt+'</b> · Chunior: <b>'+chuniorTxt+'</b> · Diferencia: <b>'+diffTxt+'</b> · '+
-          formatFecha(new Date().toISOString()) +
-        '</span>' +
-      '</span>' +
-    '</div>' +
-    '<button onclick="_wdDismissBanner()">Entendido</button>';
-  toast('⚠️ Drex '+drexTxt+' ≠ Chunior '+chuniorTxt+' (Δ '+diffTxt+')', 'red');
-}
-
-function _wdDismissBanner(){
-  const b = document.getElementById("watchdogBanner");
-  if(b) b.remove();
-  _watchdog.alertaActiva = false;
-}
-
-async function _watchdogPoll(){
-  // Si una operación NODO está usando la ventana de agentes, NO pollear
-  // (un obtenerSaldoAgente navega la página y rompe la operación en curso).
-  if(_watchdog.busy > 0){
-    _wdActualizarUI('', '⏸ Operación en curso · próximo check al terminar');
-    return;
-  }
-
-  const ahora = await _watchdogLeer();
-
-  // ── Recovery Drex: sesión cerrada → modal de login ──────────────────────
-  if(ahora.drexNeedsLogin){
-    // Todo por el mismo camino: deja el cartel fijo y vuelve a ofrecer el login con espacio entre
-    // pedidos. Antes esto abría el modal por su cuenta y, si el operador lo cerraba,
-    // drexLoginInProgress quedaba en true y no se lo pedía nunca más.
-    try{ if(window._drexMarcarSinSesion) window._drexMarcarSinSesion('watchdog'); }catch(_e){}
-    _wdActualizarUI('alerta', '🔐 Login de agentes requerido');
-    return;
-  }
-
-  // ── Recovery Chunior: 3 fallos consecutivos ─────────────────────────────
-  // ANTES: location.reload() del panel ENTERO a los 4s, sin mirar si había una
-  // operación en vuelo → podía matar una carga a mitad de camino, y era otra
-  // fuente de refresh automático. AHORA: se recarga SOLO la ventana de Chunior
-  // (chunior.reload la recrea si está cerrada). El reload total del panel queda
-  // como último recurso, únicamente si tras recargar Chunior sigue inalcanzable
-  // y NO hay operación en curso.
-  if(!ahora.chuniorReachable){
-    _watchdog.chuniorFails++;
-    _wdActualizarUI('alerta', '⚠ Chunior inalcanzable ('+_watchdog.chuniorFails+'/3)');
-    if(_watchdog.chuniorFails >= 3 && !_watchdog.chuniorRecoveryScheduled){
-      _watchdog.chuniorRecoveryScheduled = true;
-      toast("⚠️ Chunior no responde · recargando la ventana de Chunior...", "red");
-      Promise.resolve(window.chunior && window.chunior.reload()).then(function(){
-        _watchdog.chuniorFails = 0;            // darle una nueva ronda de 3 chequeos
-        _watchdog.chuniorRecoveryScheduled = false;
-      }).catch(function(){
-        // La ventana no se pudo recuperar → reinicio total, pero NUNCA con una
-        // operación en vuelo (esperamos a que el candado se libere).
-        (function reintentarReloadTotal(){
-          if(_watchdog.busy > 0){ setTimeout(reintentarReloadTotal, 3000); return; }
-          toast("⚠️ Chunior irrecuperable · Reiniciando NODO en 4s...", "red");
-          setTimeout(function(){ if(_watchdog.busy > 0){ reintentarReloadTotal(); return; } location.reload(); }, 4000);
-        })();
-      });
-    }
-    return;
-  }
-  _watchdog.chuniorFails = 0;
-  _watchdog.chuniorRecoveryScheduled = false;
-
-  // Si falta alguna lectura, mostrar estado pero no comparar
-  if(ahora.drexFichas === null || ahora.chuniorFichas === null){
-    const falta = ahora.drexFichas === null ? 'Drex' : 'Chunior "Saldo Fichas"';
-    _wdActualizarUI('', '⏸ Sin lectura de ' + falta);
-    return;
-  }
-
-  // ── Comparación ABSOLUTA: Drex saldo agente == Chunior Saldo Fichas ──
-  const diff = ahora.drexFichas - ahora.chuniorFichas;
-  const TOL  = 1; // $1 de tolerancia para redondeos
-  const matchOk = Math.abs(diff) <= TOL;
-
-  _watchdog.drexFichas    = ahora.drexFichas;
-  _watchdog.chuniorFichas = ahora.chuniorFichas;
-  _watchdog.lastCheck     = Date.now();
-  // El watchdog terminó su lectura y suelta el agente. Le pasa la posta a la revisión de fichas
-  // de los retiros: DESPUÉS de este, nunca encimado. El watchdog sólo lee, así que no hay riesgo
-  // de que dos cosas escriban plata — pero igual va en relevo, no en paralelo.
-  try{ _revisarFichasRetirosTrasWatchdog(); }catch(_e){}
-
-  const horaCheck = new Date().toLocaleTimeString('es-AR', { timeZone:'America/Argentina/Buenos_Aires', hour:'2-digit', minute:'2-digit' });
-  const fmt = function(v){ return money(v).replace('$ ','$'); };
-
-  if(matchOk){
-    if(_watchdog.alertaActiva){ _wdDismissBanner(); }
-    _wdActualizarUI('ok',
-      '✓ Fichas OK · Drex '+fmt(ahora.drexFichas)+' = Chunior '+fmt(ahora.chuniorFichas)+' · '+horaCheck
-    );
-    _watchdog.pendingReconfirm = false;
-    return;
-  }
-
-  // ── Diferencia detectada — puede ser TRANSITORIA ──
-  // Chunior tarda en propagar el "Saldo Fichas" del breadcrumb. Re-leemos en 4s.
-  // Si en la 2da lectura coinciden, era transitoria. Si siguen sin coincidir → alerta REAL.
-  if(!_watchdog.pendingReconfirm){
-    _watchdog.pendingReconfirm = true;
-    console.log('[watchdog] diferencia detectada · Drex='+ahora.drexFichas+' Chunior='+ahora.chuniorFichas+' diff='+diff+' · re-confirmando en 4s...');
-    _wdActualizarUI('', '⏳ Verificando fichas (puede ser transitorio)...');
-    setTimeout(async function(){
-      const recheck = await _watchdogLeer();
-      _watchdog.pendingReconfirm = false;
-      if(recheck.drexFichas === null || recheck.chuniorFichas === null){
-        _wdActualizarUI('', '⏸ Re-check abortado · sin lectura');
+    if(tonoElegido === "custom"){
+      const audioData = localStorage.getItem("nodo_custom_audio_data");
+      if(audioData){
+        const aud = new Audio(audioData);
+        aud.volume = vol;
+        aud.play().catch(function(){});
         return;
       }
-      const diffR    = recheck.drexFichas - recheck.chuniorFichas;
-      const horaR    = new Date().toLocaleTimeString('es-AR', { timeZone:'America/Argentina/Buenos_Aires', hour:'2-digit', minute:'2-digit' });
-      if(Math.abs(diffR) <= TOL){
-        // Era transitorio
-        console.log('[watchdog] diferencia transitoria resuelta · diff_final=' + diffR);
-        _watchdog.drexFichas    = recheck.drexFichas;
-        _watchdog.chuniorFichas = recheck.chuniorFichas;
-        _wdActualizarUI('ok',
-          '✓ Fichas OK · Drex '+fmt(recheck.drexFichas)+' = Chunior '+fmt(recheck.chuniorFichas)+' · '+horaR+' (re-confirmado)'
-        );
-      } else {
-        // Diferencia CONFIRMADA después del re-check
-        console.warn('[watchdog] DIFERENCIA CONFIRMADA tras re-check · diff=' + diffR);
-        _watchdog.drexFichas    = recheck.drexFichas;
-        _watchdog.chuniorFichas = recheck.chuniorFichas;
-        _wdActualizarUI('alerta',
-          '⚠ DIFERENCIA · Drex '+fmt(recheck.drexFichas)+' ≠ Chunior '+fmt(recheck.chuniorFichas)+' (Δ '+fmt(Math.abs(diffR))+')'
-        );
-        _wdMostrarBannerAbs({
-          drex: recheck.drexFichas,
-          chunior: recheck.chuniorFichas,
-          diff: diffR
-        });
-      }
-    }, 4000);
-  }
+    }
+
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const synth = _NODO_TONOS[tonoElegido] || _NODO_TONOS.chime;
+    synth(ctx, vol, tipo);
+    setTimeout(function(){ try{ ctx.close(); }catch(_e){} }, 700);
+  }catch(_e){}
 }
 
-function _watchdogIniciar(){
-  if(_watchdog.iniciado) return;
-  _watchdog.iniciado = true;
-  // Lectura inicial para tener baseline en la UI
-  setTimeout(_watchdogPoll, 8000);
-  // YA NO hay polling periódico — los saldos solo cambian con cargas/retiros,
-  // así que disparamos el check después de cada operación (ver _watchdogTrigger).
+const _TONO_OPCIONES = [
+  { id: 'chime', ico: '🔔', label: 'Campanilla suave', desc: 'Discreto · Doble armónico suave' },
+  { id: 'ping', ico: '✨', label: 'Ping corporativo', desc: 'Moderno · Cristalino y seco' },
+  { id: 'acoustic', ico: '🪵', label: 'Pálpito acústico', desc: 'Cálido · Tono grave madera' },
+  { id: 'pop', ico: '🔘', label: 'Pop seco', desc: 'Minimalista · Micro-pulsación' },
+  { id: 'twotone', ico: '🏢', label: 'Doble tono', desc: 'Oficina · Ding-dong ejecutivo' },
+  { id: 'bubble', ico: '💧', label: 'Burbuja moderna', desc: 'Gota ascendente agradable' },
+  { id: 'nodo', ico: '📻', label: 'NODO clásico', desc: 'Original · Beep senoidal' },
+  { id: 'mute', ico: '🔇', label: 'Silencio', desc: 'Sin sonido de notificación' }
+];
+
+window.nodoAbrirAjustes = function(){
+  try{
+    const ov = document.getElementById("modalAjustesOverlay");
+    if(ov) ov.classList.remove("hidden");
+    nodoSincronizarAjustesTonos();
+    try{ window.nodoCargarBackendAgentes && window.nodoCargarBackendAgentes(); }catch(_e){}
+    try{ window.verificarEstadoBackoffice && window.verificarEstadoBackoffice(); }catch(_e){}
+    try{ nodoPintarEstadoSistema(); }catch(_e){}
+  }catch(_e){}
+};
+
+// Lo que el semáforo le muestra a una persona: si anda y, si no, qué parte se cortó. Una línea y, para
+// el que quiera mirar, el detalle plegado. Nada de ramas, etapas ni códigos (Juan, 1/11). "Funciona"
+// sólo lo dice una prueba: que algo se haya usado sin errores es "sin fallas", no una garantía.
+function nodoPintarEstadoSistema(probando){
+  const box = document.getElementById("ajustesEstadoSistema");
+  if(!box || !window.NodoSalud) return;
+  const r = window.NodoSalud.resumen();
+  const abierto = !!box.querySelector("details")?.open;
+  r.partes.forEach(function(p){
+    const prueba = window.NodoPruebas?.vigente(p.nombre);
+    if(prueba){ p.estado = prueba.ok ? "probada" : "falla"; p.detalle = prueba.detalle || ""; }
+  });
+  const fallas = r.partes.filter(function(p){ return p.estado === "falla"; });
+  const probadas = r.partes.filter(function(p){ return p.estado === "probada"; });
+  const andan = r.partes.filter(function(p){ return p.estado === "anda"; });
+  const fila = function(p){
+    const color = p.estado === "falla" ? "#f87171" : p.estado === "probada" ? "#22c55e" : p.estado === "anda" ? "#94a3b8" : "#64748b";
+    const texto = p.estado === "falla" ? p.detalle : p.estado === "probada" ? "Funciona · recién probado" : p.estado === "anda" ? "Sin fallas" : "Sin actividad todavía";
+    return '<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0">'
+      + '<span style="color:#cbd5e1">' + escapeHtml(p.nombre) + '</span>'
+      + '<span style="color:' + color + '">' + escapeHtml(texto) + '</span></div>';
+  };
+  const titulo = fallas.length
+    ? '<div style="font-size:12px;font-weight:800;color:#f87171">Hay ' + fallas.length + (fallas.length === 1 ? ' parte con problemas' : ' partes con problemas') + '</div>'
+      + fallas.map(fila).join("")
+    : '<div style="font-size:12px;font-weight:800;color:' + (probadas.length ? '#22c55e' : '#94a3b8') + '">'
+      + (probadas.length ? 'Las pruebas dieron bien' : andan.length ? 'Sin fallas registradas' : 'Todavía no hay actividad para revisar') + '</div>';
+  box.innerHTML = titulo
+    + '<details style="margin-top:6px"' + (abierto ? ' open' : '') + '><summary class="small" style="cursor:pointer;color:#94a3b8">Ver detalle</summary>'
+    + '<div class="small" style="margin-top:6px">' + r.partes.map(fila).join("") + '</div></details>'
+    + '<button class="mini-btn blue" style="margin-top:10px;width:100%;padding:9px"' + (probando ? ' disabled' : '') + ' onclick="nodoProbarSistema()">'
+    + (probando ? 'Probando ' + escapeHtml(probando.toLowerCase()) + '…' : '▶ Probar ahora') + '</button>';
 }
 
-// Trigger debounced: se llama después de cada operación. Espera unos segundos
-// para que Chunior alcance a actualizar su "Saldo Fichas" y después compara.
-let _watchdogTriggerTimer = null;
-function _watchdogTrigger(delayMs){
-  if(_watchdog.busy > 0){
-    // Si hay otra operación en curso, postergamos
-    clearTimeout(_watchdogTriggerTimer);
-    _watchdogTriggerTimer = setTimeout(function(){ _watchdogTrigger(1500); }, 2000);
-    return;
-  }
-  clearTimeout(_watchdogTriggerTimer);
-  _watchdogTriggerTimer = setTimeout(_watchdogPoll, delayMs || 3000);
-}
+window.nodoProbarSistema = async function(){
+  if(!window.NodoPruebas || window.NodoPruebas.ocupado()) return;
+  await window.NodoPruebas.correr(function(parte){ try{ nodoPintarEstadoSistema(parte); }catch(_e){} });
+};
 
-if(enElectron){
-  // Arranca el watchdog 12s después del load (da tiempo a que la ventana de Chunior esté lista)
-  setTimeout(_watchdogIniciar, 12000);
-}
+window.nodoCerrarAjustes = function(){
+  try{
+    const ov = document.getElementById("modalAjustesOverlay");
+    if(ov) ov.classList.add("hidden");
+  }catch(_e){}
+};
 
-// ── Scroll snap con histéresis del Inicio ─────────────────────────────────────
-// Cuando el operador scrollea hacia abajo y CRUZARÍA la card de "Operación
-// manual", lo frena seco en esa altura. Para destrabar (subir y mostrar
-// billeteras/KPIs) hay que scrollear hacia ARRIBA dos veces seguidas. Bajar
-// más allá del snap requiere también dos scrolls (no se "escapa" con uno).
-(function initScrollSnap(){
-  const main = document.querySelector('.main');
-  if(!main) return;
+window.nodoSeleccionarTono = function(tonoId){
+  try{
+    localStorage.setItem("nodo_notif_tone", tonoId);
+    nodoSincronizarAjustesTonos();
+    sonido("solicitud");
+  }catch(_e){}
+};
 
-  const HYST  = 2;     // cantidad de scrolls "consumidos" antes de destrabar
-  const RESET = 600;   // ms sin scrollear para resetear contadores
+window.nodoPreviewTono = function(tonoId, ev){
+  if(ev && ev.stopPropagation) ev.stopPropagation();
+  try{
+    if(tonoId === "mute") return;
+    const volNum = parseInt(localStorage.getItem("nodo_notif_volume") || "80", 10);
+    const vol = Math.max(0, Math.min(100, isNaN(volNum) ? 80 : volNum)) / 100;
+    if(vol <= 0) return;
 
-  let snapY      = 0;
-  let snapped    = false;
-  let upAttempts = 0;
-  let dnAttempts = 0;
-  let resetTimer = null;
-
-  function recalcSnapY(){
-    const target = document.getElementById('cardOperacionManual');
-    if(!target) return;
-    const targetTop = target.offsetTop;
-    const mainPad   = 12;
-    snapY = Math.max(0, targetTop - mainPad);
-  }
-
-  function resetCounters(){ upAttempts = 0; dnAttempts = 0; }
-
-  recalcSnapY();
-  window.addEventListener('resize', recalcSnapY);
-  const mo = new MutationObserver(() => { recalcSnapY(); });
-  mo.observe(document.body, { childList: true, subtree: true, characterData: false });
-
-  main.addEventListener('wheel', function(e){
-    if(snapY <= 0) return;
-    const viewInicioVisible = !document.getElementById('viewInicio')?.classList.contains('hidden');
-    if(!viewInicioVisible){ snapped = false; return; }
-
-    const y           = main.scrollTop;
-    const goingDown   = e.deltaY > 0;
-    const futureY     = y + e.deltaY;
-    // Detectar CRUCE del snap point en cualquier dirección
-    const cruzaAbajo  = goingDown && y < snapY && futureY >= snapY;
-    const cruzaArriba = !goingDown && y > snapY && futureY <= snapY;
-
-    clearTimeout(resetTimer);
-    resetTimer = setTimeout(resetCounters, RESET);
-
-    if(!snapped){
-      // No enganchado todavía: si la rueda nos quiere meter del otro lado
-      // del snap point, lo agarramos en seco.
-      if(cruzaAbajo){
-        e.preventDefault();
-        main.scrollTop = snapY; // instantáneo, sin smooth
-        snapped = true;
-        upAttempts = 0;
-        dnAttempts = 0;
-      }
-      // (cruzaArriba viniendo de abajo sin estar snapped no debería pasar
-      //  porque al pasar por snap going down ya nos enganchamos, pero por
-      //  las dudas no hacemos nada y dejamos pasar)
-    } else {
-      // Enganchado: cualquier scroll requiere HYST repeticiones
-      if(!goingDown){
-        upAttempts++;
-        dnAttempts = 0;
-        if(upAttempts >= HYST){
-          snapped = false;
-          upAttempts = 0;
-        } else {
-          e.preventDefault();
-          main.scrollTop = snapY; // re-fijar por si el navegador ya movió algo
-        }
-      } else {
-        dnAttempts++;
-        upAttempts = 0;
-        if(dnAttempts >= HYST){
-          snapped = false;
-          dnAttempts = 0;
-        } else {
-          e.preventDefault();
-          main.scrollTop = snapY; // re-fijar
-        }
+    if(tonoId === "custom"){
+      const audioData = localStorage.getItem("nodo_custom_audio_data");
+      if(audioData){
+        const aud = new Audio(audioData);
+        aud.volume = vol;
+        aud.play().catch(function(){});
+        return;
       }
     }
-  }, { passive: false });
-})();
 
-// ── Acciones rápidas desde el chat ────────────────────────────────────────────
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const synth = _NODO_TONOS[tonoId] || _NODO_TONOS.chime;
+    synth(ctx, vol, "solicitud");
+    setTimeout(function(){ try{ ctx.close(); }catch(_e){} }, 700);
+  }catch(_e){}
+};
+
+window.nodoCambiarVolumen = function(val){
+  const v = parseInt(val, 10);
+  const txt = document.getElementById("txtVolumenTono");
+  if(txt) txt.textContent = v + "%";
+  try{ localStorage.setItem("nodo_notif_volume", String(v)); }catch(_e){}
+};
+
+// Validación estricta: extensión + MIME + Magic Bytes (evita cualquier archivo arbitrario)
+window.nodoCargarAudioArchivo = function(input){
+  const file = input && input.files && input.files[0];
+  if(!file) return;
+
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  if(!['mp3', 'wav', 'ogg'].includes(ext)){
+    alert("Archivo rechazado: solo se permiten audios en formato .mp3, .wav o .ogg.");
+    input.value = "";
+    return;
+  }
+  if(file.size > 2 * 1024 * 1024){
+    alert("Archivo rechazado: el audio supera el límite de 2 MB.");
+    input.value = "";
+    return;
+  }
+
+  // Verificación de cabecera binaria (magic bytes): evita archivos arbitrarios renombrados a .mp3/.wav
+  const slice = file.slice(0, 12);
+  const headReader = new FileReader();
+  headReader.onload = function(evt){
+    try{
+      const b = new Uint8Array(evt.target.result);
+      const isWav = b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46; // RIFF
+      const isMp3 = (b[0]===0x49 && b[1]===0x44 && b[2]===0x33) || (b[0]===0xFF && (b[1]&0xE0)===0xE0); // ID3 o sync frame
+      const isOgg = b[0]===0x4F && b[1]===0x67 && b[2]===0x67 && b[3]===0x53; // OggS
+      if(!isWav && !isMp3 && !isOgg){
+        alert("Archivo rechazado: el contenido no corresponde a un archivo de audio genuino.");
+        input.value = "";
+        return;
+      }
+
+      // Audio genuino confirmado
+      const reader = new FileReader();
+      reader.onload = function(e){
+        try{
+          const dataUrl = e.target.result;
+          localStorage.setItem("nodo_custom_audio_data", dataUrl);
+          localStorage.setItem("nodo_custom_audio_name", file.name);
+          localStorage.setItem("nodo_notif_tone", "custom");
+          window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos();
+          sonido("solicitud");
+          toast && toast("Tono propio cargado con éxito.","green");
+        }catch(_err){
+          alert("No se pudo guardar el archivo en memoria local.");
+        }
+      };
+      reader.readAsDataURL(file);
+    }catch(_err){
+      alert("Error al verificar la integridad del archivo.");
+    }
+  };
+  headReader.readAsArrayBuffer(slice);
+};
+
+window.nodoQuitarAudioCustom = function(){
+  try{
+    localStorage.removeItem("nodo_custom_audio_data");
+    localStorage.removeItem("nodo_custom_audio_name");
+    localStorage.setItem("nodo_notif_tone", "chime");
+    window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos();
+    toast && toast("Tono restablecido a Campanilla suave.","blue");
+  }catch(_e){}
+};
+
+window.nodoSincronizarAjustesTonos = function(){
+  try{
+    const listEl = document.getElementById("tonoPickerList");
+    if(listEl){
+      const current = localStorage.getItem("nodo_notif_tone") || "chime";
+      const customName = localStorage.getItem("nodo_custom_audio_name");
+      const customData = localStorage.getItem("nodo_custom_audio_data");
+
+      let items = _TONO_OPCIONES.slice();
+      if(customName && customData){
+        items.unshift({ id: 'custom', ico: '📁', label: customName, desc: 'Audio propio cargado' });
+      }
+
+      listEl.innerHTML = items.map(function(t){
+        const isSel = (t.id === current);
+        return '<div class="tono-row' + (isSel ? ' selected' : '') + '" onclick="nodoSeleccionarTono(\'' + t.id + '\')">'
+          + '<div class="tono-row-left">'
+          + '<span class="tono-row-ico">' + t.ico + '</span>'
+          + '<div class="tono-row-info">'
+          + '<span class="tono-row-title">' + escapeHtml(t.label) + '</span>'
+          + '<span class="tono-row-desc">' + escapeHtml(t.desc) + '</span>'
+          + '</div>'
+          + '</div>'
+          + '<div class="tono-row-right">'
+          + (t.id !== 'mute' ? '<button class="tono-play-btn" onclick="nodoPreviewTono(\'' + t.id + '\', event)" title="Escuchar">▶ Probar</button>' : '')
+          + '<div class="tono-check-badge">' + (isSel ? '✓' : '') + '</div>'
+          + '</div>'
+          + '</div>';
+      }).join('');
+    }
+
+    const vol = localStorage.getItem("nodo_notif_volume") || "80";
+    const slider = document.getElementById("sliderVolumenTono");
+    const txtVol = document.getElementById("txtVolumenTono");
+    if(slider) slider.value = vol;
+    if(txtVol) txtVol.textContent = vol + "%";
+
+    const customName = localStorage.getItem("nodo_custom_audio_name");
+    const txtName = document.getElementById("txtAudioPersonalizado");
+    const btnQuitar = document.getElementById("btnQuitarAudioCustom");
+    if(customName){
+      if(txtName) txtName.textContent = customName;
+      if(btnQuitar) btnQuitar.style.display = "inline-flex";
+    } else {
+      if(txtName) txtName.textContent = "Formatos .mp3, .wav, .ogg (máx 2 MB)";
+      if(btnQuitar) btnQuitar.style.display = "none";
+    }
+  }catch(_e){}
+};
+
+document.addEventListener("keydown", function(e){
+  if(e.key === "Escape"){
+    const ov = document.getElementById("modalAjustesOverlay");
+    if(ov && !ov.classList.contains("hidden")){
+      nodoCerrarAjustes();
+      e.stopPropagation();
+    }
+  }
+});
+
+document.addEventListener("DOMContentLoaded", function(){
+  setTimeout(function(){ try{ window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos(); }catch(_e){} }, 400);
+});
+if(document.readyState !== "loading") setTimeout(function(){ try{ window.nodoSincronizarAjustesTonos && window.nodoSincronizarAjustesTonos(); }catch(_e){} }, 400);

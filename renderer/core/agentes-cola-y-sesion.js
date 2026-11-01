@@ -192,6 +192,7 @@ async function callDrex(method, ...args){
     // el camino sin tocar cada operación. No se anotan los argumentos (en iniciarSesion viaja la
     // clave): sólo el método y dónde quedó la pantalla.
     const _cnT0 = Date.now();
+    const _wHealth = window.NodoSalud?.begin('WORKERS');
     try{ if(window._cnPaso) window._cnPaso(method, 'inicio'); }catch(_e){}
     // Solo buscarUsuario resuelve el alias inteligentemente.
     // crearUsuario / cambiarClave NO se tocan.
@@ -205,6 +206,7 @@ async function callDrex(method, ...args){
       _r = await window.ctrlElectron.drexAutomation(method, ...args);
     }
     }catch(_cnE){
+      _wHealth?.reply(_cnE);
       // El corte puede venir de main (timeout, recarga, ventana cerrada) o del preload. De quién
       // fue lo deduce la caja negra por la firma del mensaje: lo que no reconoce queda
       // 'desconocida' en vez de colgárselo a alguien.
@@ -217,6 +219,7 @@ async function callDrex(method, ...args){
       // estadoPagina e iniciarSesion devuelven needsLogin como parte NORMAL de su trabajo: eso no
       // es una falla (mismo criterio que _esChequeo, unas líneas más abajo).
       const _cnChequeo = (method==='estadoPagina' || method==='iniciarSesion');
+      _wHealth?.record('EFFECT', (_r && _r.ok === false && !_cnChequeo) ? 'ERROR' : 'OK', (_r && _r.ok === false && !_cnChequeo) ? 'WORKER_DREX_FAILED' : 'WORKER_DREX_OK');
       if(_r && _r.ok === false && !_cnChequeo){
         if(window._cnFalla) window._cnFalla(method, _r.message || 'devolvió ok:false', { ms:_cnMs, pantalla:_cnPant, capa:'preload' });
       } else if(window._cnPaso){

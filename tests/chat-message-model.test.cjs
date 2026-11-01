@@ -23,6 +23,18 @@ test('distingue autores actuales y antiguos sin convertir al usuario NODO en un 
   assert.equal(Message.role({ tipo_emisor:'SISTEMA', emisor:'NODO' }), 'SISTEMA');
 });
 
+test('reconoce el relleno que el sistema escribió como jugador, y nada más', () => {
+  for(const mensaje of ['Consulta desde portal', ' consulta desde portal ', 'Consulta desde portal V16',
+    '[Conversación iniciada por el operador juancarlos]', '[Conversación iniciada por el operador]'])
+    assert.equal(Message.isFiller({ origen:'USUARIO', mensaje }), true, mensaje);
+  for(const m of [
+    { origen:'USUARIO', mensaje:'Consulta desde portal por una carga' },
+    { origen:'USUARIO', mensaje:'tengo una consulta' },
+    { origen:'OPERADOR', mensaje:'Consulta desde portal' },
+    { origen:'USUARIO', mensaje:'Consulta desde portal', imagen_url:'https://sb.co/c.png' }
+  ]) assert.equal(Message.isFiller(m), false, JSON.stringify(m));
+});
+
 test('normalizar conserva fecha original, metadatos, id, tipo, auto, caso y edición', () => {
   const original = { id:12, origen:'OPERADOR', tipo:'OPERADOR', operador:'NODO', auto:true,
     auto_caso:'ESTADO_CARGA', fecha:'2026-10-11T09:45:00.000Z', mensaje:'En revisión', editado:true,

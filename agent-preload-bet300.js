@@ -725,6 +725,20 @@ async function buscarUsuario(usuario, options = {}) {
       await delay(180);
     }
 
+    if (!fila) {
+      // Si el autocompletado de Vuetify quedó abierto con sugerencias, clickear el alias sugerido
+      // para que la tabla se actualice y esperar antes de dar por buena la conclusión negativa.
+      try {
+        const sugerencias = visibleElements('.v-overlay .v-list-item, .v-autocomplete__content .v-list-item, [role="listbox"] [role="option"]');
+        const exacto = sugerencias.find(el => normAlias(el.textContent) === normAlias(wanted));
+        if (exacto) {
+          clickElement(exacto);
+          await delay(600);
+          fila = buscarFilaPorAlias(wanted);
+        }
+      } catch (_) {}
+    }
+
     if (fila) {
       _currentUser = aliasDeFila(fila);
       return { ok: true, exists: true, user: _currentUser, balance: saldoDeFila(fila), intentos: intento };

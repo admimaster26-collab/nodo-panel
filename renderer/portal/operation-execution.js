@@ -29,6 +29,7 @@ const api = {};
   }
 
   async function portalUpdateHistorial(id, patch){
+    deps.window.NodoSalud?.begin('PORTAL')?.record('EFFECT','OK','PORTAL_HIST_UPDATE');
     if(!id) return;
     try{ await deps.supabaseClient.from('historial_ops').update(patch).eq('id', id); }
     catch(e){ console.warn('portal historial update falló:', e); }

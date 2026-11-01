@@ -8,7 +8,10 @@
     "panel:check": "node scripts/build-panel.cjs --check",
     "panel:smoke": "node scripts/smoke-panel.cjs",
     "repro:loop": "set \"ELECTRON_RUN_AS_NODE=\" && electron scripts/repro-loop-login.cjs",
-    "test": "node --test tests/*.test.cjs",
+    "test": "node --require ./tests/helpers/offline-network.cjs --test tests/*.test.cjs",
+    "codigo": "node scripts/contexto-codigo.cjs",
+    "audit:desconexiones": "node scripts/auditar-desconexiones.cjs",
+    "beta:verify-sql": "node scripts/verify-beta-server.cjs",
     "prestart": "npm run panel:build",
     "predev": "npm run panel:build",
     "prebuild": "npm run panel:build",
@@ -26,7 +29,8 @@
   },
   "devDependencies": {
     "electron": "^32.3.3",
-    "electron-builder": "^25.1.0"
+    "electron-builder": "^25.1.0",
+    "typescript": "5.9.3"
   },
   "build": {
     "appId": "com.nodooperativo.app",

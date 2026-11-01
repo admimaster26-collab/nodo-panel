@@ -37,6 +37,12 @@ function armar(){
   const guardado = {};
   const ctx = {
     console, Date, String, Number, Math, JSON, Object, Array, isNaN,
+    // P1a movió el cálculo del corte al módulo compartido: `corteLeido` ahora delega en
+    // NodoChatMetrics.readCutoff. Sin esto el sandbox tira "NodoChatMetrics is not defined" y
+    // estas tres pruebas dejan de correr — justo las que vigilan que el aviso no repita mensajes
+    // viejos (Juan, 4/10). La regla no cambió: metrics.js conserva el corte por respuesta del
+    // operador; lo único que se movió es dónde vive.
+    NodoChatMetrics: require(path.join(__dirname, '..', 'renderer', 'chat', 'metrics.js')),
     localStorage: {
       getItem: (k) => (k in guardado ? guardado[k] : null),
       setItem: (k, v) => { guardado[k] = String(v); }

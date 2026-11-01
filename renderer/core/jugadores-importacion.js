@@ -279,7 +279,9 @@ function abrirEditarUsuario(u){
       clave:                val("eU_clave")||null,
       updated_at:           new Date().toISOString()
     };
+    const _idHealth = window.NodoSalud?.begin('IDENTIDAD');
     const {error} = await supabaseClient.from("usuarios").update(cambios).eq("id", u.id);
+    _idHealth?.reply(error);
     if(error){ alert(error.message||"Error"); return; }
     cerrarModal();
     toast("Usuario actualizado","green");

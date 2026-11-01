@@ -61,13 +61,19 @@ const api = {};
   }
 
   async function rpc(fn, params){
+    const health = deps.window.NodoSalud?.begin('PORTAL');
     try{
       if(deps.window.panelAPI?.rpc){
-        return await deps.window.panelAPI.rpc(fn, params || {});
+        const res = await deps.window.panelAPI.rpc(fn, params || {});
+        health?.reply(res?.error);
+        if(!res?.error) health?.record('DATA', 'OK', 'PORTAL_RPC_OK');
+        return res;
       }
     }catch(e){
-      return {data:null,error:{message:e.message || String(e)}};
+      health?.reply(e);
+      return {data:null,error:{message:e.message || String(e),code:e.code}};
     }
+    health?.reply({message:"panelAPI.rpc no disponible"});
     return {data:null,error:{message:"panelAPI.rpc no disponible"}};
   }
 
@@ -79,9 +85,12 @@ const api = {};
   function mapSolicitudPortal(s){
     const meta = s.metadata || {};
     const id = s.id || s.ID || s.solicitud_id || "";
+    const compUrl = meta.comprobante_url || meta.imagen_url || s.comprobante_url || s.imagen_url || s.COMPROBANTE_URL || s.IMAGEN_URL || "";
     return {
       ID: id,
       SOLICITUD_ID: id,
+      COMPROBANTE_URL: compUrl,
+      IMAGEN_URL: compUrl,
       FECHA_CREACION: s.created_at || s.FECHA_CREACION || s.fecha,
       FECHA: s.created_at || s.FECHA || s.fecha,
       TIPO_SOLICITUD: String(s.tipo || s.TIPO || "").toUpperCase(),
