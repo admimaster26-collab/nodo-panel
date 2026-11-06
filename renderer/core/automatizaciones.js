@@ -6,13 +6,11 @@
 // un operador, cada vez que se acredita una carga. Eso queda anotado en D-92, sin tocar.
 // El aviso va a la conversación que el jugador ve en el portal. notificarUsuarioEnChat (abajo)
 // escribe en chat_sesiones / chat_mensajes, la generación de chat que el portal ya no lee.
-//   crearSiNoHay:true  → si no tiene conversación abierta, se le abre una. Para lo que PIDIÓ por el
-//                        chat (la clave): el portal le promete "te avisamos por este mismo chat".
-//   crearSiNoHay:false → sólo si ya tiene conversación. Para los avisos que salen solos (un pago de
-//                        retiro), así no se llena la bandeja con un hilo nuevo por cada pago; para
-//                        ese caso el jugador igual recibe la notificación del celular.
+// Si no tiene conversación abierta se le abre una, también para los avisos automáticos. Antes se
+// frenaba para no llenar la bandeja y el aviso se perdía. Juan, 2/11: "no veo necesario trabar
+// una característica"; la bandeja ya tiene chats sin contestar que nadie cierra.
 async function avisarJugadorEnChat(usuario, texto, opts){
-  const crear = !!(opts && opts.crearSiNoHay);
+  const crear = true;
   try{
     if(crear && typeof window.nodoIniciarChat === 'function'){
       const r = await window.nodoIniciarChat(usuario, texto);
@@ -48,6 +46,7 @@ window._avisarClaveAlJugador = _avisarClaveAlJugador;
 // escribía antes. No se abre conversación nueva: eso llenaría la bandeja con un hilo por cada
 // aviso automático, que es lo que D-92 vino evitando. Para los avisos que el operador manda a
 // propósito está avisarJugadorEnChat(..., {crearSiNoHay:true}).
+// Desde el 2/11 también se abre conversación cuando no hay: ver avisarJugadorEnChat.
 //
 // _sinPortal lo usa avisarJugadorEnChat, que ya probó el portal antes de caer acá: sin esto se
 // intentaría dos veces.
@@ -56,7 +55,7 @@ async function notificarUsuarioEnChat(usuarioNombre, mensaje, _sinPortal){
 
   if(!_sinPortal && typeof window.nodoEnviarMensajePortal === 'function'){
     try{
-      const r = await window.nodoEnviarMensajePortal(usuarioNombre, mensaje, false);
+      const r = await (window.nodoIniciarChat || window.nodoEnviarMensajePortal)(usuarioNombre, mensaje, false);
       if(r && r.ok) return r;
       if(!(r && r.error === 'sin-ticket')) console.warn('[aviso] el hilo del portal fallo:', r && r.error);
     }catch(e){ console.warn('[aviso] el hilo del portal fallo:', e); }
@@ -552,6 +551,27 @@ async function ejecutarAutoRetiro(id){
   if(!usuario){ alert("La solicitud no tiene usuario asociado."); return; }
   if(!monto)  { alert("La solicitud no tiene monto válido."); return; }
 
+  // Las solicitudes nuevas se reconocen por la marca escrita por el RPC beta. Esta ruta de
+  // automatización también debe pasar la solicitud completa al mismo control que el pago manual.
+  let _retiroMeta = {};
+  try{
+    const _rawMeta = s.METADATA !== undefined ? s.METADATA : s.metadata;
+    _retiroMeta = typeof _rawMeta === 'string' ? JSON.parse(_rawMeta || '{}') : (_rawMeta || {});
+  }catch(_e){ _retiroMeta = {}; }
+  const _retiroInstrumento = _retiroMeta.retiro_instrumento_v1
+    && _retiroMeta.retiro_instrumento_v1.instrumento_id;
+  if(_retiroInstrumento){
+    if(typeof window.nodoRetiroCuentaValidada !== "function"){
+      try{ window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_VALIDADOR_NO_CARGADO'); }catch(_e){}
+      toast('No se cargó la validación de cuenta de este retiro. No se movió saldo.','red');
+      return;
+    }
+    const _cuenta = await window.nodoRetiroCuentaValidada(id, {
+      usuario, monto, destino:s.DESTINO || s.CBU || '', titular:s.TITULAR || s.titular || '', solicitud:s
+    });
+    if(!_cuenta || !_cuenta.seguir) return;
+  }
+
   // Política de 24hs — advertencia, el operador decide
   const check = await verificarRetiro24h(usuario);
   if(check.bloqueado){
@@ -619,6 +639,15 @@ async function ejecutarAutoRetiro(id){
   const r = await callDrex("retirarSaldo", monto);
   _autoHealth?.record('EFFECT', (r && r.ok === false) ? 'ERROR' : 'OK', (r && r.ok === false) ? 'AUTO_RETIRO_FAILED' : 'AUTO_RETIRO_OK');
 
+  // Una respuesta ambigua de Agentes no confirma el resultado. No cerrar ni permitir un segundo
+  // descuento beta hasta cotejar el historial.
+  if(_retiroInstrumento && (!r || (r.ok !== true && r.ok !== false))){
+    try{ window.NodoSalud?.begin('RETIROS')?.record('EFFECT','ERROR','RETIRO_PAGO_RESULTADO_AMBIGUO'); }catch(_e){}
+    toast('Agentes no confirmó el resultado del retiro. No lo vuelvas a pagar; cotejá el historial.','red');
+    await refrescarTodo(false);
+    return;
+  }
+
   if(r && r.ok === false){
     await actualizarSolicitudSupabase(id, {
       estado: "RECHAZADA",
@@ -631,6 +660,18 @@ async function ejecutarAutoRetiro(id){
     return;
   }
 
+  let _selloAuto = null;
+  if(_retiroInstrumento){
+    if(typeof window.nodoSellarRetiroAprobado === 'function'){
+      try{ _selloAuto = await window.nodoSellarRetiroAprobado(id,{solicitud:s,usuario,monto}); }
+      catch(_e){ _selloAuto = {ok:false}; }
+    }
+    if(!_selloAuto || !_selloAuto.ok){
+      try{ window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
+      toast('El retiro ya se ejecutó, pero no se guardó la hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red');
+    }
+  }
+
   await actualizarSolicitudSupabase(id, {
     estado: "PAGADA",
     operador_usuario: operador.usuario || operador.nombre || ""
@@ -639,8 +680,12 @@ async function ejecutarAutoRetiro(id){
   const bilRetiro = getBilleraLanding();
   if(bilRetiro) await ajustarSaldoBilletera(bilRetiro.ID_BILLETERA, -monto);
 
-  await notificarUsuarioEnChat(usuario,
-    `✅ Tu retiro de $${monto.toLocaleString("es-AR")} fue procesado. Lo transferimos a tu CBU/CVU.`);
+  const _hora = _selloAuto && _selloAuto.ok ? _selloAuto.horaExacta
+    : (_retiroInstrumento ? '' : (typeof window.nodoHoraExacta === "function" ? window.nodoHoraExacta(new Date()) : new Date().toLocaleTimeString("es-AR")));
+  const _mensajePago = _retiroInstrumento && !_hora
+    ? `Tu retiro de $${monto.toLocaleString("es-AR")} fue procesado. Estamos revisando el registro del horario; no vuelvas a enviar el retiro. Si tenés dudas, escribinos por este chat.`
+    : `✅ Tu retiro de $${monto.toLocaleString("es-AR")} fue procesado a las ${_hora} hs. Lo transferimos a tu CBU/CVU.`;
+  await notificarUsuarioEnChat(usuario,_mensajePago);
 
   toast(`Retiro automático completado · ${usuario} · ${monto.toLocaleString("es-AR")}`, "green");
   {

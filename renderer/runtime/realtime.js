@@ -71,14 +71,16 @@
       if(stopped || intervals.length) return;
       intervals.push(timers.setInterval(() => reads.request('requests'), 60000));
       intervals.push(timers.setInterval(() => reads.request('wallets'), 20000));
+      // La conversación abierta y la lista de chats las pedía también el puente del portal, con su
+      // propio reloj (5 s y 15 s): cada cosa se bajaba dos veces. Ahora este es el único reloj y
+      // toma esos tiempos, que eran los que de verdad traían datos (Juan, 6/11).
       intervals.push(timers.setInterval(() => {
         if(hasOpenChat()) reads.request('conversation');
-      }, 3500));
+      }, 5000));
       // La lista de chats era la única sin reloj propio: se repintaba sólo cuando llegaba un aviso
       // por el canal `nodo:chat`. Si ese aviso no salía, la bandeja de consultas quedaba con el
       // orden y los contadores de hacía rato aunque los datos ya estuvieran en memoria (Juan, 2/10).
-      // Repintar es barato: sale de lo que ya se trajo, no pide nada al servidor.
-      intervals.push(timers.setInterval(() => reads.request('chats'), 20000));
+      intervals.push(timers.setInterval(() => reads.request('chats'), 15000));
 
       // Una solicitud tardaba hasta 60 s en aparecer, y aparecía de golpe. Bajar ese reloj a 10 s
       // costaría ~700 MB por turno en la oficina más cargada —más de lo que acabamos de sacar—

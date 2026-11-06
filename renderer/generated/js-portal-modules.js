@@ -157,9 +157,10 @@ const api = {};
   // ══════════════════════════════════════════════════════════════════════════
   // ALERTAS DE RETIRO · SOLO INFORMAN, NO BLOQUEAN
   // Dos datos que el operador no tenía forma de ver al aprobar un retiro:
-  //   1. BONO SIN LIBERAR — el usuario cobró bono de primer ingreso hace poco. El bono
-  //      no es retirable hasta jugarlo 2x, pero para la plataforma son fichas comunes.
-  //      Clave: en el 67% de los casos el retiro lo paga OTRO turno, que no sabe del bono.
+  //   1. RETIRA LA CARGA Y EL BONO — cobró bono de primer ingreso y ahora saca lo que cargó
+  //      más el bono, sin ganar nada encima: no lo jugó. Si saca más que carga + bono, jugó
+  //      y ganó, y avisar es ruido (Juan, 4/11). Para la plataforma el bono son fichas comunes
+  //      y en el 67% de los casos el retiro lo paga OTRO turno, que no sabe del bono.
   //   2. CBU REPETIDO — ese CBU ya lo usaron otras cuentas (multicuenta). El CBU es el
   //      único dato que no se puede falsear: la plata tiene que caer en una cuenta real.
   // NINGUNA deshabilita botones ni corta el flujo. El operador ve el aviso y decide.
@@ -215,24 +216,26 @@ const api = {};
       const exp = !!opts.expandido;
       const chips = [];
 
-      // ── 1 · Bono sin liberar ──────────────────────────────────────────
+      // ── 1 · Retira la carga y el bono ─────────────────────────────────
+      // cargado_real y retirado_previo cuentan desde la carga que recibió el bono.
+      // Si lo que se lleva por encima de lo que cargó es justo el bono, no jugó: sacó lo mismo
+      // que puso más el bono. Si es más, ganó jugando; menos, perdió jugando o no toca el bono.
+      // En la semana al 4/11 fue 1 de 41 retiros de jugadores con bono; "parte del bono" daba
+      // también a quien cargó 218.000 y retiró 220.000, que jugó todo.
       const bono = Number(a.bono_monto||0);
       const hs   = Number(a.bono_horas||0);
-      if(bono > 0 && hs <= _ALERTA_BONO_HS){
-        const cargado  = Number(a.cargado_real||0);
-        const retirado = Number(a.retirado_previo||0);
-        const pedido   = Math.abs(Number(opts.monto||0));
-        const deMas    = (retirado + pedido) - cargado;
-        const cuando   = hs < 24 ? (hs.toFixed(1)+' h') : (Math.round(hs/24)+' d');
-        let txt = '🎁 <b>BONO SIN LIBERAR</b> · '+deps.esc(deps.money(bono))+' hace '+cuando;
+      const cargado  = Number(a.cargado_real||0);
+      const retirado = Number(a.retirado_previo||0);
+      const pedido   = Math.abs(Number(opts.monto||0));
+      const deMas    = (retirado + pedido) - cargado;
+      if(bono > 0 && hs <= _ALERTA_BONO_HS && pedido > 0 && Math.abs(deMas - bono) < 1){
+        const cuando = hs < 24 ? (hs.toFixed(1)+' h') : (Math.round(hs/24)+' d');
+        let txt = '🎁 <b>RETIRA LA CARGA Y EL BONO</b>'
+                + ' · cargó '+deps.esc(deps.money(cargado))+' + bono '+deps.esc(deps.money(bono));
         if(exp){
-          txt += '<div style="margin-top:4px;font-weight:600">Cargó '+deps.esc(deps.money(cargado))
-               + ' · ya retiró '+deps.esc(deps.money(retirado))
-               + (pedido ? (' · pide '+deps.esc(deps.money(pedido))) : '')
-               + (deMas > 0 ? ('<br><b style="color:#fbbf24">Con este retiro se lleva '+deps.esc(deps.money(deMas))+' por encima de lo que cargó</b>') : '')
-               + '<br><span style="opacity:.8">El bono debe jugarse 2× antes de retirarse — verificá antes de aprobar.</span></div>';
-        } else if(deMas > 0){
-          txt += ' · se lleva <b>'+deps.esc(deps.money(deMas))+'</b> de más';
+          txt += '<div style="margin-top:4px;font-weight:600">Bono de hace '+cuando
+               + (retirado > 0 ? (' · ya retiró '+deps.esc(deps.money(retirado))) : '')
+               + ' · pide '+deps.esc(deps.money(pedido))+'</div>';
         }
         chips.push({ txt: txt, color: '#fbbf24', bg: 'rgba(251,191,36,.12)', bd: 'rgba(251,191,36,.4)' });
       }
@@ -267,6 +270,293 @@ const api = {};
     return { globals: api, cargarAlertasRetiro };
   }
   return Object.freeze({ create, dependencies });
+});
+/* Validación ciega de cuenta de retiro para solicitudes marcadas por el servidor. */
+(function(root, define){
+  const api = define();
+  if(typeof module === 'object' && module.exports){ module.exports = api; return; }
+  const deps = {
+    get document(){ return root.document; },
+    get window(){ return root; }
+  };
+  try{ Object.assign(root, api.create(deps).globals); }catch(_e){}
+})(typeof globalThis !== 'undefined' ? globalThis : this, function(){
+  'use strict';
+  const OVERLAY_ID = 'nodoCuentaCobroOverlay';
+  const RPC_SLOW_MS = 3000;
+
+  function parsed(value){
+    if(typeof value === 'string'){ try{ return JSON.parse(value); }catch(_e){ return {}; } }
+    return value && typeof value === 'object' ? value : {};
+  }
+  function localTime(value){
+    const date = value instanceof Date ? value : new Date(value || Date.now());
+    try{
+      return date.toLocaleTimeString('es-AR', {
+        timeZone:'America/Argentina/Buenos_Aires',
+        hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false
+      });
+    }catch(_e){
+      return [date.getHours(),date.getMinutes(),date.getSeconds()]
+        .map(function(n){ return String(n).padStart(2,'0'); }).join(':');
+    }
+  }
+  function centralDni(value){
+    const digits = String(value || '').replace(/\D/g,'');
+    if(digits.length === 8) return digits;
+    if(digits.length === 11) return digits.slice(2,10);
+    return digits;
+  }
+
+  function create(deps){
+    const globals = {};
+    const root = deps.window || globalThis;
+    const now = typeof deps.now === 'function' ? deps.now : function(){ return Date.now(); };
+    const esc = function(value){
+      return String(value == null ? '' : value).replace(/[&<>"']/g,function(c){
+        return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+      });
+    };
+    const health = function(){ try{ return root.NodoSalud?.begin('RETIROS'); }catch(_e){ return null; } };
+    const record = function(h,stage,state,code,durationMs){ try{ h?.record(stage,state,code,durationMs); }catch(_e){} };
+
+    const operator = function(){
+      const o = deps.operador || root.operador || {};
+      return String(o.usuario || o.nombre || 'panel').slice(0,100);
+    };
+
+    const getSecret = function(){
+      return deps.secret || root.PANEL_DATA_SECRET || (root.session && root.session.secret) || '';
+    };
+
+    const rpc = async function(name, params){
+      const client = deps.supabaseClient || root.supabaseClient || deps.window?.supabaseClient;
+      if(client && typeof client.rpc === 'function'){
+        try{ return await client.rpc(name, params); }
+        catch(err){ return { error: { code: err?.code || 'NETWORK', message: String(err?.message || err) } }; }
+      }
+      if(root.panelAPI && typeof root.panelAPI.rpc === 'function'){
+        try{ return await root.panelAPI.rpc(name, params); }
+        catch(err){ return { error: { code: err?.code || 'NETWORK', message: String(err?.message || err) } }; }
+      }
+      return { error: { code: 'CLIENT_UNAVAILABLE', message: 'No RPC client available' } };
+    };
+
+    const toast = function(message, type){
+      try{
+        if(typeof deps.toast === 'function') deps.toast(message, type || 'red');
+        else if(typeof root.toast === 'function') root.toast(message, type || 'red');
+      }catch(_e){}
+    };
+
+    function closeOverlay(){
+      try{
+        const overlay = deps.document?.getElementById(OVERLAY_ID);
+        if(overlay) overlay.remove();
+      }catch(_e){}
+    }
+
+    function openOverlay(html){
+      closeOverlay();
+      const overlay = deps.document.createElement('div');
+      overlay.id = OVERLAY_ID;
+      overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(5,8,12,.78);display:flex;align-items:center;justify-content:center;padding:18px';
+      overlay.innerHTML = '<section role="dialog" aria-modal="true" aria-labelledby="nodoCuentaTitulo" style="width:min(500px,100%);box-sizing:border-box;background:#111821;border:1px solid #2b3442;border-radius:14px;padding:18px;color:#e6edf3;box-shadow:0 20px 60px rgba(0,0,0,.5);font:14px/1.5 system-ui">' + html + '</section>';
+      deps.document.body.appendChild(overlay);
+      return overlay;
+    }
+
+    function validationOverlay(dest, tit, info){
+      return '<h2 id="nodoCuentaTitulo" style="font-size:17px;margin:0 0 6px">Verificación de cuenta · una sola vez</h2>'
+        + '<p>En la pantalla de transferencia de Mercado Pago / banco, confirmá el CUIT/CUIL del titular. El DNI declarado por el jugador permanece oculto.</p>'
+        + '<div style="background:#161b22;border:1px solid #30363d;border-radius:9px;padding:10px;margin:12px 0">'
+        + '<div>Solicitud <b>#' + esc(info.id || '') + '</b> · Jugador <b>' + esc(info.usuario || '') + '</b></div>'
+        + '<div>Cuenta: <b style="font-family:monospace">' + esc(dest || 'sin dato') + '</b></div>'
+        + '<div>Titular declarado: <b>' + esc(tit || 'sin dato') + '</b></div>'
+        + '</div>'
+        + '<label for="nodoCuentaDni" style="display:block;margin-bottom:4px">CUIT/CUIL del titular según Mercado Pago</label>'
+        + '<input id="nodoCuentaDni" inputmode="numeric" autocomplete="off" placeholder="8 dígitos o CUIT/CUIL del titular" style="width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #3b4654;background:#0b0f14;color:#fff;font-size:15px">'
+        + '<div id="nodoCuentaMsg" role="status" aria-live="polite" style="min-height:22px;margin:8px 0;font-size:13px"></div>'
+        + '<div style="display:flex;gap:8px;margin-top:8px">'
+        + '<button id="nodoCuentaValidar" type="button" style="flex:1;border:0;border-radius:8px;padding:10px;background:#16803c;color:#fff;font-weight:800;cursor:pointer">Validar y seguir</button>'
+        + '<button id="nodoCuentaCancelar" type="button" style="border:1px solid #3b4654;border-radius:8px;padding:10px;background:transparent;color:#e6edf3;cursor:pointer">Ahora no</button>'
+        + '</div>'
+        + '<div style="margin-top:12px;text-align:center">'
+        + '<button id="nodoCuentaRechazar" type="button" style="background:transparent;border:0;color:#ffaaaa;font-size:12px;cursor:pointer;text-decoration:underline">Rechazar: el titular en Mercado Pago es otra persona</button>'
+        + '</div>';
+    }
+
+    async function ejecutarRechazo(solicitudId, usuario, motivo, etapa, mensajeChat){
+      const actualizar = deps.actualizarSolicitudPortal || deps.window?.actualizarSolicitudPortal || root.actualizarSolicitudPortal;
+      if(typeof actualizar === 'function'){
+        try{
+          await actualizar(solicitudId, 'RECHAZADA', { motivo_rechazo: motivo, etapa: etapa });
+        }catch(_e){}
+      }
+      const avisar = deps.avisarJugadorEnChat || deps.window?.avisarJugadorEnChat || root.avisarJugadorEnChat;
+      if(typeof avisar === 'function' && usuario){
+        try{
+          await avisar(usuario, mensajeChat);
+        }catch(_e){}
+      }
+    }
+
+    globals.nodoRetiroCuentaValidada = async function(solicitudId, info){
+      info = Object.assign({}, info || {}, { id: solicitudId });
+      if(!solicitudId) return { seguir: true, estado: 'SIN_DECLARAR' };
+
+      const h = health();
+      const started = now();
+      const secret = getSecret();
+      const res = await rpc('panel_retiro_instrumento', { p_secret: secret, p_solicitud_id: Number(solicitudId) });
+      const durationMs = Math.max(0, now() - started);
+
+      if(res && res.error){
+        const code = res.error.code;
+        if(code === 'PGRST202'){
+          // La base todavía no tiene la función (oficina en versión anterior): no frena
+          return { seguir: true, estado: 'LEGACY' };
+        }
+        record(h, 'DATA', 'ERROR', 'CUENTA_COBRO_NO_LEIDA', durationMs);
+        const confirmFn = deps.window?.confirm || root.confirm || (() => true);
+        const continuar = confirmFn('No se pudo comprobar la cuenta de cobro en el servidor.\n\n¿Continuar con el retiro igual?');
+        if(!continuar) return { seguir: false, estado: 'ERROR' };
+        return { seguir: true, estado: 'FORZADO' };
+      }
+
+      const data = (res && res.data) || {};
+      const estado = data.estado || 'SIN_DECLARAR';
+      if(estado === 'VALIDADO' || estado === 'SIN_DECLARAR'){
+        record(h, 'EFFECT', 'OK', 'RETIRO_ESTADO_' + estado, durationMs);
+        return { seguir: true, estado: estado };
+      }
+
+      const destino = data.destino || info.destino || '';
+      const titular = data.titular || info.titular || '';
+
+      return await new Promise(function(resolve){
+        openOverlay(validationOverlay(destino, titular, info));
+        record(h, 'RENDER', 'OK', 'RETIRO_VALIDACION_MODAL_VISIBLE', 0);
+
+        const $ = function(id){ return deps.document.getElementById(id); };
+        let busy = false, finished = false;
+
+        const done = function(result){
+          if(finished) return;
+          finished = true;
+          closeOverlay();
+          resolve(result);
+        };
+
+        const message = function(text, color){
+          const el = $('nodoCuentaMsg');
+          if(el){ el.textContent = text; el.style.color = color || '#e6edf3'; }
+        };
+
+        const input = $('nodoCuentaDni');
+        try{ input?.focus(); }catch(_e){}
+
+        const btnCancelar = $('nodoCuentaCancelar');
+        if(btnCancelar){
+          btnCancelar.onclick = function(){
+            if(!busy) done({ seguir: false, estado: 'PENDIENTE' });
+          };
+        }
+
+        const btnValidar = $('nodoCuentaValidar');
+        if(btnValidar){
+          btnValidar.onclick = async function(){
+            if(busy) return;
+            const rawDni = String(input ? input.value : '').trim();
+            const cleanDni = rawDni.replace(/\D/g, '');
+            if(!cleanDni){
+              message('Ingresá el DNI o CUIT/CUIL del titular.', '#fbbf24');
+              return;
+            }
+            busy = true;
+            this.disabled = true;
+            message('Comprobando con el servidor…', '#aab4c0');
+
+            const vRes = await rpc('panel_retiro_instrumento_validar', {
+              p_secret: secret,
+              p_solicitud_id: Number(solicitudId),
+              p_dni_banco: cleanDni,
+              p_operador: operator()
+            });
+
+            busy = false;
+            this.disabled = false;
+
+            if(vRes && vRes.error){
+              message('Error al validar con el servidor. Podés reintentar.', '#ff8b8b');
+              return;
+            }
+
+            const vData = (vRes && vRes.data) || {};
+            if(vData.ok === true && vData.estado === 'VALIDADO'){
+              toast('Cuenta de cobro validada. El retiro puede continuar.', 'green');
+              done({ seguir: true, estado: 'VALIDADO' });
+              return;
+            }
+
+            if(vData.motivo === 'NO_COINCIDE'){
+              message('No coincide con el titular (' + (vData.intentos_restantes || 1) + ' intento restante).', '#ff8b8b');
+              try{ input?.select(); }catch(_e){}
+              return;
+            }
+
+            if(vData.motivo === 'RECHAZADO'){
+              toast('DNI no coincide. Solicitud rechazada sin descontar fichas.', 'yellow');
+              await ejecutarRechazo(
+                solicitudId,
+                info.usuario,
+                'DNI_NO_COINCIDE',
+                'RETIRO_DNI_NO_COINCIDE',
+                'Tu retiro fue rechazado porque el DNI no coincide con el titular de la cuenta. No se descontó nada de tu saldo. Corregí tus datos de cobro desde el Portal.'
+              );
+              done({ seguir: false, estado: 'RECHAZADO', cerrar: true });
+              return;
+            }
+
+            message('Respuesta no reconocida del servidor.', '#ff8b8b');
+          };
+        }
+
+        const btnRechazar = $('nodoCuentaRechazar');
+        if(btnRechazar){
+          btnRechazar.onclick = async function(){
+            if(busy) return;
+            busy = true;
+            this.disabled = true;
+
+            const rRes = await rpc('panel_retiro_instrumento_rechazar', {
+              p_secret: secret,
+              p_solicitud_id: Number(solicitudId),
+              p_operador: operator()
+            });
+
+            busy = false;
+            this.disabled = false;
+
+            await ejecutarRechazo(
+              solicitudId,
+              info.usuario,
+              'TITULAR_DISTINTO',
+              'RETIRO_DNI_NO_COINCIDE',
+              'Tu retiro fue rechazado porque el titular de la cuenta en el banco no coincide. No se descontó nada de tu saldo.'
+            );
+            toast('Solicitud rechazada. No se descontaron fichas.', 'yellow');
+            done({ seguir: false, estado: 'RECHAZADO', cerrar: true });
+          };
+        }
+      });
+    };
+
+    globals.nodoHoraExacta = localTime;
+    return { globals: globals, centralDni: centralDni, horaExacta: localTime };
+  }
+
+  return Object.freeze({ create: create, localTime: localTime, horaExacta: localTime, centralDni: centralDni });
 });
 /* Portal: requests-view. Factories are inert until create(deps); legacy handlers are returned in globals. */
 (function(root, define){
@@ -325,6 +615,9 @@ const api = {};
     const parciales = _rep.parciales, tomadas = _rep.tomadas, pendientes = _rep.pendientes;
     deps.window._parcialesEnProceso = parciales;
     deps.window._tomadasEnProceso = tomadas;
+    // El número que ve el operador. Discord muestra ESTE, no uno contado aparte (Juan, 2/11).
+    // Va con la lista de la que salió, para no usarlo si la lista cambió y todavía no se redibujó.
+    deps.window._nodoPendientesPantalla = { n: pendientes.length, lista: deps.V154P.solicitudes, largo: all.length };
     const _enProceso = parciales.length + tomadas.length;
     try{
       const bp = deps.document.getElementById("btnParcialesEnProceso");
@@ -836,6 +1129,7 @@ async function cargarSolicitudesPortal(silencioso=false){
       try{
         if(deps.window.jugadorRegistrarDato && Array.isArray(deps.V154P.solicitudes)){
           deps.window.__jugHarvested = deps.window.__jugHarvested || new Set();
+          const _tandaJug = [];
           deps.V154P.solicitudes.forEach(function(s){
             const sid = String(s.ID||s.SOLICITUD_ID||''); if(!sid || deps.window.__jugHarvested.has(sid)) return;
             // Una consulta de SOPORTE —y sobre todo un alta nueva ("soy nuevo, apodo X, tel Y")— es lo
@@ -855,8 +1149,11 @@ async function cargarSolicitudesPortal(silencioso=false){
               cbu: esRet ? String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||(meta&&(meta.cbu||meta.destino))||'').trim() : '',
               fecha: s.FECHA_CREACION || s.FECHA || undefined
             };
-            if(dato.telefono || dato.titular || dato.cbu) deps.window.jugadorRegistrarDato(u, dato);
+            if(dato.telefono || dato.titular || dato.cbu) _tandaJug.push([u, dato]);
           });
+          // Una sola lectura y escritura del almacén para toda la tanda (ver jugadorRegistrarDatos).
+          if(deps.window.jugadorRegistrarDatos) deps.window.jugadorRegistrarDatos(_tandaJug);
+          else _tandaJug.forEach(function(par){ deps.window.jugadorRegistrarDato(par[0], par[1]); });
         }
       }catch(_e){}
       // Actualizamos stats generales, pero la caja de inicio queda en manos del render portal.
@@ -1005,9 +1302,8 @@ const api = {};
         // Iba a notificarUsuarioEnChat, que escribe en la generación de chat que el portal ya no
         // lee: el mensaje moría ahí. Además se llamaba con cuatro argumentos a una función de dos,
         // así que el id y 'RECHAZADA' nunca se usaron — señal de que nadie lo había revisado.
-        // crearSiNoHay en FALSE a propósito: esto es automático y abrir un hilo por cada rechazo
-        // llenaría la bandeja (D-92). Si ya tiene conversación, le llega ahí y con push; si no, el
-        // motivo igual lo ve en la pantalla de Estado del portal, que es donde lo va a buscar.
+        // Si no tiene conversación se le abre una (Juan, 2/11): antes se frenaba por D-92 y el
+        // motivo del rechazo no le llegaba.
         try{ await deps.window.avisarJugadorEnChat(s.USUARIO, '❌ '+r.texto, { crearSiNoHay:false }); }catch(_e){}
         // Detalle completo: por qué se rechazó, qué había declarado y qué se le respondió. Sin esto
         // el historial dice "RECHAZADA" y nadie puede reconstruir el caso cuando el cliente vuelve.
@@ -1457,6 +1753,7 @@ api.abrirModalRetiroV2 = function(id, opts){
   const objetivo = (meta.monto_restante!=null) ? Math.max(0, Number(meta.monto_restante)||0) : declarado;
   deps.withdrawalState.current = {
     id:id, usuario:String(s.USUARIO||''), titular:String(s.TITULAR||s.NOMBRE_COMPLETO||''),
+    solicitud:s, metadata:meta,
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
     declarado:declarado, objetivo:objetivo, yaPagado:Number(meta.monto_pagado||0)||0,
     _metaTotal:(meta.monto_total!=null?Number(meta.monto_total):null), // total real de un parcial previo
@@ -2020,8 +2317,14 @@ function _rv2Render(){
   function create(deps){
 const api = {};
 async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, restante, montoTotal, saldoPost, desde){
-  deps.window.NodoSalud?.begin('RETIROS')?.record('EFFECT','OK','RETIRO_PARCIAL_NOTIFY');
-  if(!deps.window.panelAPI || !deps.window.panelAPI.rpc || !solicitudId) return { ok:false, detail:'sin panelAPI/id' };
+  // El semáforo marcaba OK antes de llamar a la base: un parcial sin registrar se veía en verde.
+  const _salud = deps.window.NodoSalud?.begin('RETIROS');
+  const _marca = function(estado, codigo, duracion){ try{ _salud?.record('EFFECT', estado, codigo, duracion); }catch(_e){} };
+  const _dato = function(estado,codigo,duracion){
+    const lento=estado==='OK'&&duracion>3000;
+    try{ _salud?.record('DATA',lento?'DEGRADED':estado,lento?'RETIRO_RPC_LENTO':codigo,duracion); }catch(_e){}
+  };
+  if(!deps.window.panelAPI || !deps.window.panelAPI.rpc || !solicitudId){ _marca('ERROR','RETIRO_PARCIAL_SIN_CLIENTE',0); return { ok:false, detail:'sin panelAPI/id' }; }
   const op = (deps.window.operador && (deps.window.operador.usuario||deps.window.operador.nombre)) || 'panel';
   const sid = Number(solicitudId);
   const formas = [
@@ -2043,27 +2346,48 @@ async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, 
   // La firma real va siempre primero. Un error de transporte puede llegar después
   // de confirmar el pago en la base: jamás se prueba otra firma en ese caso.
   for(const f of formas){
-    let r;
+    let r;const _inicio=Date.now();
     try{
       r = await deps.window.panelAPI.rpc('landing_retiro_registrar_parcial', f.p);
     }catch(e){
       const detail = String(e.message || e);
       console.warn('[retiro-parcial-portal] resultado incierto; no se reintenta:', detail);
+      const duracion=Math.max(0,Date.now()-_inicio);
+      try{ _salud?.reply(e,duracion); }catch(_e){}
+      _marca('DEGRADED','RETIRO_PARCIAL_INCIERTO',duracion);
       return { ok:false, uncertain:true, detail };
     }
-    if(!r) return { ok:false, uncertain:true, detail:'sin respuesta al registrar el parcial' };
+    const _duracion=Math.max(0,Date.now()-_inicio);
+    if(!r){
+      try{ _salud?.reply({code:'NETWORK'},_duracion); }catch(_e){}
+      _marca('DEGRADED','RETIRO_PARCIAL_INCIERTO',_duracion);
+      return { ok:false, uncertain:true, detail:'sin respuesta al registrar el parcial' };
+    }
+    try{ _salud?.reply(r.error||null,_duracion); }catch(_e){}
     if(!r.error){
+      let _datoRpc=Array.isArray(r.data)?r.data[0]:r.data;
+      if(typeof _datoRpc==='string'){try{_datoRpc=JSON.parse(_datoRpc);}catch(_e){_datoRpc=null;}}
+      const _pagadoRpc=Number(_datoRpc&&_datoRpc.pagado);
+      if(!_datoRpc||typeof _datoRpc!=='object'||_datoRpc.ok!==true||!Number.isFinite(_pagadoRpc)
+          ||_pagadoRpc<Number(pagadoAcum)-0.5){
+        _dato('DEGRADED','RETIRO_PARCIAL_RESPUESTA_INVALIDA',_duracion);
+        _marca('DEGRADED','RETIRO_PARCIAL_INCIERTO',_duracion);
+        return { ok:false, uncertain:true, detail:'el servidor no confirmó el acumulado del retiro' };
+      }
       // Guardar una preferencia local no forma parte de la transacción. Si falla,
       // el pago sigue confirmado y no debe enviarse otra vez.
       try{ deps.localStorage.setItem('nodo_rpc_parcial_shape', f.k); }catch(_e){}
       // Se devuelve lo que contestó la base: con eso el que llama comprueba que el pago ENTRÓ.
+      _dato('OK','RETIRO_PARCIAL_RESPUESTA_CONFIRMADA',_duracion);
+      _marca('OK','RETIRO_PARCIAL_CONFIRMADO',_duracion);
       return { ok:true, detail:'forma '+f.k, data:(r && r.data) || null };
     }
     const msg = String(r.error.message||'');
     const esFirma = /PGRST202|Could not find the function|function .* does not exist/i.test(
       String(r.error.code||'')+' '+msg+' '+String(r.error.details||''));
-    if(!esFirma) return { ok:false, detail:msg };
+    if(!esFirma){ _marca('ERROR','RETIRO_PARCIAL_RECHAZADO',_duracion); return { ok:false, detail:msg }; }
   }
+  _marca('ERROR','RETIRO_PARCIAL_SIN_FIRMA',0);
   return { ok:false, detail:'ninguna firma coincidió — mirá el hint en consola y avisá para ajustarla' };
 }
 api.notificarRetiroParcialPortal = notificarRetiroParcialPortal;
@@ -2150,6 +2474,34 @@ api._rv2Aprobar = async function(){
   const confirmarCada = !!(deps.document.getElementById('rv2ConfCada') && deps.document.getElementById('rv2ConfCada').checked);
   // Un pago a la vez: el modal queda abierto mientras se busca al usuario y un segundo clic pagaba dos veces.
   if(st._pagando) return;
+
+  // Sólo la solicitud beta marcada por el servidor usa el nuevo control. Las solicitudes
+  // antiguas/manuales siguen su recorrido; una beta sin consumidor no llega a retirar fichas.
+  let _retiroInstrumento = null;
+  try{
+    const _meta = st.metadata || (st.solicitud && (st.solicitud.METADATA || st.solicitud.metadata)) || {};
+    _retiroInstrumento = typeof _meta === 'string' ? JSON.parse(_meta).retiro_instrumento_v1 : _meta.retiro_instrumento_v1;
+  }catch(_e){ _retiroInstrumento = null; }
+  if(st.id && _retiroInstrumento && _retiroInstrumento.instrumento_id){
+    if(typeof deps.window.nodoRetiroCuentaValidada !== 'function'){
+      try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_VALIDADOR_NO_CARGADO'); }catch(_e){}
+      deps.toast('No se cargó la validación de cuenta de este retiro. No se movió saldo.','red');
+      return;
+    }
+    st._pagando = true;
+    let _cuenta = null;
+    try{
+      _cuenta = await deps.window.nodoRetiroCuentaValidada(st.id, {
+        usuario:st.usuario, monto:total, destino:st.destino || st.cbu, titular:st.titular,
+        solicitud:st.solicitud || {metadata:st.metadata}
+      });
+    }finally{ st._pagando = false; }
+    if(!_cuenta || !_cuenta.seguir){
+      if(_cuenta && _cuenta.cerrar){ try{ deps.cerrarRetiroV2(); }catch(_e){} }
+      return;
+    }
+    if(deps.withdrawalState.current !== st) return;
+  }
 
   // 1) ANTES de cerrar el modal: candado, sesión y búsqueda. Si algo de esto falla no se movió
   //    plata y el modal queda como estaba para reintentar. Antes se cerraba primero, y cualquier
@@ -2438,13 +2790,19 @@ const _rv2FinalizarInterno = async function(stCapturado){
   // los demás quedan en las notas (la columna guarda uno solo).
   const _chuMovs = (st.chuMovs||[]).filter(Boolean);
   const _notaChu = _chuMovs.length>1 ? (' · Chunior: '+_chuMovs.join(' + ')) : '';
+  const _notaHistorial = 'Retiro'+(completo?'':' PARCIAL')+' · pagado '+deps.money(total)+' desde: '+listaBil+(completo?'':(' · restan '+deps.money(restante)))
+    +(String(st.titular||'').trim()?(' · Titular: '+String(st.titular).trim()):'')
+    +(String(st.destino||st.cbu||'').trim()?(' · Alias: '+String(st.destino||st.cbu).trim()):'')
+    +(st.obs?(' · Obs: '+st.obs):'')+_notaChu;
   let filaHist = null;
   try{
     filaHist = await deps.registrarEnHistorial({
       usuario:st.usuario, tipo:'RETIRO', monto:total,
       billetera_id: st.pagar[0]?st.pagar[0].id:null, billetera_nombre: listaBil,
       origen:'LANDING', estado:'OK',
-      notas:'Retiro'+(completo?'':' PARCIAL')+' · pagado '+deps.money(total)+' desde: '+listaBil+(completo?'':(' · restan '+deps.money(restante)))+(st.obs?(' · Obs: '+st.obs):'')+_notaChu,
+      // Titular y Alias, como en portalNotasBase: sin ellos el parcial quedaba en el historial con
+      // "👤 —" y su destino no llegaba a la ficha del jugador (detector de datos, 6/11).
+      notas:_notaHistorial,
       // saldo_pre: las fichas que tenía ANTES de retirar (st.saldoReal, leído al abrir el modal).
       // Sin esto la columna "Saldo pre" del historial salía vacía en todos los parciales.
       saldo_pre: (st.saldoReal!=null ? st.saldoReal : null),
@@ -2498,7 +2856,7 @@ const _rv2FinalizarInterno = async function(stCapturado){
     .filter(function(v, i, a){ return v && a.indexOf(v) === i; }).join(' + ');
   if(!completo || _hayProgreso){
     try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal, st.saldoPost, _desde); }
-    catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
+    catch(e){ _rp = { ok:false, uncertain:true, detail:(e&&e.message)||String(e) }; }
     // ¿El progreso AVANZÓ de verdad? La base devuelve cuánto quedó pagado. Si contesta bien pero el
     // acumulado no se movió, el pago no entró y el retiro queda colgado en la caja pidiendo un monto
     // que ya se pagó (D-100). Se trata como fallo para que entre el respaldo de abajo.
@@ -2519,19 +2877,52 @@ const _rv2FinalizarInterno = async function(stCapturado){
   const _motivoAjuste = _ajustado
     ? (String(st.motivoAjuste||'').trim() || ('Pediste '+deps.money(_decOrig)+' y el retiro quedó en '+deps.money(montoTotal)+'.'))
     : '';
+  // Hora exacta, con segundos (Juan: "en el aprobado agregá el horario de aprobación, creeme,
+  // importa"). Ante un "me transferiste hace media hora" es la constancia.
+  const _ahora = new Date();
+  let _metaInstrumento = st.metadata || (st.solicitud && (st.solicitud.METADATA || st.solicitud.metadata)) || {};
+  try{ if(typeof _metaInstrumento==='string') _metaInstrumento=JSON.parse(_metaInstrumento); }catch(_e){ _metaInstrumento={}; }
+  const _esRetiroInstrumento = !!(_metaInstrumento.retiro_instrumento_v1 && _metaInstrumento.retiro_instrumento_v1.instrumento_id);
+  let _selloRetiro = null;
+  // El sello final se escribe cuando ya se completaron las transferencias. Si el movimiento ya
+  // ocurrió y el RPC falla, se conserva el cierre para no duplicar dinero y se deja la auditoría
+  // remota marcada como pendiente.
+  if(completo && _esRetiroInstrumento){
+    if(typeof deps.window.nodoSellarRetiroAprobado === 'function'){
+      try{
+        _selloRetiro = await deps.window.nodoSellarRetiroAprobado(st.id,{
+          solicitud:st.solicitud || {metadata:_metaInstrumento},usuario:st.usuario,monto:pagadoAcum
+        });
+      }catch(_e){ _selloRetiro={ok:false}; }
+    }else _selloRetiro={ok:false};
+    if(!_selloRetiro || !_selloRetiro.ok){
+      try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
+      try{ deps.toast('El retiro ya se transfirió, pero faltó guardar la hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red'); }catch(_e){}
+    }
+  }
+  const _hora = _selloRetiro && _selloRetiro.ok
+    ? _selloRetiro.horaExacta
+    : (typeof deps.window.nodoHoraExacta === 'function' ? deps.window.nodoHoraExacta(_ahora) : _ahora.toLocaleTimeString('es-AR'));
+  const _horaAt = _selloRetiro && _selloRetiro.ok && _selloRetiro.aprobadoAt ? _selloRetiro.aprobadoAt : _ahora.toISOString();
   try{
     const _extra = {
+      aprobado_at: _horaAt, aprobado_hora: _hora,
       etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
       parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
       operador:(deps.window.operador&&(deps.window.operador.usuario||deps.window.operador.nombre))||'panel'
     };
+    if(completo && _esRetiroInstrumento){
+      _extra.retiro_aprobado_hora_exacta = _hora;
+      _extra.retiro_aprobado_servidor = !!(_selloRetiro && _selloRetiro.ok);
+      _extra.observacion = 'Retiro transferido a las '+_hora+' hs.';
+    }
     if(_ajustado){
       _extra.monto_corregido = montoTotal;
       _extra.monto_declarado_original = _decOrig;
       _extra.motivo_ajuste = _motivoAjuste;
     }
     // Respaldo SOLO si la RPC falló: si no, duplicaríamos el progreso.
-    if((!completo || _hayProgreso) && (!_rp || !_rp.ok)){
+    if((!completo || _hayProgreso) && (!_rp || (!_rp.ok && !_rp.uncertain))){
       // CONSERVANDO los pagos ya anotados: el respaldo los pisaba y se perdía el detalle de lo cobrado.
       let _rpPrev = {};
       try{
@@ -2545,6 +2936,13 @@ const _rv2FinalizarInterno = async function(stCapturado){
         operador: (deps.window.operador&&(deps.window.operador.usuario||deps.window.operador.nombre))||'panel',
         desde: _desde || null, respaldo_panel: true });
       _extra.retiro_parcial = Object.assign({}, _rpPrev, { pagado:pagadoAcum, total:montoTotal, restante:restante, pagos:_pagosPrev });
+    }
+    if(completo && filaHist && filaHist.id){
+      try{
+        await deps.supabaseClient.from('historial_ops').update({
+          notas:_notaHistorial+' · Transferido a las '+_hora+' hs.'+(_selloRetiro&&_selloRetiro.ok?'':' · sello servidor pendiente')
+        }).eq('id',filaHist.id);
+      }catch(_e){}
     }
     // Va DESPUÉS de la RPC a propósito: deja el estado correcto aunque la RPC lo haya marcado completo.
     const _ru = await deps.window.actualizarSolicitudPortal(String(st.id), _estadoFinal, _extra);
@@ -2563,15 +2961,14 @@ const _rv2FinalizarInterno = async function(stCapturado){
   }
   try{
     const msg = completo
-      ? '✅ Completamos tu retiro. Te transferimos '+deps.money(total)+'. ¡Listo!'
-      : '💸 Te transferimos '+deps.money(total)+' de tu retiro · restan '+deps.money(restante)+'. El resto en cuanto se libere otra billetera.';
+      ? '✅ Completamos tu retiro. Te transferimos '+deps.money(total)+' a las '+_hora+' hs. ¡Listo!'
+      : '💸 Te transferimos '+deps.money(total)+' de tu retiro a las '+_hora+' hs · restan '+deps.money(restante)+'. El resto en cuanto se libere otra billetera.';
     // La solicitud ya está en su estado final (PAGADA/EN_PROCESO) → se lo pasamos explícito.
     // El motivo va UNA vez: si ya se le dijo este mismo motivo, no se repite en cada cuota.
     const _avisarAjuste = _ajustado && _motivoAjuste && _motivoAjuste !== String(st._motivoAvisado||'');
     const _pre = _avisarAjuste ? ('📝 Ajustamos tu retiro a '+deps.money(montoTotal)+'. '+_motivoAjuste+'\n') : '';
     // Al chat VIVO del portal (D-99): antes iba a la generación de chat que el portal ya no lee, o
-    // sea a ningún lado. Si no tiene conversación abierta no se le abre una por cada pago: para ese
-    // caso ya sale el push de acá abajo.
+    // sea a ningún lado. Si no tiene conversación abierta se le abre una (Juan, 2/11).
     const _txtAviso = _pre+(st.obs?st.obs+'\n':'')+msg;
     if(typeof deps.window.avisarJugadorEnChat === 'function') await deps.window.avisarJugadorEnChat(st.usuario, _txtAviso);
     else await deps.notificarUsuarioEnChat(st.usuario, _txtAviso, st.id, _estadoFinal);
@@ -4192,6 +4589,31 @@ async function _ejecutarSolicitudAhora(ctx){
     // registrarCarga/RetiroEnChunior() y ajustarSaldoBilletera() ya probadas.
     if(_portalSolicitudOperacionEnCurso){ deps.toast('Hay una operación portal en curso. Esperá que termine.', 'yellow'); return; }
     if(!deps.window.ctrlElectron){ deps.alert('La automatización solo funciona en la app de escritorio.'); return; }
+    // Sólo las solicitudes que el servidor marcó como retiro.instrumentos.v1 usan la validación
+    // nueva. Los retiros viejos y WhatsApp conservan su recorrido. Una solicitud beta no continúa
+    // si falta el consumidor o falla el RPC: el corte ocurre antes de EN_PROCESO y de Agentes.
+    let _retiroMeta = {};
+    try{
+      const _rawMeta = ctx.solicitud && (ctx.solicitud.METADATA !== undefined ? ctx.solicitud.METADATA : ctx.solicitud.metadata);
+      _retiroMeta = typeof _rawMeta === 'string' ? JSON.parse(_rawMeta || '{}') : (_rawMeta || {});
+    }catch(_e){ _retiroMeta = {}; }
+    const _retiroInstrumento = String(ctx.tipo||'').toUpperCase()==='RETIRO'
+      && _retiroMeta.retiro_instrumento_v1 && _retiroMeta.retiro_instrumento_v1.instrumento_id;
+    if(_retiroInstrumento){
+      if(typeof deps.window.nodoRetiroCuentaValidada !== 'function'){
+        try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_VALIDADOR_NO_CARGADO'); }catch(_e){}
+        deps.toast('No se cargó la validación de cuenta de este retiro. No se movió saldo.','red');
+        return;
+      }
+      const _cuenta = await deps.window.nodoRetiroCuentaValidada(ctx.id, {
+        usuario:ctx.usuario, monto:ctx.montoAprobado, destino:ctx.destino, titular:ctx.titular,
+        solicitud:ctx.solicitud
+      });
+      if(!_cuenta || !_cuenta.seguir){
+        if(_cuenta && _cuenta.cerrar){ try{ deps.cerrarPortalJobModal(); }catch(_e){} }
+        return;
+      }
+    }
     if(!deps._drexGlobalLock('portal')){
       deps.toast('Hay otra operación corriendo en Agentes ahora mismo (manual u otra). Esperá a que termine.', 'yellow');
       return;
@@ -4358,7 +4780,9 @@ async function _ejecutarSolicitudAhora(ctx){
         deps._wdUnlock();
       }
 
-      const ok = resultado && resultado.ok !== false;
+      // ok confirma que respondió la automatización; exito:false es el rechazo expreso del
+      // casino. No se debe registrar, debitar la billetera ni cerrar como PAGADA en ese caso.
+      const ok = resultado && resultado.ok !== false && resultado.exito !== false;
       const saldoPreCasino = (typeof resultado?.previousBalance?.value === 'number' && !resultado?.previousBalance?.unchanged) ? resultado.previousBalance.value : null;
       const saldoPostCasino = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
       let saldoPre = saldoPreCasino !== null ? saldoPreCasino : ((typeof busqueda.balance?.value === 'number') ? busqueda.balance.value : null);
@@ -4422,7 +4846,29 @@ async function _ejecutarSolicitudAhora(ctx){
         }
         if(bil && bil.ID_BILLETERA) await deps.ajustarSaldoBilletera(bil.ID_BILLETERA, tipo === 'CARGA' ? montoAbs : -montoAbs);
         const estadoFinal = tipo === 'RETIRO' ? 'PAGADA' : 'ACREDITADA';
+        // La beta estampa la hora de aprobación en servidor después de que el pago ocurrió.
+        // Si falla el sello no se repite la operación: se conserva PAGADA y la auditoría pendiente
+        // queda visible para resolverla sin duplicar el retiro.
+        const _ahoraFin = new Date();
+        let _selloRetiro = null;
+        if(tipo === 'RETIRO' && _retiroInstrumento){
+          if(typeof deps.window.nodoSellarRetiroAprobado === 'function'){
+            try{ _selloRetiro = await deps.window.nodoSellarRetiroAprobado(id,{solicitud:ctx.solicitud,usuario:usuario,monto:montoAbs}); }
+            catch(_e){ _selloRetiro = {ok:false}; }
+          }else _selloRetiro = {ok:false};
+          if(!_selloRetiro || !_selloRetiro.ok){
+            try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
+            deps.toast('El retiro ya se ejecutó, pero faltó guardar su hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red');
+          }
+        }
+        const _horaExactaRetiro = _selloRetiro && _selloRetiro.ok
+          ? _selloRetiro.horaExacta
+          : (typeof deps.window.nodoHoraExacta === 'function' ? deps.window.nodoHoraExacta(_ahoraFin) : _ahoraFin.toLocaleTimeString('es-AR'));
         await deps.actualizarSolicitudPortal(id, estadoFinal, {
+          aprobado_at: (_selloRetiro && _selloRetiro.ok && _selloRetiro.aprobadoAt) || _ahoraFin.toISOString(),
+          aprobado_hora: _horaExactaRetiro,
+          ...(tipo === 'RETIRO' ? { retiro_aprobado_hora_exacta:_horaExactaRetiro, retiro_aprobado_servidor:!!(_selloRetiro && _selloRetiro.ok) } : {}),
+          ...(tipo === 'RETIRO' ? { observacion:'Retiro transferido a las '+_horaExactaRetiro+' hs.' } : {}),
           etapa:'PORTAL_COMPLETADA_PANEL',
           monto_aprobado:montoAbs,
           historial_id:filaHist?.id||null,
@@ -4432,8 +4878,22 @@ async function _ejecutarSolicitudAhora(ctx){
           billetera_id: bil?bil.ID_BILLETERA:null,
           billetera_nombre: bil?bil.NOMBRE_VISIBLE:null
         });
-        if(res) res.innerHTML = '<div class="ok-box" style="padding:8px 10px">✅ '+tipo+' portal de '+deps.money(montoAbs)+' completada. Historial: LANDING.</div>';
-        deps.toast(tipo+' portal OK: '+usuario+' · '+deps.money(montoAbs), 'green');
+        if(tipo==='RETIRO'){
+          if(filaHist && filaHist.id){
+            try{
+              await deps.supabaseClient.from('historial_ops').update({
+                notas:String(notas||'').trim()+' · Transferido a las '+_horaExactaRetiro+' hs.'
+              }).eq('id',filaHist.id);
+            }catch(_e){}
+          }
+          const _avisoRetiro='✅ Tu retiro de '+deps.money(montoAbs)+' fue transferido a las '+_horaExactaRetiro+' hs.';
+          try{
+            if(typeof deps.window.avisarJugadorEnChat==='function') await deps.window.avisarJugadorEnChat(usuario,_avisoRetiro);
+            else if(typeof deps.window.notificarUsuarioEnChat==='function') await deps.window.notificarUsuarioEnChat(usuario,_avisoRetiro,id,estadoFinal);
+          }catch(_e){}
+        }
+        if(res) res.innerHTML = '<div class="ok-box" style="padding:8px 10px">✅ '+tipo+' portal de '+deps.money(montoAbs)+' completada.'+(tipo==='RETIRO'?' · '+_horaExactaRetiro+' hs':'')+'. Historial: LANDING.</div>';
+        deps.toast(tipo+' portal OK: '+usuario+' · '+deps.money(montoAbs)+(tipo==='RETIRO'?' · '+_horaExactaRetiro+' hs':''), 'green');
         deps._trazaPaso((tipo==='CARGA'?'Carga':'Retiro')+' aplicado en Agentes'+(saldoPost!=null?(' · saldo '+deps.money(saldoPost)):''), 'ok'); deps._trazaFin('ok', filaHist&&filaHist.id);
 
         // Chunior en background, igual que manual: no bloquea el flujo ni la próxima operación.
@@ -4543,15 +5003,30 @@ async function _ejecutarSolicitudAhora(ctx){
                 try{ if(deps.window.jugadorRegistrarDato) deps.window.jugadorRegistrarDato(usuario, { bono:{estado:'APLICADO', pct:ctx.bonoPct, monto:bonoMonto} }); }catch(_e){}
                 deps.toast('🎁 Bono '+ctx.bonoPct+'% acreditado: '+deps.money(bonoMonto), 'green');
                 if(bilPromo.CHUNIOR_UID){
+                  // Igual que la carga del jugador. Antes, al llegar el N° no se volvía a dibujar el
+                  // historial y el bono seguía con el botón de Chunior hasta la próxima recarga; y si
+                  // la anotación fallaba no quedaba en ninguna cola: el botón no se iba más (Juan, 2/11).
+                  const _bonoPendiente = function(motivo){
+                    try{ deps.window.chuniorPendienteAdd({ tipo:'CARGA', uid:bilPromo.CHUNIOR_UID, monto:bonoMonto, usuario:usuario, histId:filaBono?.id||null, motivo:motivo }); }catch(_e){}
+                  };
                   deps.registrarCargaEnChunior(bilPromo.CHUNIOR_UID, bonoMonto, usuario).then(async function(rChu){
                     if(rChu && rChu.ok && rChu.movimientoId && filaBono && filaBono.id){
-                      try{ await deps.supabaseClient.from('historial_ops').update({chunior_movimiento_id:rChu.movimientoId}).eq('id', filaBono.id); }catch(_e){}
+                      try{
+                        await deps.supabaseClient.from('historial_ops').update({chunior_movimiento_id:rChu.movimientoId}).eq('id', filaBono.id);
+                        if(typeof deps.cargarHistorial === 'function') await deps.cargarHistorial();
+                      }catch(_e){}
                     } else if(rChu && rChu.ok && !rChu.movimientoId && filaBono && filaBono.id){
                       // Chunior aceptó el bono pero no pudimos leer el N° → marcar [CHUNIOR_OK_SIN_N] para que el
                       // historial NO lo muestre como "no registrado" (mismo criterio que la carga del jugador).
-                      try{ await deps.supabaseClient.from('historial_ops').update({notas:_notaBono+' [CHUNIOR_OK_SIN_N]'}).eq('id', filaBono.id); }catch(_e){}
+                      try{
+                        await deps.supabaseClient.from('historial_ops').update({notas:_notaBono+' [CHUNIOR_OK_SIN_N]'}).eq('id', filaBono.id);
+                        if(typeof deps.cargarHistorial === 'function') await deps.cargarHistorial();
+                      }catch(_e){}
+                    } else if(rChu && rChu.error){
+                      deps.toast('⚠️ Bono OK en Agentes pero falló Chunior: '+rChu.error, 'red');
+                      _bonoPendiente(rChu.error);
                     }
-                  }).catch(function(){});
+                  }).catch(function(e){ _bonoPendiente((e && e.message) || 'excepción'); });
                 }
               } else {
                 deps.toast('⚠️ El bono no se cargó en Agentes: '+((rb&&rb.message)||'sin detalle')+' — cargalo a mano.', 'red');
@@ -4573,7 +5048,11 @@ async function _ejecutarSolicitudAhora(ctx){
         }, 450);
       }else{
         await deps.actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_ERROR_AGENTES', monto_aprobado:montoAbs, historial_id:filaHist?.id||null, error:resultado?.message||'error'});
-        try{ if(typeof deps.colaPendientesAdd==='function') deps.colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', titular:ctx.titular||'', destino:ctx.destino||'', cbu:ctx.cbu||'', obs:ctx.obs||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
+        // La cola de reintentos vuelve a ejecutar cargarSaldo; no debe recibir retiros ni rechazos
+        // explícitos del casino, porque convertiría una falla de retiro en una carga repetible.
+        if(tipo==='CARGA'&&resultado?.exito!==false){
+          try{ if(typeof deps.colaPendientesAdd==='function') deps.colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', titular:ctx.titular||'', destino:ctx.destino||'', cbu:ctx.cbu||'', obs:ctx.obs||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
+        }
         if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Error en Agentes: '+deps.esc(resultado?.message||'sin detalle')+'</div>';
         deps._trazaPaso('Agentes: no se pudo aplicar · '+(resultado?.message||'error'),'err'); deps._trazaFin('err', filaHist&&filaHist.id);
         deps.toast('Portal con error · revisar', 'red');
@@ -4636,13 +5115,27 @@ const api = {};
     let betaActive=false,betaError=false;
     try{betaActive=beta && await beta.ready();}
     catch(e){betaError=true;r={data:null,error:{message:e.message}};}
+    // El canal nuevo anota su propia salud (beta-chat.js). El camino de siempre no anotaba nada y el
+    // semáforo decía "sin actividad" con los chats llegando (P4, 6/11).
+    const health=!betaActive&&!betaError?deps.window.NodoSalud?.begin('CHAT'):null;
+    let porRespaldo=false;
     if(betaActive){
       try { r={data:await deps.window._chatCanalNuevo.cargar(),error:null}; }
       catch(e) { r={data:null,error:{message:e.message}}; }
     }else if(!betaError) r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
     if(!betaActive && !betaError && (r?.error || !deps.normArr(r?.data).length)){
+      const primeraFallo=!!r?.error;
       const fb = await deps.rpc("panel_v154_plus_listar_chat_sesiones", {p_pc_codigo: canal});
-      if(!fb?.error) r = fb;
+      if(!fb?.error){ r = fb; porRespaldo=primeraFallo || deps.normArr(fb?.data).length>0; }
+    }
+    if(health){
+      health.reply(r?.error);
+      if(r?.error) health.record('DATA','ERROR',health.errorCode(r.error));
+      else if(!Array.isArray(r?.data) && !deps.normArr(r?.data).length) health.record('DATA','ERROR','CHAT_INVALID_DATA');
+      // La lista vacía con chats ya cargados se descarta (ver ANTI-PARPADEO): no se la da por buena.
+      else if(!deps.normArr(r.data).length && Array.isArray(deps.V154P.chats) && deps.V154P.chats.length) health.record('DATA','DEGRADED','CHAT_LIST_EMPTY_KEPT');
+      // La lista de respaldo no trae la hora del último mensaje: llega, pero a medias.
+      else health.record('DATA',porRespaldo?'DEGRADED':'OK',porRespaldo?'CHAT_LIST_FALLBACK':'CHAT_LIST_VALID');
     }
 
     if(r?.error){
@@ -4668,8 +5161,16 @@ const api = {};
       try{ deps.chats = deps.V154P.chats.slice(); }catch(_e){}
     }
 
-    if(typeof deps.v15RenderChatList === "function") deps.v15RenderChatList();
-    else if(typeof deps.renderChatList === "function") deps.renderChatList();
+    try{
+      if(typeof deps.v15RenderChatList === "function") deps.v15RenderChatList();
+      else if(typeof deps.renderChatList === "function") deps.renderChatList();
+      else health?.record('RENDER','UNKNOWN','CHAT_RENDER_UNAVAILABLE');
+    }catch(e){ health?.record('RENDER','ERROR','CHAT_RENDER_FAILED'); throw e; }
+    if(health && (typeof deps.v15RenderChatList === "function" || typeof deps.renderChatList === "function")){
+      // Se dibujó sin errores en una lista que está en la pantalla; si no hay lista, no se sabe.
+      const caja=deps.document.getElementById("chatList")||deps.document.getElementById("v15ChatList");
+      health.record('RENDER',caja?'OK':'UNKNOWN',caja?'CHAT_LIST_RENDERED':'CHAT_LIST_NOT_ON_SCREEN');
+    }
 
     // Auto-refrescar conversación abierta si hay un ticket activo
     try{
@@ -4689,7 +5190,11 @@ const api = {};
   }
 
   async function cargarChatPortalActual(silencioso=false){
-    const chatId = deps.window.chatActualId || deps.window.v15ChatActualId || deps.V154P.chatActual;
+    // Manda el chat que está en pantalla. La marca suelta la vacían varios lados del código viejo, y
+    // con ella vacía NODO dejaba de pedir los mensajes: la conversación quedaba con lo que había
+    // escrito el operador y nada del jugador (Juan, 2/11: "los chats titilan y desaparecen").
+    const _enPantalla = deps.window.__nodoChatCurrentTicket;
+    const chatId = (_enPantalla && _enPantalla._beta && _enPantalla._chatId) || deps.window.chatActualId || deps.window.v15ChatActualId || deps.V154P.chatActual;
     if(!chatId) return;
 
     deps.V154P.chatActual = String(chatId);

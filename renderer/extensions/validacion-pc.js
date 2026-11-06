@@ -101,6 +101,7 @@
   },800);
 
   setInterval(function(){
+    if(document.hidden) return;   // con la ventana abajo no hace falta; al volver se pone al día
     syncPcWindow();
   },3000);
 })();

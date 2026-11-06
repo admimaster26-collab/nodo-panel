@@ -343,7 +343,8 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 
 /* Compose */
 .widget-compose{flex-shrink:0;border-top:1px solid var(--line);background:#0c0c10;padding:11px 12px;display:grid;grid-template-columns:44px 1fr 46px;gap:9px;align-items:end}
-#freeInput{min-height:44px;height:44px;max-height:96px;overflow:auto;margin:0;resize:none;border-radius:12px;font-size:16px;padding:11px 13px}
+#freeInput{min-height:44px;height:44px;max-height:96px;overflow:auto;margin:0;resize:none;border-radius:12px;font-size:16px;padding:11px 13px;scrollbar-width:none}
+#freeInput::-webkit-scrollbar{display:none}
 .send-btn{height:44px;width:46px;padding:0;border:1px solid var(--gold-deep);border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:18px;background:var(--gold);color:#1a1500;transition:transform .14s}
 .send-btn:active{transform:scale(.92)}
 .clip-btn{height:44px;width:44px;padding:0;border:1px solid var(--line);border-radius:12px;background:#15151a;color:#aeb3c6;cursor:pointer;font-size:18px;display:flex;align-items:center;justify-content:center;transition:.15s}
@@ -367,30 +368,87 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
   .panel-head{padding-top:15px}
 }
 
-/* Autor?a expl?cita y ayuda de a un paso, tambi?n en pantallas chicas. */
+/* Quién habla: se distingue de un vistazo, también en pantallas chicas. */
 .msg.operator{align-items:flex-start;margin-right:auto}
 .msg.operator .bubble{background:#16283b;border:1px solid #3b6b8d;border-bottom-left-radius:5px}
-.msg.bot .bubble,.msg.guide .bubble{background:#211d35;border:1px solid #756195;border-bottom-left-radius:5px}
+.msg.bot .bubble,.msg.guide .bubble{background:var(--surface-2);color:#eef0f7;border:1px solid var(--line-2);border-bottom-left-radius:5px}
 .msg.guide{align-items:flex-start;margin-right:auto}
+.msg.guide .bubble b{color:var(--gold-2);font-weight:700}
 .msg.system{align-items:center;margin:10px auto;max-width:95%}
 .msg.system .bubble{background:#17191c;border:1px dashed #606673;color:#c5cad3;font-size:12px}
-.msg.operator .meta{color:#aacbe3}.msg.bot .meta,.msg.guide .meta{color:#c0aedc}
+.msg.operator .meta{color:#aacbe3}
+/* Globos seguidos del asistente: la firma va una sola vez. */
+.msg.guia-seguido{margin-bottom:6px}.msg.guia-seguido .meta{display:none}
 .chat-help-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
-.chat-help-actions button,.guide-options button{background:#1b293a;border:1px solid #687fa0;color:#f3f6ff;border-radius:10px;padding:11px 12px;font:inherit;font-size:13px;cursor:pointer;text-align:left}
-.chat-guide-controls{flex-shrink:0;border-top:1px solid var(--line);padding:9px 12px;background:#101219;max-height:36vh;overflow:auto}
-.guide-options{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-.guide-options button:disabled{opacity:.55;cursor:wait}
-.guide-tools{display:flex;flex-wrap:wrap;gap:3px;margin-top:5px}
-.guide-tools button{border:0;background:transparent;color:#c2c8d5;padding:10px 8px;font-size:12px;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
-.guide-tools button:disabled{opacity:.5}
-.guide-progress{font-size:11px;color:#b9afce;margin-bottom:8px}
-.guide-form{width:100%;max-width:100%!important;align-self:stretch}
-.guide-form .bubble{width:100%}.guide-form h3{font-size:17px;margin:0 0 8px}
-.guide-form p{line-height:1.5;font-size:13px;margin-bottom:12px}
-.guide-form label{font-size:12px;text-transform:none;letter-spacing:0;margin-top:12px}
-.guide-form select{width:100%;padding:12px;border:1px solid var(--line-2);border-radius:10px;background:#0c0c11;color:var(--text);font-size:15px}
-.guide-form input,.guide-form textarea{margin-bottom:0}.guide-error{color:#ffb5bd;font-size:13px;line-height:1.45;margin:10px 0}
-.guide-form .campo-ayuda{margin-top:6px}.chat-help-actions button:focus-visible,.guide-options button:focus-visible,.guide-tools button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+.chat-help-actions button{background:#1b293a;border:1px solid #687fa0;color:#f3f6ff;border-radius:10px;padding:11px 12px;font:inherit;font-size:13px;cursor:pointer;text-align:left}
+
+/* Asistente: lo que espera respuesta va siempre último, abajo del globo. */
+.guia-accion{width:100%;margin:2px 0 12px;perspective:1200px;flex-shrink:0}
+.guia-opciones{display:flex;flex-direction:column;gap:7px;max-width:90%}
+.guia-opciones button,.guia-opciones a{font:inherit;font-size:14px;font-weight:600;text-align:left;min-height:44px;padding:10px 14px;border-radius:12px;cursor:pointer;
+  background:transparent;border:1px solid var(--gold-deep);color:var(--gold-2);transition:background .15s}
+.guia-opciones a{display:flex;align-items:center;text-decoration:none}
+.guia-opciones button:hover,.guia-opciones a:hover{background:rgba(233,194,92,.1)}
+.guia-opciones button:active,.guia-opciones a:active{transform:scale(.98)}
+.guia-opciones a.whatsapp{border-color:var(--green);color:var(--green)}
+.guia-opciones a.whatsapp:hover{background:var(--green-soft)}
+.guia-opciones button.humano{border-color:var(--line-2);color:#c9ccd8}
+.guia-opciones button.volver{border-color:transparent;color:var(--muted);min-height:38px;padding:6px 14px;font-weight:600}
+.con-ficha .guia-opciones{margin-top:9px}
+.guia-opciones button:focus-visible,.guia-opciones a:focus-visible,.chat-help-actions button:focus-visible,.guia-dato:focus-visible,.guia-enlaces button:focus-visible{outline:3px solid var(--gold);outline-offset:2px}
+.guia-puntos{display:inline-flex;gap:5px;padding:12px 14px;background:var(--surface-2);border:1px solid var(--line-2);border-radius:14px;border-bottom-left-radius:5px}
+.guia-puntos i{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:guiaPunto 1s infinite ease-in-out}
+.guia-puntos i:nth-child(2){animation-delay:.15s}.guia-puntos i:nth-child(3){animation-delay:.3s}
+@keyframes guiaPunto{0%,60%,100%{opacity:.35;transform:none}30%{opacity:1;transform:translateY(-3px)}}
+
+/* La ficha, adentro del chat. Las dos caras van en la misma celda: el alto lo pone la más alta. */
+.guia-flip{display:grid;transform-style:preserve-3d;transition:transform .72s cubic-bezier(.4,.12,.2,1)}
+.guia-flip.dada{transform:rotateY(180deg)}
+.guia-cara{grid-area:1/1;backface-visibility:hidden;-webkit-backface-visibility:hidden;min-width:0}
+.guia-cara.dorso{transform:rotateY(180deg)}
+.guia-flip:not(.dada) .guia-cara.dorso{pointer-events:none}
+.guia-flip.dada .guia-cara:not(.dorso){pointer-events:none}
+.guia-ficha{background:var(--surface);border:1px solid var(--gold-deep);border-radius:14px;padding:14px}
+.guia-ficha h4{font-size:15px;font-weight:800;color:var(--gold-2);margin-bottom:3px}
+.guia-ficha .sub{font-size:12.5px;color:#b8bac7;line-height:1.45;margin-bottom:10px}
+.guia-ficha label{font-size:12px;font-weight:700;text-transform:none;letter-spacing:0;color:#b8bac7;margin:11px 0 5px}
+.guia-ficha h4+label{margin-top:8px}
+.guia-ficha>label:first-child{margin-top:0}
+.guia-ficha input{margin-bottom:0;padding:12px}
+.guia-ficha .action-btn{margin-top:12px;padding:14px;font-size:15px}
+.guia-dato{width:100%;display:flex;align-items:center;gap:10px;margin-top:6px;padding:9px 10px;text-align:left;font:inherit;cursor:pointer;
+  background:#0c0c11;border:1px solid var(--line-2);border-radius:10px;color:var(--text)}
+.guia-dato .r{flex:1;min-width:0}
+.guia-dato .r span{display:block;font-size:10.5px;color:var(--muted)}
+.guia-dato .r b{display:block;font-size:14px;font-weight:700;word-break:break-all;font-variant-numeric:tabular-nums}
+.guia-dato i{flex:none;font-style:normal;font-size:12px;font-weight:800;padding:7px 10px;border-radius:8px;background:var(--gold);color:#1a1500}
+.guia-dato i.done{background:var(--green)}
+.guia-nota{font-size:12px;color:#b8bac7;line-height:1.45;margin-top:7px}
+.guia-nota b{color:var(--text)}
+.guia-aviso{font-size:12px;color:#b8bac7;line-height:1.45;background:rgba(233,194,92,.07);border:1px solid rgba(233,194,92,.22);border-radius:9px;padding:8px 10px;margin-top:10px}
+.guia-aviso b{color:var(--gold-2)}
+.guia-ficha .titular-aviso{margin-top:6px}
+.guia-error{color:#ffb5bd;font-size:13px;line-height:1.45;margin-top:9px}
+.guia-error:empty{display:none}
+.guia-accion>.guia-error{background:rgba(255,84,104,.09);border:1px solid rgba(255,84,104,.3);border-radius:11px;padding:10px 12px;margin:0 0 8px;max-width:90%}
+.guia-archivo{display:block;padding:18px 12px!important;margin:0!important;text-align:center;border:1px dashed var(--gold-deep);border-radius:11px;background:rgba(233,194,92,.06);color:var(--gold-2)!important;font-size:14px!important;cursor:pointer}
+.guia-oculto{position:absolute;width:1px;height:1px;padding:0;margin:0;border:0;opacity:0}
+.guia-enlaces{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 14px;margin-top:9px}
+.guia-enlaces button{background:none;border:0;color:var(--gold-2);font:inherit;font-size:13px;font-weight:700;padding:7px 2px;cursor:pointer}
+
+/* El dorso: lo que quedó pedido. */
+.guia-ticket{background:var(--surface);border:1px solid var(--gold-deep);border-radius:14px;overflow:hidden}
+.guia-ticket .tk-cab{background:rgba(233,194,92,.12);padding:11px 14px;border-bottom:1px dashed rgba(233,194,92,.35)}
+.guia-ticket .tk-cab b{display:block;font-size:14px;color:var(--gold-2)}
+.guia-ticket .tk-cab em{display:block;font-style:normal;font-size:12px;color:#b8bac7;margin-top:2px}
+.guia-ticket .tk-cuerpo{padding:6px 14px}
+.guia-ticket .tk-fila{display:flex;justify-content:space-between;gap:12px;padding:7px 0;font-size:13px}
+.guia-ticket .tk-fila+.tk-fila{border-top:1px dashed var(--line-2)}
+.guia-ticket .tk-fila span{color:var(--muted);flex:none}
+.guia-ticket .tk-fila b{text-align:right;word-break:break-word;font-weight:700}
+.guia-ticket .tk-fila.grande b{font-size:19px;color:var(--gold-2);font-variant-numeric:tabular-nums}
+.guia-ticket .tk-pie{display:flex;align-items:center;gap:8px;padding:9px 14px;border-top:1px dashed rgba(233,194,92,.35);font-size:12px;color:#b8bac7}
+.guia-ticket .tk-pie i{flex:none;width:8px;height:8px;border-radius:50%;background:#fbbf24}
 
 </style>
 </head>
@@ -434,7 +492,6 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
     <div id="screenEstado" class="screen hidden"></div>
     <div id="screenChat"   class="screen hidden">
       <div id="messages" class="messages" role="log" aria-label="Conversación"></div>
-      <div id="chatGuideControls" class="chat-guide-controls" aria-label="Opciones de ayuda"></div>
     </div>
   </div>
 
@@ -443,7 +500,7 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
   <div id="composeBox" class="widget-compose hidden">
     <button class="clip-btn" onclick="$('composeFileInput').click()" title="Adjuntar imagen">📎</button>
     <input id="composeFileInput" type="file" accept="image/*" style="display:none" onchange="queueComposerFile(this)">
-    <textarea id="freeInput" rows="1" placeholder="Escribí tu mensaje..."></textarea>
+    <textarea id="freeInput" rows="1" placeholder="O escribí lo que quieras..."></textarea>
     <button id="btnEnviarMensaje" class="send-btn" onclick="sendFreeMessage()" aria-label="Enviar mensaje">➤</button>
   </div>
 
@@ -465,12 +522,14 @@ const PLATFORM_URL = "https://bet-300.pw";
 // Sello de versión a la vista. Sin esto no hay forma de saber si lo que se abrió es el portal
 // nuevo o la copia vieja que guardó el service worker en el teléfono. Se cambia a mano en cada
 // publicación, junto con la versión del sw.js.
-const PORTAL_VER="v2.1.7 · 25/10";
+const PORTAL_VER="v2.1.18 · 02/11";
 let sb=null;try{if(SUPABASE_ANON_KEY&&!SUPABASE_ANON_KEY.includes("PEGAR_"))sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_ANON_KEY)}catch(e){console.warn(e)}
 
 const state={
   publicCode:(new URLSearchParams(location.search).get("r")||"").trim() || localStorage.getItem("bet300_public_code") || "",
   pcCodigo:null,
+  // El WhatsApp de la oficina, listo para wa.me. null: todavía no se preguntó. "": no tiene.
+  whatsappOficina:null,
   usuario:localStorage.getItem("bet300_usuario")||"",
   telefono:localStorage.getItem("bet300_telefono")||"",
   nivelAcceso:localStorage.getItem("bet300_nivel_acceso")||"",
@@ -499,7 +558,8 @@ const CLAVES_SOLICITUD = ["bet300_pending_tipo","bet300_pending_billetera",
 const CLAVES_CHAT      = ["bet300_chat_id","bet300_chat_token"];
 const CLAVES_JUGADOR   = ["bet300_usuario","bet300_telefono","bet300_vinculo_estado",
                           "bet300_nivel_acceso","bet300_motivo_soporte","bet300_portal_thread_seen",
-                          "bet300_validacion_id","bet300_validacion_estado","bet300_bono_usado"];
+                          "bet300_validacion_id","bet300_validacion_estado","bet300_bono_usado",
+                          "bet300_despues_validar"];
 let _enviando=false, _toqueMs=null;
 const MONTO_MIN_CARGA=1000, MONTO_MIN_RETIRO=5000, RETIRO_COOLDOWN_MS=24*60*60*1000;
 function _minCarga(){ return Number(state.minCarga)>0 ? Number(state.minCarga) : MONTO_MIN_CARGA; }
@@ -522,8 +582,12 @@ function _tomarEnvio(idBtn, textoEnviando){
   if(b){ b.disabled = true; b.textContent = textoEnviando || "Enviando..."; }
   return true;
 }
-function _soltarEnvio(idBtn, textoNormal){
+// _restaurarBoton no toca el botón si hay una solicitud pendiente: sirve en Cargar y Retirar, que al
+// crearla se van de la pantalla. En lo que se usa CON una pendiente (clave, comprobante) lo dejaba
+// trabado en "Enviando...". Esos piden "siempre".
+function _soltarEnvio(idBtn, textoNormal, siempre){
   _enviando = false;
+  if(siempre){ const b=$(idBtn); if(b){ b.disabled=false; b.textContent=textoNormal; } return; }
   _restaurarBoton(idBtn, textoNormal);
 }
 function _identificadoresPropios(){
@@ -565,6 +629,7 @@ function _fijarOficina(code){
     }
     localStorage.setItem("bet300_public_code", nueva);
   }catch(_e){}
+  if(state.publicCode !== nueva) state.whatsappOficina = null;   // el de la oficina anterior no sirve
   state.publicCode = nueva;
 }
 function _marcarToque(){ _toqueMs=Date.now(); }
@@ -682,33 +747,98 @@ function showScreen(name){
   else state.chatLibre=false;
 }
 function goHome(){renderHome();showScreen("home");}
-function _bloqueoSoporte(){ if((state.nivelAcceso||"")==="SOPORTE"){ toast("Validá tu usuario + teléfono para operar. Mientras tanto, escribinos por chat."); goHome(); return true; } return false; }
-function goCarga(){if(_bloqueoSoporte())return;if(bloquearNuevaSolicitud("CARGA"))return;showScreen("carga");renderCarga();}
-function goRetiro(){if(_bloqueoSoporte())return;if(bloquearNuevaSolicitud("RETIRO"))return;const r=retiroCooldownRestanteMs();if(r>0){toast("Ya solicitaste un retiro hoy. Podés pedir otro en "+_fmtRestante(r)+".");return;}showScreen("retiro");renderRetiro();}
-function goClave(){if(_bloqueoSoporte())return;showScreen("clave");renderClave();}
+// ── ¿Puede operar? Lo dice el servidor, y ANTES de mostrar la cuenta ──────────
+// El servidor sólo acepta cargas, retiros y cambios de clave de una cuenta vinculada (ACCESO) o
+// nueva en una oficina sin padrón (NUEVO / PENDIENTE). Se le preguntaba recién al mandar el pedido:
+// el jugador veía la cuenta, transfería, y ahí le decían que no estaba habilitado. Se iba sin poder
+// cargar (Juan, 2/11). Ahora se pregunta antes y, si falta validar, se lo valida primero y después
+// sigue con lo que quería hacer.
+const VINCULO_OPERA=["ACCESO","NUEVO","PENDIENTE"];
+const VINCULO_NO_OPERA=["NO_REGISTRADO","CONFLICTO_TELEFONO","CONFLICTO_USUARIO","BLOQUEADO","TEL_INVALIDO","SIN_USUARIO"];
+let _vinculoOk=null;   // la última respuesta buena, 2 minutos, para no demorar cada toque
+async function vinculoPuedeOperar(){
+  if(!state.usuario||!state.telefono)return {ok:false,verdict:"SIN_DATOS"};
+  const v=_vinculoOk;
+  if(v&&v.usuario===state.usuario&&v.telefono===state.telefono&&Date.now()-v.at<120000)return {ok:true,verdict:v.verdict,estado:v.estado};
+  let d;
+  try{
+    const r=await rpc("landing_portal_resolver_vinculo",{p_pc_codigo:state.pcCodigo,p_usuario:state.usuario,p_telefono:state.telefono});
+    if(r.error)return {ok:null};
+    d=normalize(r.data)||r.data||{};
+  }catch(_e){return {ok:null};}   // sin conexión: el servidor igual controla al recibir el pedido
+  const verdict=String(d.verdict||"").toUpperCase();
+  if(VINCULO_OPERA.includes(verdict)){
+    const estado=String(d.estado||"").toUpperCase();
+    _vinculoOk={usuario:state.usuario,telefono:state.telefono,verdict,estado,at:Date.now()};
+    // Lo validaron y no tocó Ingresar: ya puede operar.
+    if(verdict==="ACCESO"&&state.nivelAcceso!=="OK"){
+      state.nivelAcceso="OK";state.motivoSoporte="";
+      try{localStorage.setItem("bet300_nivel_acceso","OK");localStorage.removeItem("bet300_motivo_soporte");}catch(_e){}
+    }
+    return {ok:true,verdict,estado};
+  }
+  // Sólo frena lo que el servidor rechaza seguro. Una respuesta que no se entiende no frena a nadie:
+  // el servidor igual controla al recibir el pedido.
+  if(!VINCULO_NO_OPERA.includes(verdict))return {ok:null,verdict};
+  _vinculoOk=null;
+  state.nivelAcceso="SOPORTE";
+  state.motivoSoporte=d.mensaje||"Todavía falta validar tu cuenta.";
+  try{localStorage.setItem("bet300_nivel_acceso","SOPORTE");localStorage.setItem("bet300_motivo_soporte",state.motivoSoporte);}catch(_e){}
+  return {ok:false,verdict,mensaje:d.mensaje||""};
+}
+// Lo que quería hacer cuando le faltaba validar. Sobrevive a cerrar la página y a que el operador
+// le corrija el usuario: vale un día.
+function despuesDeValidar(que){
+  try{
+    if(que)localStorage.setItem("bet300_despues_validar",JSON.stringify({que,at:Date.now()}));
+    else localStorage.removeItem("bet300_despues_validar");
+  }catch(_e){}
+}
+function despuesPendiente(){
+  try{
+    const d=JSON.parse(localStorage.getItem("bet300_despues_validar")||"null");
+    if(d&&["carga","retiro","clave"].includes(d.que)&&Date.now()-Number(d.at)<24*60*60*1000)return d.que;
+  }catch(_e){}
+  return "";
+}
+async function vinculoAntesDeOperar(que){
+  if(!state.pcCodigo){toast("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte.");return false;}
+  await vinculoPuedeOperar();
+  if(state.nivelAcceso!=="SOPORTE"){if(despuesPendiente()===que)despuesDeValidar("");return true;}
+  goChat();
+  guiaFaltaValidar(que);
+  return false;
+}
+async function goCarga(){if(bloquearNuevaSolicitud("CARGA"))return;if(!await vinculoAntesDeOperar("carga"))return;showScreen("carga");renderCarga();}
+async function goRetiro(){if(bloquearNuevaSolicitud("RETIRO"))return;const r=retiroCooldownRestanteMs();if(r>0){toast("Ya solicitaste un retiro hoy. Podés pedir otro en "+_fmtRestante(r)+".");return;}if(!await vinculoAntesDeOperar("retiro"))return;showScreen("retiro");renderRetiro();}
+async function goClave(){if(!await vinculoAntesDeOperar("clave"))return;showScreen("clave");renderClave();}
 function goEstado(){showScreen("estado");renderEstado();}
 function goChat(){ try{hideOperatorBubble();}catch(_e){} showScreen("chat");renderChat();}
 // Alta de usuario NUEVO: abre el chat y auto-envía un mensaje predeterminado con el apodo y el
 // teléfono que el cliente ingresó → el operador ya sabe que es alta y con qué datos vincular.
-async function escribirSoporteAlta(tipo){
-  goChat();
-  if(state._altaSoporteEnviado) return; // ya lo mandamos, no duplicar
+async function enviarAltaSoporte(tipo,tema){
+  if(state._altaSoporteEnviado) return {ok:true,repetido:true}; // ya lo mandamos, no duplicar
   const apodo=(state.usuario||"").trim(), tel=(state.telefono||"").trim();
-  const msg = (tipo==="ayuda")
+  const base = (tipo==="ayuda")
     ? `Hola 👋 Tengo usuario pero no puedo entrar.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
     : (tipo==="registro")
     ? `Hola 👋 Soy nuevo, quiero registrarme.${apodo?` Apodo: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
     : (tipo==="validar")
     ? `Hola 👋 Quiero validar mi acceso para operar.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
     : `Hola 👋 Necesito ayuda con mi cuenta.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`;
+  const msg=base+(tema?` Tema: ${tema}.`:"");
   state._altaSoporteEnviado=true;
   const result=await enviarMensajeSoporte(msg,null);
-  if(result?.ok){addMsg(esc(msg),"user");state.shownTexts.add("u|"+msg.substring(0,200));}
-  else{
-    state._altaSoporteEnviado=false;
-    addMsg(esc(result?.error||"No se pudo enviar. Reintentá desde el chat."),"system");
-    const input=$("freeInput");if(input&&!input.value)input.value=msg;
-  }
+  if(result?.ok)mostrarMensajePropio(msg,null,result);
+  else state._altaSoporteEnviado=false;
+  return {...result,texto:msg};
+}
+async function escribirSoporteAlta(tipo){
+  goChat();
+  const result=await enviarAltaSoporte(tipo);
+  if(result?.ok)return;
+  addMsg(esc(result?.error||"No se pudo enviar. Reintentá desde el chat."),"system");
+  const input=$("freeInput");if(input&&!input.value)input.value=result.texto;
 }
 
 // ── No leídos ──────────────────────────────────────────────────────────────
@@ -792,6 +922,12 @@ function chatHelpMessage(text,who){
   if(who==="operator"||who==="bot")body=body.replace(/⟦AYUDA:(inicio|revisar_envio)⟧/g,function(_all,action){if(!actions.includes(action))actions.push(action);return "";});
   return {text:body.trim(),actions};
 }
+// Todo lo que entra a la charla se mete ARRIBA de lo que está esperando respuesta del jugador.
+function chatAgregar(nodo){
+  const host=$("messages"),accion=$("guiaAccion");
+  if(accion&&accion.parentNode===host)host.insertBefore(nodo,accion);else host.appendChild(nodo);
+  scrollChat();
+}
 function addMsg(text,who="bot",imgUrl=null,meta=null){
   const wrap=document.createElement("div");
   who=["user","operator","bot","guide","system"].includes(who)?who:"system";
@@ -800,13 +936,14 @@ function addMsg(text,who="bot",imgUrl=null,meta=null){
   const imgHtml=imgUrl?`<img class="chat-img" src="${esc(imgUrl)}" onclick="window.open('${esc(imgUrl)}','_blank')" onerror="this.style.display='none'" alt="imagen">`:""
   const help=chatHelpMessage(text,who);
   let cuerpo=help.text;
-  if(who!=="user"){ const card=parseTransferCard(text); if(card) cuerpo=renderTransferCardHtml(card); }   // tarjeta solo en bot/sistema
-  const actions=help.actions.map(action=>'<button type="button" onclick="guiaAbrirTarjeta(\''+action+'\')">'+(action==="inicio"?"Abrir ayuda paso a paso":"Revisar una transferencia enviada")+'</button>').join("");
-  const labels={user:"Vos",operator:"Operador",bot:"Bot automático",guide:"Guía automática · opciones",system:"Sistema"};
+  if(who!=="user"&&who!=="guide"){ const card=parseTransferCard(text); if(card) cuerpo=renderTransferCardHtml(card); }   // tarjeta solo en bot/sistema: el asistente muestra textos que escribió otro
+  const actions=help.actions.map(action=>'<button type="button" onclick="guiaAbrirTarjeta(\''+action+'\')">'+(action==="inicio"?"Ver las opciones":"Revisar una transferencia enviada")+'</button>').join("");
+  const labels={user:"Vos",operator:"Operador",bot:"Asistente automático",guide:"Asistente automático",system:"Sistema"};
   const stamp=meta?.fecha||meta?.created_at;
   const time=stamp?(_fechaCorta(stamp)||now()):now();
+  wrap._portalTs=Date.parse(stamp||'')||0;wrap._portalClave=(who==='user'?'U|':'O|')+String(meta?.mensaje??meta?.texto??'').trim();
   wrap.innerHTML='<div class="bubble">'+cuerpo+imgHtml+(actions?'<div class="chat-help-actions">'+actions+'</div>':"")+'</div><div class="meta">'+labels[who]+" · "+esc(time)+((who==="user"&&!meta?.local)?'<span class="visto" aria-label="enviado">✓</span>':'')+'</div>';
-  $("messages").appendChild(wrap);scrollChat();
+  chatAgregar(wrap);
   if(!meta?.local && typeof portalMensajeClave==='function'){
     portalChatPreparar();
     const key=portalMensajeClave(meta);
@@ -815,6 +952,7 @@ function addMsg(text,who="bot",imgUrl=null,meta=null){
       if(typeof portalRegistrarGlobo==='function')portalRegistrarGlobo(meta,wrap);
     }
   }
+  if(who==="operator"&&!meta?.local&&typeof guiaCederAPersona==="function")guiaCederAPersona(stamp);
   return wrap;
 }
 function incomingOperatorMsg(texto,imgUrl,m=null){
@@ -858,7 +996,7 @@ function mostrarBotonIngresar(usuario,telefono){
     +'<div style="font-size:13px;line-height:1.4;margin-bottom:10px">Ya podés entrar'+(usuario?' con el usuario <b>'+esc(usuario)+'</b>':'')+' y empezar a operar.</div>'
     +'<button id="btnIngresarValidado" class="action-btn" style="margin:0" onclick="confirmarIngresoValidado(\''+usuario.replace(/'/g,"")+'\',\''+telefono.replace(/'/g,"")+'\')">Ingresar ›</button>'
     +'</div><div class="meta">BET300 · '+now()+'</div>';
-  msgs.appendChild(wrap); scrollChat();
+  chatAgregar(wrap);
   const fueraDelChat = state.screen!=="chat" || !$("widget")?.classList.contains("open");
   if(fueraDelChat){ bumpUnread(); try{ showOperatorBubble("✅ ¡Ya te activamos! Tocá para ingresar.",null); }catch(_e){} }
 }
@@ -879,11 +1017,32 @@ async function confirmarIngresoValidado(usuario,telefono){
       toast("⚠️ "+(d.mensaje||"Escribinos por chat.")); if(btn){btn.disabled=false;btn.textContent="Reintentar ingreso";}
       return;
     }
-    // El operador YA validó desde el panel (por eso llegó ⟦INGRESAR⟧, por un canal autenticado):
-    // si el cotejo da ACCESO, perfecto; si todavía no propagó, igual confiamos en esa validación y
-    // lo dejamos entrar. Así el botón funciona aunque el cotejo automático tarde en reflejar el cambio.
+    // Si el servidor contestó y dice que no puede operar, no se lo marca habilitado: antes se
+    // confiaba igual, el jugador veía la cuenta, transfería y el servidor le rechazaba la carga
+    // (Juan, 2/11). NODO deja vinculada la cuenta ANTES de mandar ⟦INGRESAR⟧, así que no hay demora
+    // que esperar. Sin respuesta (señal), se confía: el servidor controla igual al recibir el pedido.
+    if(!r.error&&VINCULO_NO_OPERA.includes(String(verdict).toUpperCase())){
+      if(btn){btn.disabled=false;btn.textContent="Reintentar ingreso";}
+      if(!state._ingresoSinVinculoAvisado){
+        state._ingresoSinVinculoAvisado=true;
+        const texto="Toqué Ingresar pero todavía no me deja operar. Usuario: "+state.usuario+". Tel: "+state.telefono+".";
+        const env=await enviarMensajeSoporte(texto,null);
+        if(env?.ok)mostrarMensajePropio(texto,null,env);
+      }
+      toast("Tu cuenta todavía no figura habilitada. Ya le avisamos al operador.");
+      return;
+    }
     state.nivelAcceso="OK"; try{localStorage.setItem("bet300_nivel_acceso","OK");}catch(_e){}
     state.motivoSoporte=""; try{localStorage.removeItem("bet300_motivo_soporte");}catch(_e){}
+    // Venía a cargar (o retirar) y le faltaba validar: sigue ahí mismo, sin volver a empezar.
+    const que=despuesPendiente();
+    if(que){
+      despuesDeValidar("");
+      goChat();
+      guiaDecir("Listo, tu cuenta ya está validada. Seguimos 👇");
+      guiaCorrer(GUIA_DESPUES[que]);
+      return;
+    }
     try{ toggleWidget(false); }catch(_e){}
     goHome();
     toast("✅ ¡Listo! Ya podés operar.");
@@ -956,19 +1115,23 @@ function _infoNavegador(){
 // explícitamente no disponible permite seleccionar legacy.
 const PORTAL_CHAT_BETA_RPC='landing_beta_chat_leer_v1';
 let portalChatVuelo=null, portalChatHistorialVuelo=null, portalChatContexto='', portalChatRuta='probe';
-let portalChatRevisarEn=0, portalChatCursor=null, portalChatInicializado=false;
-let portalChatGlobos=new Map();
+let portalChatRevisarEn=0, portalChatCursor=null, portalChatInicializado=false, portalChatCerradoHasta=0;
+let portalChatGlobos=new Map(), portalChatHiloEn=0, portalChatViejos=[];
 let portalChatSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
 function portalChatEstado(){return {...portalChatSalud,ruta:portalChatRuta,enCurso:!!portalChatVuelo};}
 function portalChatClave(){return JSON.stringify([state.publicCode||'',state.pcCodigo||'',state.usuario||'',state.telefono||'',state.chatId||'',state.chatToken||'']);}
 function portalChatPreparar(){
   const key=portalChatClave();
   if(portalChatContexto!==key){
-    for(const node of portalChatGlobos.values())node.remove();
+    // Si sólo cambió el chat (el jugador contestó y se abrió otro), lo que ya leyó se queda en pantalla.
+    const jugador=k=>k?JSON.stringify(JSON.parse(k).slice(0,4)):'';
+    const quedan=jugador(portalChatContexto)===jugador(key)?portalChatViejos.concat([...portalChatGlobos.values()].filter(n=>n._portalTs&&n._portalClave)):[];
+    for(const node of [...portalChatViejos,...portalChatGlobos.values()])if(!quedan.includes(node))node.remove();
+    portalChatViejos=quedan;
     portalChatGlobos=new Map();state.misGlobos=new Map();
     state.seenMsgIds=new Set();state._threadRendered=new Set();
     state.shownTexts=new Set();state._opMsgSeen=new Set();
-    portalChatContexto=key;portalChatRuta='probe';portalChatRevisarEn=0;
+    portalChatContexto=key;portalChatRuta='probe';portalChatRevisarEn=0;portalChatCerradoHasta=0;portalChatHiloEn=Date.now()+15000;
     portalChatCursor=null;portalChatInicializado=false;portalChatHistorialVuelo=null;
     portalChatSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
     const button=$('chatEarlier');if(button)button.remove();
@@ -984,16 +1147,45 @@ function portalRegistrarGlobo(m,node){
   const key=portalMensajeClave(m);
   if(key)portalChatGlobos.set(key,node);
 }
+function portalChatPrevio(m){
+  const ts=Date.parse(m.created_at||m.fecha||'')||0,clave=(chatMessageRole(m)==='user'?'U|':'O|')+String(m.mensaje??m.texto??'').trim();
+  return ts?portalChatViejos.find(n=>n._portalClave===clave&&Math.abs(n._portalTs-ts)<=10000):null;
+}
 function portalChatFuncionAusente(error,name){
   return !!error && ['PGRST202','42883'].includes(String(error.code||''))
     && String(error.message||'').includes(name);
+}
+// 9 de cada 10 chats terminan cerrados por el operador, y uno cerrado no se puede leer ni escribir:
+// el servidor contesta "no autorizado". No es una falla ni un error de la persona. Lo conversado se
+// queda en pantalla, el hilo del jugador se sigue leyendo y cada minuto se vuelve a probar, porque
+// desde NODO se puede reabrir. Recién el próximo mensaje del jugador abre otro chat.
+function chatCerradoEnServidor(error){return /BETA_CHAT_NOT_AUTHORIZED|chat no autorizado/i.test(String(error?.message||""));}
+function olvidarChatCerrado(){_borrar(CLAVES_CHAT);state.chatId="";state.chatToken="";}
+function portalChatSeCerro(){
+  portalChatCerradoHasta=Date.now()+60000;
+  if(typeof guiaChatCerrado==="function")guiaChatCerrado();
+}
+// El chat se guarda en dos lados: la tabla nueva y una copia en el hilo de la solicitud, que es lo
+// único que leen los NODO sin actualizar. Una solicitud vive en un solo lugar y por eso nunca se
+// duplica. Cuando el servidor avisa que el NODO de esta oficina anda por el canal nuevo, igual que
+// avisa cuál es la billetera activa, el mensaje ya viene en rows y su copia sobra. Lo que existe
+// sólo en el hilo (lo que el operador manda por el camino viejo) sigue saliendo.
+function portalChatSinCopias(hilo,filas){
+  const segundo=v=>{const t=Date.parse(String(v||'').slice(0,19)+'Z');return Number.isFinite(t)?t/1000:null;};
+  const lado=m=>(chatMessageRole(m)==='user'?'U|':'O|')+String(m.mensaje??'').trim();
+  const ya=new Map();
+  for(const f of filas){const s=segundo(f.created_at);if(s!==null)ya.set(lado(f),(ya.get(lado(f))||[]).concat(s));}
+  return hilo.filter(m=>{const s=segundo(m.fecha);return !(s!==null&&(ya.get(lado(m))||[]).some(x=>Math.abs(x-s)<=10));});
 }
 function portalChatUsarRuta(route){
   if(portalChatRuta!==route&&(portalChatRuta==='beta'||route==='beta')){
     // Cambio de representación: descartar sólo globos remotos, conservar la guía
     // y reconstruir desde la respuesta autorizada. No unir copias por su texto.
-    for(const node of portalChatGlobos.values())node.remove();
-    portalChatGlobos=new Map();state.misGlobos=new Map();
+    // Al entrar al canal nuevo, lo que ya tiene número del servidor se queda en su lugar: si se borraba,
+    // reaparecía abajo de la respuesta del asistente. Al salir se va todo, porque la ruta vieja no
+    // compara por número y lo repintaría.
+    for(const [key,node] of portalChatGlobos)if(route!=='beta'||!key.includes('|m:')){node.remove();portalChatGlobos.delete(key);}
+    state.misGlobos=new Map();
     state.seenMsgIds=new Set();state._threadRendered=new Set();state.shownTexts=new Set();state._opMsgSeen=new Set();
     portalChatInicializado=false;portalChatCursor=null;
     const button=$('chatEarlier');if(button)button.remove();
@@ -1020,17 +1212,28 @@ function portalChatRenderRows(rows,notificar,prepend){
     const old=portalChatGlobos.get(key);
     const signature=JSON.stringify([m.tipo_emisor,m.origen,m.emisor,m.auto,m.mensaje,m.texto,m.imagen_url,m.imagen]);
     if(old&&old._portalSignature===signature)continue;
+    const previo=old?null:portalChatPrevio(m);
+    if(previo){previo._portalSignature=signature;portalChatGlobos.set(key,previo);continue;}
     const who=chatMessageRole(m);
     let text=String(m.mensaje||m.texto||''),ing=null;
+    const crudo=text;
     if(who!=='user')text=text.replace(/⟦INGRESAR:([^⟧]*)⟧/g,function(_all,value){ing=String(value).split('|');return '';}).trim();
     const img=m.imagen_url||m.imagen||null;
+    // Si este chat se cierra se sigue leyendo el hilo viejo, que no repite lo que ya vio por texto.
+    state.shownTexts.add(who==='user'?(crudo?'u|'+crudo.substring(0,200):'uimg|'+String(img||'').substring(0,80)):crudo.substring(0,200));
     if(!text&&!img){if(ing)mostrarBotonIngresar(ing[0],ing[1]);continue;}
     const node=addMsg(escMsg(text),who,img,m);
     node._portalSignature=signature;
     node._portalCanonicalId=m.id==null?'':String(m.id);
+    node._portalTs=Date.parse(m.created_at||m.fecha||'')||0;
     portalChatGlobos.set(key,node);
     if(old){host.insertBefore(node,old);old.remove();}
-    else if(node._portalCanonicalId){
+    else if(node._portalTs){
+      // Cada globo va por la hora del servidor, venga de la tabla o del hilo. Pegar lo del hilo al
+      // final desordenaba la charla cada vez que se volvía a abrir.
+      const after=Array.from(host.children).find(n=>n!==node&&n._portalTs>node._portalTs);
+      if(after)host.insertBefore(node,after);
+    }else if(node._portalCanonicalId){
       const id=node._portalCanonicalId;
       const after=Array.from(host.children).find(n=>n!==node&&n._portalCanonicalId
         &&(n._portalCanonicalId.length>id.length||(n._portalCanonicalId.length===id.length&&n._portalCanonicalId>id)));
@@ -1039,7 +1242,7 @@ function portalChatRenderRows(rows,notificar,prepend){
     if(ing)mostrarBotonIngresar(ing[0],ing[1]);
     if(!old&&notificar&&who!=='user'&&state.screen!=='chat'){
       bumpUnread();showOperatorBubble(text,img);
-      if(text)notificarLocal('BET300 · '+(who==='operator'?'Operador':who==='bot'?'Bot automático':'Sistema'),chatHelpMessage(text,who).text.substring(0,100),'/','bet300-op');
+      if(text)notificarLocal('BET300 · '+(who==='operator'?'Operador':who==='bot'?'Asistente':'Sistema'),chatHelpMessage(text,who).text.substring(0,100),'/','bet300-op');
     }
   }
   marcarVistos(rows);
@@ -1089,17 +1292,20 @@ function portalChatBetaRespuesta(res){
 async function pollPortalConversation(){
   if(!state.usuario||!$('widget')?.classList.contains('open'))return;
   const key=portalChatPreparar();
-  if(portalChatVuelo&&portalChatVuelo.key===key)return portalChatVuelo.promise;
-  const flight={key,promise:null};portalChatVuelo=flight;
+  // Una lectura colgada no frena las siguientes para siempre: a los 20 s se pide de nuevo.
+  if(portalChatVuelo&&portalChatVuelo.key===key&&Date.now()-portalChatVuelo.t<20000)return portalChatVuelo.promise;
+  const flight={key,promise:null,t:Date.now()};portalChatVuelo=flight;
   const current=()=>key===portalChatClave();
   portalChatSalud={...portalChatSalud,estado:'consultando',ultimoError:null};
   flight.promise=(async()=>{
     try{
       let beta=null;
-      if(state.chatId&&state.chatToken&&(portalChatRuta!=='legacy'||Date.now()>=portalChatRevisarEn)){
+      const chatLegible=()=>state.chatId&&state.chatToken&&Date.now()>=portalChatCerradoHasta;
+      if(chatLegible()&&(portalChatRuta!=='legacy'||Date.now()>=portalChatRevisarEn)){
         const res=await rpc(PORTAL_CHAT_BETA_RPC,{p_chat_id:state.chatId,p_chat_token:state.chatToken,p_limit:50,p_before_id:null});
         if(!current())return;
-        if(portalChatFuncionAusente(res&&res.error,PORTAL_CHAT_BETA_RPC)){
+        if(chatCerradoEnServidor(res&&res.error))portalChatSeCerro();
+        else if(portalChatFuncionAusente(res&&res.error,PORTAL_CHAT_BETA_RPC)){
           portalChatUsarRuta('legacy');portalChatRevisarEn=Infinity;
         }else{
           beta=portalChatBetaRespuesta(res);
@@ -1110,7 +1316,21 @@ async function pollPortalConversation(){
             const recovery=portalChatInicializado&&beta.rows.length>0
               &&!beta.rows.some(m=>portalChatGlobos.has(portalMensajeClave(m)));
             portalChatRenderRows(beta.rows,portalChatInicializado,false);
-            portalChatRenderLegacy(beta.legacy_thread,true);
+            portalChatRenderLegacy(portalChatSinCopias(beta.legacy_thread,beta.rows),true);
+            // Un jugador puede tener dos pantallas con dos chats. Lo que NODO escribe va al hilo de su
+            // usuario, y ese hilo se lee siempre: si no, le llegaba a una pantalla y a la otra no.
+            // Cada 15 segundos y no cada 5: con todos los jugadores, una lectura más en cada vuelta pesa.
+            let hiloUsuario=null;
+            if(Date.now()>=portalChatHiloEn){
+              portalChatHiloEn=Date.now()+15000;
+              const delUsuario=await rpc('landing_portal_chat_thread_get',{p_usuario:state.usuario,p_public_code:state.publicCode,p_telefono:state.telefono||''});
+              if(!current())return;
+              hiloUsuario=delUsuario&&!delUsuario.error?(normalize(delUsuario.data)||delUsuario.data):null;
+            }
+            if(Array.isArray(hiloUsuario?.chat_thread)){
+              const vistos=beta.rows.concat(beta.legacy_thread.map(m=>({...m,created_at:m.fecha})));
+              portalChatRenderLegacy(portalChatSinCopias(hiloUsuario.chat_thread,vistos).map(m=>({...m,portal_key:'u:'+threadKey(m)})),true);
+            }
             portalChatMostrarAnterior(beta,recovery);portalChatInicializado=true;
           }else{
             portalChatUsarRuta('legacy');portalChatRevisarEn=Date.now()+60000;
@@ -1118,12 +1338,13 @@ async function pollPortalConversation(){
         }
       }
       if(!beta||!beta.available){
-        if(state.chatId&&state.chatToken){
+        if(chatLegible()){
           const res=await rpc('landing_leer_chat_v2',{p_chat_id:state.chatId,p_chat_token:state.chatToken});
           if(!current())return;
-          if(res.error||!Array.isArray(res.data))throw res.error||{code:'CONTRATO_INVALIDO'};
+          if(chatCerradoEnServidor(res.error))portalChatSeCerro();
+          else if(res.error||!Array.isArray(res.data))throw res.error||{code:'CONTRATO_INVALIDO'};
           // Legacy no acredita visto, aunque devuelva leido:true por descarga.
-          for(const m of res.data){
+          for(const m of (Array.isArray(res.data)?res.data:[])){
             const msgKey=String(m.id||m.created_at||JSON.stringify(m));
             if(state.seenMsgIds.has(msgKey))continue;state.seenMsgIds.add(msgKey);
             const who=chatMessageRole(m),text=m.mensaje||m.texto||'';
@@ -1206,7 +1427,7 @@ function renderThreadMsg(m, notificar){
       if(texto||imgUrl) addMsg(escMsg(texto),who,imgUrl||null,m);
       if(notificar){
         const fuera=state.screen!=="chat"||!$("widget")?.classList.contains("open");
-        if(fuera){ bumpUnread(); try{ showOperatorBubble(texto,imgUrl); }catch(_e){} if(texto){ try{ notificarLocal("BET300 · "+(who==="operator"?"Operador":who==="bot"?"Bot automático":"Sistema"),chatHelpMessage(texto,who).text.substring(0,100),"/","bet300-op"); }catch(_e){} } }
+        if(fuera){ bumpUnread(); try{ showOperatorBubble(texto,imgUrl); }catch(_e){} if(texto){ try{ notificarLocal("BET300 · "+(who==="operator"?"Operador":who==="bot"?"Asistente":"Sistema"),chatHelpMessage(texto,who).text.substring(0,100),"/","bet300-op"); }catch(_e){} } }
       }
     }
     if(ing) mostrarBotonIngresar(ing,ingTel);
@@ -1235,6 +1456,7 @@ function portalChatRenderLegacy(thread,resolved){
     const key=threadKey(m);
     if(state._threadRendered.has(key))return;
     state._threadRendered.add(key);
+    if(portalChatPrevio(m))return;
     const nuevo=!state.portalThreadSeen.has(key);
     state.portalThreadSeen.add(key);
     renderThreadMsg({...m,portal_key:'l:'+key}, nuevo);
@@ -1388,30 +1610,73 @@ function _persistSoporte(){
 // un ticket CLARO de alta nueva. No pelea con el cotejo (no tiene usuario aún).
 // OJO: el bono de bienvenida NO es de "nuevos" — es para la PRIMERA carga de CUALQUIERA, y lo
 // maneja la tarjeta de bono en Inicio (renderBonoBienvenidaCard). Este flujo NO lo menciona.
-function pedirRegistro(){
-  const nombre=String($("usuarioInicial")?.value||"").trim();
-  const telefono=String($("telefonoInicial")?.value||"").trim();
-  if(!telefono || telefono.replace(/\D/g,"").length<6){ return _gateError("Dejanos tu teléfono (con código de área) para crearte el usuario y contactarte."); }
+// Teléfono argentino: 10 números con el código de área (11 2345 6789). Se aceptan el +54, el 9 y el
+// 0 de adelante, que es como se copia de WhatsApp; el 15 no, porque no se sabe dónde termina la
+// característica. Alcanzaba con 6 números y llegaban pedidos con "Tel: 111234" (Carlitos, 2/11).
+// Es la única regla: la usan el ingreso, el registro y el "no me acuerdo", en pantalla y en el chat.
+const TEL_AYUDA="Escribí tu teléfono con código de área: 10 números, sin 0 ni 15. Ej: 11 2345 6789.";
+function telefonoDiezDigitos(t){
+  let d=String(t||"").replace(/\D/g,"");
+  if(d.length>10&&d.startsWith("54"))d=d.slice(2);
+  if(d.length>10&&d.startsWith("9"))d=d.slice(1);
+  if(d.length>10&&d.startsWith("0"))d=d.slice(1);
+  return d.length===10?d:"";
+}
+// El WhatsApp de la oficina como lo pide wa.me: 549 y los 10 números. Pasa por la misma regla, así que
+// un número mal cargado (le faltan números, trae el 15) queda vacío y no se ofrece el botón: mejor sin
+// botón que mandar al jugador a escribirle a otro.
+function normalizarWhatsApp(t){
+  const d=telefonoDiezDigitos(t);
+  return d?"549"+d:"";
+}
+// Viene con la ruta de la oficina, pero si la ruta salió del dominio propio esa respuesta no lo trae:
+// se pregunta recién cuando hace falta y una sola vez. Sin conexión no se guarda y se vuelve a probar.
+async function whatsappOficina(){
+  if(typeof state.whatsappOficina==="string")return state.whatsappOficina;
+  const ruta=state.publicCode;
+  if(!ruta)return "";
+  try{
+    const r=await rpc("landing_resolver_ruta_publica",{p_public_code:ruta});
+    if(r.error)return "";
+    const numero=normalizarWhatsApp(normalize(r.data)?.whatsapp_numero);
+    if(state.publicCode===ruta)state.whatsappOficina=numero;   // si cambió de oficina en el medio, no
+    return numero;
+  }catch(_e){return "";}
+}
+function pedirRegistroCon(nombre,telefono){
+  nombre=String(nombre||"").trim();
+  telefono=String(telefono||"").trim();
+  if(!telefonoDiezDigitos(telefono)){ return {error:TEL_AYUDA}; }
   state.usuario = nombre || ("nuevo-"+telefono.replace(/\D/g,""));
   state.telefono = telefono;
   state.nivelAcceso = "SOPORTE";
   state.motivoSoporte = "Registro en proceso · Un operador te crea el usuario y te avisa por el chat.";
   _persistSoporte();
   renderHome();
+  return {};
+}
+function pedirRegistro(){
+  const r=pedirRegistroCon($("usuarioInicial")?.value,$("telefonoInicial")?.value);
+  if(r.error)return _gateError(r.error);
   escribirSoporteAlta("registro"); // abre el chat Y auto-envía el pedido de alta nueva
 }
 // AYUDA DE ACCESO: el que YA tiene usuario pero no puede entrar (datos mal / no validado).
 // Ticket distinto para que el operador no lo confunda con un alta nueva.
-function pedirAyudaAcceso(){
-  const usuario=String($("usuarioInicial")?.value||"").trim();
-  const telefono=String($("telefonoInicial")?.value||"").trim();
-  if(!telefono || telefono.replace(/\D/g,"").length<6){ return _gateError("Dejanos tu teléfono (con código de área) para poder ayudarte a validar tu cuenta."); }
+function pedirAyudaCon(usuario,telefono){
+  usuario=String(usuario||"").trim();
+  telefono=String(telefono||"").trim();
+  if(!telefonoDiezDigitos(telefono)){ return {error:TEL_AYUDA}; }
   state.usuario = usuario || ("ayuda-"+telefono.replace(/\D/g,""));
   state.telefono = telefono;
   state.nivelAcceso = "SOPORTE";
   state.motivoSoporte = "Estamos viendo por qué no podés entrar. Un operador valida tus datos y te avisa por el chat.";
   _persistSoporte();
   renderHome();
+  return {};
+}
+function pedirAyudaAcceso(){
+  const r=pedirAyudaCon($("usuarioInicial")?.value,$("telefonoInicial")?.value);
+  if(r.error)return _gateError(r.error);
   escribirSoporteAlta("ayuda"); // abre el chat Y auto-envía el pedido de ayuda de acceso
 }
 // Normaliza el usuario de plataforma antes de mandarlo a validar: saca espacios/acentos, baja a
@@ -1428,27 +1693,26 @@ function normalizarUsuarioPlataforma(raw){
   u=u.replace(/[^a-z0-9._-]/g,"");                             // solo lo típico de un usuario de plataforma
   return u;
 }
-async function guardarUsuarioInicial(){
-  const usuario=normalizarUsuarioPlataforma($("usuarioInicial")?.value||"");
-  const telefono=String($("telefonoInicial")?.value||"").trim();
-  const err=$("gateError"); if(err)err.style.display="none";
-  if(!usuario)return _gateError("Indicá tu usuario de plataforma (el nombre con el que entrás a jugar, no tu email).");
-  if(!telefono || telefono.replace(/\D/g,"").length<6)return _gateError("Indicá tu teléfono con código de área (sin 0 ni 15).");
-  if(!state.pcCodigo)return _gateError("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte.");
+// Una sola forma de entrar: la usan el formulario de Inicio y la ficha del chat. Devuelve {error}
+// si hay que corregir algo, o {acceso} con lo que resolvió el cotejo.
+async function ingresarJugador(usuarioRaw,telefonoRaw){
+  const usuario=normalizarUsuarioPlataforma(usuarioRaw||"");
+  const telefono=String(telefonoRaw||"").trim();
+  if(!usuario)return {error:"Indicá tu usuario de plataforma (el nombre con el que entrás a jugar, no tu email)."};
+  if(!telefonoDiezDigitos(telefono))return {error:TEL_AYUDA};
+  if(!state.pcCodigo)return {error:"No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte."};
 
-  const btn=$("gateBtn"); if(btn){btn.disabled=true;btn.textContent="Verificando...";}
   let d={};
   try{
     const r=await rpc("landing_portal_resolver_vinculo",{p_pc_codigo:state.pcCodigo,p_usuario:usuario,p_telefono:telefono});
     d=normalize(r.data)||r.data||{};
     if(r.error){ console.warn("[vinculo]",r.error); d={verdict:"ERROR"}; }
   }catch(e){ console.warn("[vinculo]",e); d={verdict:"ERROR"}; }
-  if(btn){btn.disabled=false;btn.textContent="Ingresar al portal";}
 
   const verdict=d.verdict||"";
-  // Datos vacíos / teléfono inválido → corregilo acá mismo, en el gate.
+  // Datos vacíos / teléfono inválido → se corrige en el mismo lugar donde los escribió.
   if(verdict==="SIN_USUARIO"||verdict==="TEL_INVALIDO"){
-    return _gateError(d.mensaje||"Revisá tu usuario y teléfono.");
+    return {error:d.mensaje||"Revisá tu usuario y teléfono."};
   }
 
   state.usuario=usuario;
@@ -1456,16 +1720,15 @@ async function guardarUsuarioInicial(){
   localStorage.setItem("bet300_usuario",usuario);
   localStorage.setItem("bet300_telefono",telefono);
   if(d.estado)localStorage.setItem("bet300_vinculo_estado",d.estado);
+  setTimeout(()=>subscribePush(),1500);
+  setTimeout(()=>marcarAppInstalada(),1700);
 
   // ✅ Cotejo OK → validado desde el inicio, entra directo a operar.
   if(verdict==="ACCESO"){
     state.nivelAcceso="OK"; localStorage.setItem("bet300_nivel_acceso","OK");
     state.motivoSoporte=""; localStorage.removeItem("bet300_motivo_soporte");
     renderHome();
-    setTimeout(()=>subscribePush(),1500);
-    setTimeout(()=>marcarAppInstalada(),1700);
-    toast("✅ "+(d.mensaje||"Acceso verificado."));
-    return;
+    return {acceso:true,mensaje:d.mensaje};
   }
 
   // ⚠️ Cualquier otro caso (no validó al toque, dato mal escrito, usuario aún sin activar, conflicto o
@@ -1481,9 +1744,17 @@ async function guardarUsuarioInicial(){
   localStorage.setItem("bet300_nivel_acceso","SOPORTE");
   localStorage.setItem("bet300_motivo_soporte",state.motivoSoporte);
   renderHome();
-  setTimeout(()=>subscribePush(),1500);
-  setTimeout(()=>marcarAppInstalada(),1700);
   iniciarValidacionUsuarioBackground(usuario);   // cotejo en agentes (autohabilita "Ingresar" si da ACCESO)
+  return {acceso:false};
+}
+async function guardarUsuarioInicial(){
+  const err=$("gateError"); if(err)err.style.display="none";
+  const btn=$("gateBtn"); if(btn){btn.disabled=true;btn.textContent="Verificando...";}
+  let r;
+  try{ r=await ingresarJugador($("usuarioInicial")?.value,$("telefonoInicial")?.value); }
+  catch(e){ console.warn("[vinculo]",e); r={error:"No pudimos verificar ahora. Probá de nuevo."}; }
+  if(r.error){ if(btn){btn.disabled=false;btn.textContent="Ingresar al portal";} return _gateError(r.error); }
+  if(r.acceso)return toast("✅ "+(r.mensaje||"Acceso verificado."));
   escribirSoporteAlta("validar");                 // ticket claro para el operador + abre el chat
 }
 
@@ -1582,7 +1853,9 @@ async function _confirmarLimpiarPendiente(){
     }
   }
 
-  stopChatPoll();stopEstadoPoll();
+  // El chat sigue abierto: se sigue leyendo. Frenarlo acá dejaba al jugador sin ver lo que le
+  // escribían hasta cerrar y abrir el chat (Lourdes, 2/11).
+  stopEstadoPoll();
   olvidarSolicitud(true);
   if(eraRetiro){ try{localStorage.removeItem(_retiroKey());}catch(_e){} }
   toast(eraRetiro?"Retiro cancelado. Ya podés enviar uno nuevo.":"Solicitud cancelada. Ya podés enviar una nueva.");
@@ -1896,6 +2169,12 @@ function renderEstado(){
       </div>
       <div id="histUsuario"></div>`;
   }
+  if(String(state.pendingTipo||"").toUpperCase()==="RETIRO"&&state._retiroPendienteValidacion){
+    const h=s.querySelector(".estado-h"),sub=s.querySelector(".estado-sub"),tx=s.querySelector(".estado-tx");
+    if(h)h.textContent="Verificando titularidad con el banco";
+    if(sub)sub.textContent="Verificación por única vez para esta cuenta";
+    if(tx)tx.textContent="Estamos confirmando que el DNI coincida con el titular. Puede demorar unos minutos; te avisamos por acá cuando termine.";
+  }
   pintarHistorialUsuario();
   startHistPoll();
   // El teléfono puede estar desactualizado en los dos sentidos: creer que no hay nada cuando
@@ -1912,7 +2191,7 @@ function renderEstado(){
 function limpiarPendienteAprobado(obs){
   if(estadoFinalNotificado)return;
   estadoFinalNotificado=true;
-  stopEstadoPoll();stopChatPoll();
+  stopEstadoPoll();   // el chat se sigue leyendo (ver cancelar)
   const tipoFinal=state.pendingTipo||"CARGA";
   olvidarSolicitud(true); state.shownTexts=new Set();
   const esRetiro=tipoFinal==="RETIRO";
@@ -1954,6 +2233,21 @@ async function consultarEstadoSolicitud(mostrarMensaje=true){
   });
   if(res.error){if(mostrarMensaje)toast("No pude consultar el estado ahora.");return null;}
   const d=normalize(res.data)||res.data||{};
+  if(String(state.pendingTipo||"").toUpperCase()==="RETIRO"){
+    try{
+      const protocolo=await _consultarRetiroProtocolo(false),ultima=protocolo&&protocolo.ultima_solicitud;
+      if(protocolo.mode==="beta"&&ultima&&String(ultima.id)===String(sid)){
+        state._retiroPendienteValidacion=String(ultima.estado_validacion||"").toUpperCase()==="PENDIENTE";
+        state._retiroDniRechazado=String(ultima.codigo||"").toUpperCase()==="DNI_MISMATCH";
+        if(state._retiroPendienteValidacion){
+          const box=$("screenEstado"),h=box&&box.querySelector(".estado-h"),sub=box&&box.querySelector(".estado-sub"),tx=box&&box.querySelector(".estado-tx");
+          if(h)h.textContent="Verificando titularidad con el banco";
+          if(sub)sub.textContent="Verificación por única vez para esta cuenta";
+          if(tx)tx.textContent="Estamos confirmando que el DNI coincida con el titular. Puede demorar unos minutos; te avisamos por acá cuando termine.";
+        }
+      }
+    }catch(_e){}
+  }
   if(d.ok===false){setEstadoLive("⏳ En verificación");return "PENDIENTE";}
   const estado=estadoNormalizado(d.estado||d.status||d.estado_solicitud);
   // Motivo del rechazo: la RPC landing_estado_solicitud_segura lo devuelve en `mensaje` cuando el
@@ -1972,6 +2266,7 @@ async function consultarEstadoSolicitud(mostrarMensaje=true){
     stopEstadoPoll();
     rechazadoStreak=0;
     const eraRetiro = String(state.pendingTipo||"").toUpperCase()==="RETIRO";
+    const esRechazoDni=eraRetiro&&(state._retiroDniRechazado||/DNI_MISMATCH|DNI[^<]{0,40}no coincide|titularidad[^<]{0,40}no pudo confirm/i.test(obs));
     olvidarSolicitud(false);
     // Retiro rechazado/cancelado por el operador → no se efectuó → liberar el cooldown de 24h.
     if(eraRetiro){ try{localStorage.removeItem(_retiroKey());}catch(_e){} }
@@ -1983,6 +2278,12 @@ async function consultarEstadoSolicitud(mostrarMensaje=true){
         ${obs?`<div class="estado-tx">${escMsg(obs)}</div>`:`<div class="estado-tx">Escribinos por el chat y un operador te ayuda.</div>`}
         <div class="estado-actions"><button class="action-btn" onclick="goChat()">💬 Consultar</button><button class="action-btn secondary-btn" onclick="goCarga()">Nueva carga</button></div>
       </div>`;
+    if(esRechazoDni&&s){
+      const h=s.querySelector(".estado-h"),tx=s.querySelector(".estado-tx"),actions=s.querySelector(".estado-actions");
+      if(h)h.textContent="No pudimos confirmar la titularidad";
+      if(tx)tx.textContent="El DNI no coincidió con el titular de la cuenta. No se descontaron fichas. Corregí los datos de cobro; el DNI rechazado no se puede volver a enviar.";
+      if(actions)actions.innerHTML='<button class="action-btn" onclick="corregirDatosRetiroDesdeEstado()">Corregir datos de cobro</button><button class="action-btn secondary-btn" onclick="goChat()">Chat</button>';
+    }
     try{ pintarHistorialUsuario(); }catch(_e){}   // el rechazo (con su motivo) ya figura en el historial
     renderHome();
     if($("widget")?.classList.contains("open"))showScreen("estado");
@@ -2142,7 +2443,7 @@ async function initRoute(){
     state.publicCode = MODO_PRUEBA.ruta;
     const rp = await rpc("landing_resolver_ruta_publica",{p_public_code:state.publicCode});
     const filaP = rp.error ? null : normalize(rp.data);
-    if(filaP){ state.pcCodigo = filaP.pc_codigo||filaP.pc||filaP.codigo_pc||null; }
+    if(filaP){ state.pcCodigo = filaP.pc_codigo||filaP.pc||filaP.codigo_pc||null; state.whatsappOficina = normalizarWhatsApp(filaP.whatsapp_numero); }
     console.log("[BET300 PRUEBAS]", MODO_PRUEBA.oficina, state.publicCode, "->", state.pcCodigo);
     return;                       // sin mudanza de dominio: te quedás donde estás
   }
@@ -2164,7 +2465,7 @@ async function initRoute(){
   if(!state.publicCode){ state.pcCodigo=null; console.warn("[BET300] sin ruta de agente"); return; }
   const r=await rpc("landing_resolver_ruta_publica",{p_public_code:state.publicCode});
   const row = r.error ? null : normalize(r.data);
-  if(row){ state.pcCodigo=row.pc_codigo||row.pc||row.codigo_pc||null; }
+  if(row){ state.pcCodigo=row.pc_codigo||row.pc||row.codigo_pc||null; state.whatsappOficina=normalizarWhatsApp(row.whatsapp_numero); }
 
   try{
     const propio = String(row && row.host || "").trim().toLowerCase();
@@ -2280,16 +2581,19 @@ function billeteraSignature(b){
 // otra encima. Medido: 12.067 solicitudes en 30 días llegan a menos de 15 min de la anterior
 // del mismo jugador (13,9 %, 1.809 jugadores). Cada una es trabajo duplicado para el operador.
 // El servidor es el único que sabe la verdad, así que se le pregunta a él.
-async function _solicitudActivaEnServidor(){
-  if(!state.usuario || !state.telefono) return null;
+async function _leerSolicitudActiva(){
+  if(!state.usuario || !state.telefono) return {ok:false,fila:null};
   try{
     const r = await rpc("landing_solicitud_activa", {
       p_usuario: state.usuario, p_telefono: state.telefono, p_public_code: state.publicCode||""
     });
-    if(r.error) return null;                 // sin respuesta no se traba a nadie
+    if(r.error) return {ok:false,fila:null};
     const d = normalize(r.data) || (Array.isArray(r.data) ? r.data[0] : r.data) || null;
-    return (d && d.solicitud_id) ? d : null;
-  }catch(_e){ return null; }
+    return {ok:true,fila:(d && d.solicitud_id) ? d : null};
+  }catch(_e){ return {ok:false,fila:null}; }
+}
+async function _solicitudActivaEnServidor(){
+  return (await _leerSolicitudActiva()).fila;   // sin respuesta no se traba a nadie
 }
 
 // Deja el portal en el estado que dice el servidor. Devuelve true si hay una abierta.
@@ -2358,7 +2662,7 @@ function parseTransferCard(text){
 function renderTransferCardHtml(d){
   d=d||{};
   const cbu=d.cbu||d.cvu||"";
-  const field=(lbl,val)=> val ? ('<div class="transfer-field"><div class="tf-main"><div class="transfer-label">'+esc(lbl)+'</div><div class="transfer-value">'+esc(val)+'</div></div><button class="copy-btn" data-lbl="Copiar" onclick="copyText(\''+esc(val)+'\',this)">Copiar</button></div>') : '';
+  const field=(lbl,val)=> val ? ('<div class="transfer-field"><div class="tf-main"><div class="transfer-label">'+esc(lbl)+'</div><div class="transfer-value">'+esc(val)+'</div></div><button class="copy-btn" data-lbl="Copiar" data-valor="'+esc(val)+'" onclick="copyText(this.dataset.valor,this)">Copiar</button></div>') : '';
   const pie=[d.titular?('a nombre de <b>'+esc(d.titular)+'</b>'):'', d.banco?esc(d.banco):'']
               .filter(Boolean).join(' · ');
   return '<div class="transfer-card"><div class="transfer-head"><div class="transfer-title">📥 Transferí a esta cuenta</div></div>'
@@ -2665,7 +2969,7 @@ function onTitularInput(el){
 }
 let _titularAvisoTimer=null;
 function _titularAviso(el,msg){
-  const box=$( (el&&el.id==="retiroTitular") ? "avisoTitularRetiro" : "avisoTitular" );
+  const box=$( (el&&el.id==="guiaTitular") ? "guiaAvisoTitular" : (el&&el.id==="retiroTitular") ? "avisoTitularRetiro" : "avisoTitular" );
   if(!box) return;
   clearTimeout(_titularAvisoTimer);
   if(!msg){ box.textContent=""; box.style.display="none"; return; }
@@ -2836,6 +3140,15 @@ function marcarFaltantes(ids){
   return true;
 }
 
+// Lo que se revisa del titular antes de crear una carga, sea desde la pantalla o desde el chat.
+async function revisarTitularCarga(titular){
+  const mal=validarTitular(titular);
+  if(mal)return {aviso:mal,toast:"Revisá el titular"};
+  if(_titularEsNuestro(titular))return {aviso:"Ese es el titular de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular de la cuenta desde la que transferiste.",toast:"Ese no es tu titular"};
+  if(await _titularBloqueado(titular))return {aviso:"Este titular está bloqueado para tu cuenta. Poné el titular de la cuenta desde la que transferiste, o escribinos por el chat.",toast:"Ese titular no se puede usar"};
+  return null;
+}
+
 async function enviarSolicitudCargaDirecta(){
   if(!_tomarEnvio("btnEnviarCarga")) return;   // ya hay una en vuelo: este toque no cuenta
   try{
@@ -2844,28 +3157,13 @@ async function enviarSolicitudCargaDirecta(){
   const titular=($("cargaTitular")?.value||"").trim();
   if(marcarFaltantes(["cargaMonto","cargaTitular"])) return toast("Falta completar el campo marcado");
   if(Number(monto)<_minCarga())return toast("La carga mínima es "+_money(_minCarga())+".");
-  const _malT=validarTitular(titular);
+  const _malT=await revisarTitularCarga(titular);
   if(_malT){
     const el=$("cargaTitular");
     if(el){ el.classList.add("falta"); try{ el.scrollIntoView({block:"center",behavior:"smooth"}); el.focus({preventScroll:true}); }catch(_e){} }
-    _titularAviso(el,_malT);
+    _titularAviso(el,_malT.aviso);
     haptic(18);
-    return toast("Revisá el titular");
-  }
-  if(_titularEsNuestro(titular)){
-    const el=$("cargaTitular");
-    if(el){ el.classList.add("falta"); try{ el.scrollIntoView({block:"center",behavior:"smooth"}); el.focus({preventScroll:true}); }catch(_e){} }
-    _titularAviso(el, "Ese es el titular de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular de la cuenta desde la que transferiste.");
-    haptic(18);
-    return toast("Ese no es tu titular");
-  }
-  const _bloq = await _titularBloqueado(titular);
-  if(_bloq){
-    const el=$("cargaTitular");
-    if(el){ el.classList.add("falta"); try{ el.scrollIntoView({block:"center",behavior:"smooth"}); el.focus({preventScroll:true}); }catch(_e){} }
-    _titularAviso(el, "Este titular está bloqueado para tu cuenta. Poné el titular de la cuenta desde la que transferiste, o escribinos por el chat.");
-    haptic(18);
-    return toast("Ese titular no se puede usar");
+    return toast(_malT.toast);
   }
   await enviarSolicitudCarga(state.usuario,monto,titular);
   } finally {
@@ -2908,29 +3206,26 @@ function plegarBilletera(card, plegar){
   t.textContent = plegar ? "Ver los datos otra vez" : "Ocultar datos";
 }
 
-function limpiarSolicitudAnteriorAntesDeNueva(){
-  stopEstadoPoll();stopChatPoll();estadoFinalNotificado=false;
+function limpiarSolicitudAnteriorAntesDeNueva(conservarChat){
+  stopEstadoPoll();estadoFinalNotificado=false;
+  if(conservarChat){ olvidarSolicitud(false); return; }   // pedida desde el chat: la charla sigue
   olvidarSolicitud(true);
 }
 
-async function enviarSolicitudCarga(usuario,monto,titular){
-  if(!await _puedeOperarConServidor())return;
-  if(!(Number(monto)>0))return toast("Ingresá un monto válido.");
-  if(Number(monto)<_minCarga())return toast("La carga mínima es "+_money(_minCarga())+".");
-  if(String(titular||"").trim().length<3)return toast("Indicá el titular que transfiere (mínimo 3 letras).");
-  limpiarSolicitudAnteriorAntesDeNueva();
+// Crea la carga y devuelve qué pasó. Lo que se muestra después lo decide quien la pidió: la
+// pantalla Cargar o la ficha del chat. Es la única función del Portal que crea cargas.
+async function crearSolicitudCarga(usuario,monto,titular,conservarChat){
+  limpiarSolicitudAnteriorAntesDeNueva(conservarChat);
   const bp=billeteraPayloadPlano();
   const _ip=await _ipPublica();   // si no llega en 2,5 s va sin ella: nunca frena el envío
   const payload={usuario,monto:Number(monto),titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),ip:_ip||"",tipo:"CARGA",...bp,..._marcaDeTiempo()};
   const destino=bp.billetera_nombre?`${bp.billetera_nombre}${bp.billetera_alias?" · "+bp.billetera_alias:""}`:null;
   let res=await rpc("landing_portal_v16_crear_solicitud",{p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"CARGA",p_monto:Number(monto),p_titular:titular,p_destino:destino,p_mensaje:"Solicitud de CARGA: $"+monto+" · Titular: "+titular,p_metadata:payload});
   // Rechazo por validación de vínculo → NO usar fallback (sería un bypass). Mandamos a soporte.
-  if(res.error && /VINCULO_NO_VALIDO|NO_AUTORIZADO|NO_REGISTRADO|CONFLICTO|BLOQUEADO/i.test(res.error.message||"")){
-    toast("⚠️ Tu usuario no está habilitado para operar. Validá tus datos o escribinos por soporte."); goChat(); return;
-  }
+  if(res.error && /VINCULO_NO_VALIDO|NO_AUTORIZADO|NO_REGISTRADO|CONFLICTO|BLOQUEADO/i.test(res.error.message||""))return {ok:false,motivo:"no_habilitado"};
   if(res.error){console.warn("[V18]",res.error);res=await rpc("landing_crear_solicitud_v3_blindado",{p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"CARGA",p_monto:Number(monto),p_titular:titular,p_comprobante_url:null,p_extra:payload});}
   if(res.error){res=await rpc("landing_crear_chat_v2_blindado",{p_public_code:state.publicCode,p_usuario:usuario,p_mensaje:"Solicitud de CARGA: $"+monto+" · Titular: "+titular,p_tipo:"CARGA",p_extra:payload});}
-  if(res.error){toast("No pudimos enviar la solicitud. Probá por el chat.");goChat();return;}
+  if(res.error)return {ok:false,motivo:"sin_envio"};
   const data=normalize(res.data)||res.data||{};
   const solicitudId=data?.solicitud_id||data?.id||data?.solicitudId||"";
   const chatId=data?.chat_id||data?.chatId||"";
@@ -2942,7 +3237,24 @@ async function enviarSolicitudCarga(usuario,monto,titular){
   // guardaba igual el pendiente con id vacío: el portal quedaba trabado —"Ya tenés una solicitud
   // en revisión" bloqueaba toda carga y todo retiro nuevo— sin nada que consultar para destrabarlo.
   // La única salida era "Marcar como resuelta en este dispositivo", que casi nadie encuentra.
-  if(!/^\d+$/.test(String(solicitudId||""))){
+  if(!/^\d+$/.test(String(solicitudId||"")))return {ok:true,porChat:true};
+  // Se guarda el TITULAR de la cuenta, que es lo que la persona vio y reconoce. "SALVATIERRA X"
+  // es como le decimos nosotros adentro y no le dice nada a nadie.
+  setPendiente("CARGA",String(solicitudId),(bp&&bp.billetera_titular)||destino||"");
+  _guardarTitularPrevio(titular);   // la próxima vez viene pre-rellenado
+  return {ok:true,solicitudId:String(solicitudId)};
+}
+async function enviarSolicitudCarga(usuario,monto,titular){
+  if(!await _puedeOperarConServidor())return;
+  if(!(Number(monto)>0))return toast("Ingresá un monto válido.");
+  if(Number(monto)<_minCarga())return toast("La carga mínima es "+_money(_minCarga())+".");
+  if(String(titular||"").trim().length<3)return toast("Indicá el titular que transfiere (mínimo 3 letras).");
+  const r=await crearSolicitudCarga(usuario,monto,titular);
+  if(r.motivo==="no_habilitado"){
+    toast("⚠️ Tu usuario no está habilitado para operar. Validá tus datos o escribinos por soporte."); goChat(); return;
+  }
+  if(!r.ok){toast("No pudimos enviar la solicitud. Probá por el chat.");goChat();return;}
+  if(r.porChat){
     toast("Lo tomamos por el chat · un operador lo confirma");
     haptic([20,30,20]);
     renderHome();
@@ -2952,11 +3264,6 @@ async function enviarSolicitudCarga(usuario,monto,titular){
     setTimeout(()=>subscribePush(),1200);
     return;
   }
-  // Se guarda el TITULAR de la cuenta, que es lo que la persona vio y reconoce. "SALVATIERRA X"
-  // es como le decimos nosotros adentro y no le dice nada a nadie.
-  setPendiente("CARGA",String(solicitudId),(bp&&bp.billetera_titular)||destino||"");
-
-  _guardarTitularPrevio(titular);   // la próxima vez viene pre-rellenado
   toast("Solicitud enviada ✅");haptic([20,30,20]);
   renderHome();
   goEstado();
@@ -2992,30 +3299,183 @@ function renderRetiro(){
 // Traer el CBU y el titular del último retiro y dejarlos puestos. Antes había que tipear los
 // dos de memoria cada vez, o irlos a buscar a otra app con el portal abierto. Los campos
 // quedan EDITABLES y se avisa de dónde salieron: si cobra en otra cuenta, los cambia y listo.
-async function _rellenarDatosRetiro(){
-  const cajaAviso = $("retiroDatosPrevios");
-  const elD = $("retiroDestino"), elT = $("retiroTitular");
-  if(!elD || !elT) return;
-  // Si la persona ya empezó a escribir, no se le pisa nada.
-  if(String(elD.value||"").trim() || String(elT.value||"").trim()) return;
-  let d = null;
+function _retiroRpcInexistente(error){
+  const code=String(error&&error.code||"").toUpperCase(),msg=String(error&&error.message||"");
+  return code==="PGRST202"||code==="42883"||(/landing_portal_retiro_contexto_v1/i.test(msg)&&/does not exist|not found|could not find/i.test(msg));
+}
+async function _consultarRetiroProtocolo(forzar){
+  const key=[state.publicCode||"",state.usuario||"",state.telefono||"",location.host||""].join("|");
+  const cache=state._retiroProtocoloCache;
+  if(!forzar&&cache&&cache.key===key&&Date.now()-cache.at<30000)return cache.value;
+  let result;
   try{
-    const r = await rpc("landing_datos_retiro", {
-      p_usuario: state.usuario||"", p_telefono: state.telefono||"",
-      p_public_code: state.publicCode||""
+    const r=await rpc("landing_portal_retiro_contexto_v1",{
+      p_public_code:state.publicCode||"",p_usuario:state.usuario||"",
+      p_telefono:state.telefono||"",p_host:location.host||""
     });
-    if(!r.error) d = normalize(r.data) || (Array.isArray(r.data)?r.data[0]:r.data) || null;
-  }catch(_e){}
-  if(!d || !String(d.destino||"").trim()) return;
-
-  elD.value = String(d.destino||"").trim();
-  elT.value = String(d.titular||"").trim();
-  try{ onTitularInput(elT); }catch(_e){}
-  if(cajaAviso){
-    cajaAviso.innerHTML = '<div class="retiro-previos">'
-      + 'Pusimos los datos de tu último retiro. <b>Si cobrás en otra cuenta, cambialos.</b>'
-      + '</div>';
+    if(r.error){
+      result=_retiroRpcInexistente(r.error)?{mode:"legacy"}:{mode:"error",code:"RETIRO_CONTEXTO_NO_DISPONIBLE"};
+    }else{
+      const d=normalize(r.data)||r.data||{};
+      if(d.ok!==true||d.contract!=="retiro.instrumentos.v1"||typeof d.enabled!=="boolean")
+        result={mode:"error",code:"RETIRO_CONTEXTO_RESPUESTA_INVALIDA"};
+      else result=Object.assign({},d,{mode:d.enabled?"beta":"legacy"});
+    }
+  }catch(_e){result={mode:"error",code:"RETIRO_CONTEXTO_NO_DISPONIBLE"};}
+  state._retiroProtocolo=result;
+  state._retiroProtocoloCache={key:key,at:Date.now(),value:result};
+  return result;
+}
+async function _leerDatosRetiroAnterior(){
+  try{
+    const r=await rpc("landing_datos_retiro",{
+      p_usuario:state.usuario||"",p_telefono:state.telefono||"",p_public_code:state.publicCode||""
+    });
+    const d=r.error?null:(normalize(r.data)||(Array.isArray(r.data)?r.data[0]:r.data)||null);
+    if(!d||!String(d.destino||"").trim())return null;
+    return {destino:String(d.destino||"").trim(),titular:String(d.titular||"").trim()};
+  }catch(_e){return null;}
+}
+async function leerDatosRetiro(){
+  const protocolo=await _consultarRetiroProtocolo(false);
+  if(protocolo.mode==="error")return {error:true,protocolo:protocolo};
+  if(protocolo.mode==="beta"&&protocolo.instrumento){
+    const i=protocolo.instrumento;
+    return {destino:String(i.destino||"").trim(),titular:String(i.titular||"").trim(),beta:true,validado:true,protocolo:protocolo};
   }
+  const anterior=await _leerDatosRetiroAnterior();
+  if(protocolo.mode==="beta")return Object.assign({beta:true,validado:false,protocolo:protocolo},anterior||{});
+  return anterior;
+}
+function _mostrarDniRetiro(destino){
+  const caja=$(destino||"retiroDatosPrevios");
+  if(!caja)return;
+  caja.innerHTML='<div class="retiro-validacion-aviso" style="margin:8px 0;padding:10px 12px;border:1px solid #31506a;border-radius:10px;background:#101d29;color:#d7e8f5">'
+    +'<b>Verificación de titularidad por única vez</b><br>Al usar esta cuenta, confirmamos manualmente que el DNI coincida con el titular. Puede demorar unos minutos; te avisamos cuando quede lista.'
+    +'</div><label for="'+(destino==="guiaDniWrap"?"guiaDni":"retiroDni")+'">DNI del titular (8 dígitos)</label>'
+    +'<input id="'+(destino==="guiaDniWrap"?"guiaDni":"retiroDni")+'" type="text" inputmode="numeric" autocomplete="off" maxlength="8" placeholder="Ej: 38495012" oninput="this.value=this.value.replace(/\\D/g,\'\').slice(0,8)" required>';
+}
+function cambiarCuentaRetiro(){
+  const p=state._retiroProtocolo;
+  if(!p||p.mode!=="beta")return;
+  p.cambiarCuenta=true;
+  const elD=$("retiroDestino"),elT=$("retiroTitular"),box=$("retiroDatosPrevios");
+  [elD,elT].forEach(function(el){if(el){el.readOnly=false;el.disabled=false;el.style.display="";if(el.previousElementSibling)el.previousElementSibling.style.display="";}});
+  const aviso=$("avisoTitularRetiro");if(aviso)aviso.style.display="";
+  _mostrarDniRetiro("retiroDatosPrevios");
+  try{elD?.focus();}catch(_e){}
+}
+async function corregirDatosRetiroDesdeEstado(){
+  // El botón aparece después de un rechazo beta. Volvemos a consultar antes de abrir el formulario:
+  // una respuesta cacheada o un Portal legacy no debe presentar como disponible una ruta apagada.
+  const protocolo=await _consultarRetiroProtocolo(true);
+  if(!protocolo||protocolo.mode!=="beta"){
+    toast("No pudimos abrir la corrección de la cuenta. Probá de nuevo en unos minutos.");
+    return false;
+  }
+  protocolo.cambiarCuenta=true;
+  state._retiroProtocolo=protocolo;
+  showScreen("retiro");
+  renderRetiro();
+  return true;
+}
+async function _rellenarDatosRetiro(){
+  const cajaAviso=$("retiroDatosPrevios"),elD=$("retiroDestino"),elT=$("retiroTitular"),btn=$("btnEnviarRetiro");
+  if(!elD||!elT)return;
+  if(btn){btn.disabled=true;btn.textContent="Consultando cuenta...";}
+  const d=await leerDatosRetiro();
+  if(d&&d.error){
+    if(cajaAviso)cajaAviso.innerHTML='<div class="guia-error" role="alert">No pudimos comprobar si la cuenta está habilitada. Probá de nuevo en unos minutos.</div>';
+    if(btn){btn.disabled=true;btn.textContent="No disponible";}
+    return;
+  }
+  if(!d){
+    if(btn){btn.disabled=false;btn.textContent="Enviar retiro a revisión";}
+    return;
+  }
+  elD.value=d.destino||elD.value||"";elT.value=d.titular||elT.value||"";
+  try{onTitularInput(elT);}catch(_e){}
+  if(d.beta&&d.validado&&!state._retiroProtocolo.cambiarCuenta){
+    [elD,elT].forEach(function(el){el.readOnly=true;el.style.display="none";if(el.previousElementSibling)el.previousElementSibling.style.display="none";});
+    const aviso=$("avisoTitularRetiro");if(aviso)aviso.style.display="none";
+    if(cajaAviso)cajaAviso.innerHTML='<div class="retiro-previos" style="margin:8px 0;padding:12px;border:1px solid #31506a;border-radius:10px">'
+      +'<b>Cuenta de cobro verificada</b><br>'+esc(d.destino)+' · '+esc(d.titular)+'<br><span>La titularidad ya fue confirmada para esta cuenta.</span></div>'
+      +'<button type="button" class="link-btn" onclick="cambiarCuentaRetiro()">Cambiar cuenta de cobro</button>';
+  }else if(d.beta){
+    [elD,elT].forEach(function(el){el.readOnly=false;el.style.display="";if(el.previousElementSibling)el.previousElementSibling.style.display="";});
+    _mostrarDniRetiro("retiroDatosPrevios");
+  }else if(cajaAviso&&(d.destino||d.titular)){
+    cajaAviso.innerHTML='<div class="retiro-previos">Pusimos los datos de tu último retiro. <b>Si cobrás en otra cuenta, cambialos.</b></div>';
+  }
+  if(btn){btn.disabled=false;btn.textContent="Enviar retiro a revisión";}
+}
+
+// Crea el retiro y devuelve qué pasó. Es la única función del Portal que crea retiros: la usan la
+// pantalla Retirar y la ficha del chat.
+async function crearSolicitudRetiro(usuario,monto,destino,titular,conservarChat,dni){
+  const msg="Solicitud de RETIRO: $"+monto+" · Destino: "+destino+" · Titular: "+titular;
+  const _ipR=await _ipPublica();
+  const payload={usuario,monto,destino,titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),ip:_ipR||"",tipo:"RETIRO",..._marcaDeTiempo()};
+  const protocolo=await _consultarRetiroProtocolo(false);
+  if(protocolo.mode==="error")return {ok:false,motivo:"protocolo_no_disponible"};
+  let dataR=null;
+  if(protocolo.mode==="beta"){
+    const instrumento=protocolo.instrumento||null;
+    const requiereDni=!(instrumento&&String(instrumento.destino||"").trim().toUpperCase()===String(destino||"").trim().replace(/\s+/g,"").toUpperCase()
+      &&String(instrumento.titular||"").trim().toUpperCase()===String(titular||"").trim().replace(/\s+/g," ").toUpperCase())
+      ||!!protocolo.cambiarCuenta;
+    const dniLimpio=String(dni||"").replace(/\D/g,"");
+    if(requiereDni&& !/^\d{8}$/.test(dniLimpio))return {ok:false,motivo:"dni_requerido"};
+    const beta=await rpc("landing_portal_retiro_crear_v1",{
+      p_public_code:state.publicCode||"",p_usuario:usuario,p_telefono:state.telefono||"",
+      p_host:location.host||"",p_monto:monto,p_titular:titular,p_destino:destino,
+      p_dni:requiereDni?dniLimpio:null,p_metadata:payload
+    });
+    if(beta.error)return {ok:false,motivo:"beta_error"};
+    dataR=normalize(beta.data)||beta.data||{};
+    if(dataR.error_code){
+      const motivos={DNI_REQUERIDO:"Ingresá el DNI de 8 dígitos del titular.",
+        DNI_RECHAZADO_PREVIAMENTE:"Ese DNI ya fue rechazado. Ingresá el DNI correcto del titular de la cuenta.",
+        RETIRO_EN_VALIDACION:"Esta cuenta ya tiene un retiro en verificación. Esperá el aviso antes de enviar otro."};
+      return {ok:false,motivo:"beta_validacion",mensaje:motivos[dataR.error_code]||"No pudimos registrar la cuenta de cobro."};
+    }
+    if(dataR.ok!==true||dataR.contract!=="retiro.instrumentos.v1"||dataR.enabled!==true
+       ||!/^\d+$/.test(String(dataR.solicitud_id||"")))return {ok:false,motivo:"beta_respuesta_invalida"};
+  }else{
+    let res=await rpc("landing_portal_v16_crear_solicitud",{
+      p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"RETIRO",
+      p_monto:monto,p_titular:titular,p_destino:destino,p_mensaje:msg,p_metadata:payload
+    });
+    if(res.error&&/VINCULO_NO_VALIDO|NO_AUTORIZADO|NO_REGISTRADO|CONFLICTO|BLOQUEADO/i.test(res.error.message||""))return {ok:false,motivo:"no_habilitado"};
+    if(res.error){
+      console.warn("[V18] retiro v16 falló",res.error);
+      res=await rpc("landing_crear_solicitud_v3_blindado",{
+        p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"RETIRO",
+        p_monto:monto,p_titular:titular,p_comprobante_url:null,p_extra:payload
+      });
+    }
+    if(res.error){
+      res=await rpc("landing_crear_chat_v2_blindado",{
+        p_public_code:state.publicCode,p_usuario:usuario,p_mensaje:msg,p_tipo:"RETIRO",p_extra:payload
+      });
+    }
+    if(res.error)return {ok:false,motivo:"sin_envio"};
+    dataR=normalize(res.data)||res.data||{};
+  }
+  limpiarSolicitudAnteriorAntesDeNueva(conservarChat);
+  const solicitudId=dataR?.solicitud_id||dataR?.id||dataR?.solicitudId||"";
+  const chatId=dataR?.chat_id||dataR?.chatId||"";
+  const chatToken=dataR?.chat_token||dataR?.chatToken||"";
+  if(chatId){state.chatId=String(chatId);localStorage.setItem("bet300_chat_id",state.chatId);}
+  if(chatToken){state.chatToken=String(chatToken);localStorage.setItem("bet300_chat_token",state.chatToken);}
+  if(!/^\d+$/.test(String(solicitudId||"")))return {ok:true,porChat:true};
+  setPendiente("RETIRO",String(solicitudId));
+  state._retiroPendienteValidacion=dataR.estado_validacion==="PENDIENTE";
+  state._retiroDniRechazado=false;
+  try{localStorage.setItem(_retiroKey(),String(Date.now()));}catch(_e){} // arranca el cooldown de 24h (1 retiro/día)
+  if(state._retiroProtocolo){state._retiroProtocolo.cambiarCuenta=false;state._retiroProtocolo.correccion=false;}
+  state._retiroProtocoloCache=null;
+  return {ok:true,solicitudId:String(solicitudId),estadoValidacion:dataR.estado_validacion||"LEGACY"};
 }
 
 async function enviarSolicitudRetiro(){
@@ -3026,6 +3486,7 @@ async function enviarSolicitudRetiro(){
   const restRet=retiroCooldownRestanteMs();
   if(restRet>0)return toast("Ya solicitaste un retiro hoy. Podés pedir otro en "+_fmtRestante(restRet)+".");
   const usuario=state.usuario,montoRaw=$("retiroMonto")?.value.trim(),destino=$("retiroDestino")?.value.trim(),titular=$("retiroTitular")?.value.trim();
+  const dni=String($("retiroDni")?.value||"").replace(/\D/g,"");
   if(marcarFaltantes(["retiroMonto","retiroDestino","retiroTitular"])) return toast("Falta completar el campo marcado");
   const monto=Math.abs(Number(montoRaw));
   if(!monto||monto<=0)return toast("Ingresá un monto válido mayor a cero");
@@ -3039,41 +3500,28 @@ async function enviarSolicitudRetiro(){
     haptic(18);
     return toast("Revisá el titular");
   }
+  const protocolo=await _consultarRetiroProtocolo(false);
+  const instrumento=protocolo.instrumento||null;
+  const requiereDni=protocolo.mode==="beta"&&(!(instrumento
+    &&String(instrumento.destino||"").trim().toUpperCase()===String(destino||"").trim().replace(/\s+/g,"").toUpperCase()
+    &&String(instrumento.titular||"").trim().toUpperCase()===String(titular||"").trim().replace(/\s+/g," ").toUpperCase())
+    ||!!protocolo.cambiarCuenta);
+  if(protocolo.mode==="error")return toast("No pudimos comprobar la verificación de retiro. Probá de nuevo en unos minutos.");
+  if(requiereDni&&!/^\d{8}$/.test(dni)){ $("retiroDni")?.focus(); return toast("Ingresá el DNI de 8 dígitos del titular de la cuenta."); }
   const btn=$("btnEnviarRetiro");
   if(btn){btn.disabled=true;btn.textContent="Enviando...";}
-  limpiarSolicitudAnteriorAntesDeNueva();
-  const msg="Solicitud de RETIRO: $"+monto+" · Destino: "+destino+" · Titular: "+titular;
-  const _ipR=await _ipPublica();
-  const payload={usuario,monto,destino,titular,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,navegador:_infoNavegador(),ip:_ipR||"",tipo:"RETIRO",..._marcaDeTiempo()};
-  let res=await rpc("landing_portal_v16_crear_solicitud",{
-    p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"RETIRO",
-    p_monto:monto,p_titular:titular,p_destino:destino,p_mensaje:msg,p_metadata:payload
-  });
-  if(res.error && /VINCULO_NO_VALIDO|NO_AUTORIZADO|NO_REGISTRADO|CONFLICTO|BLOQUEADO/i.test(res.error.message||"")){
+  const r=await crearSolicitudRetiro(usuario,monto,destino,titular,false,dni);
+  if(r.motivo==="no_habilitado"){
     _restaurarBoton("btnEnviarRetiro","Enviar retiro a revisión");
     toast("⚠️ Tu usuario no está habilitado para operar. Validá tus datos o escribinos por soporte."); goChat(); return;
   }
-  if(res.error){
-    console.warn("[V18] retiro v16 falló",res.error);
-    res=await rpc("landing_crear_solicitud_v3_blindado",{
-      p_public_code:state.publicCode,p_usuario:usuario,p_tipo:"RETIRO",
-      p_monto:monto,p_titular:titular,p_comprobante_url:null,p_extra:payload
-    });
+  if(!r.ok){
+    _restaurarBoton("btnEnviarRetiro","Enviar retiro a revisión");
+    if(r.mensaje){toast(r.mensaje);return;}
+    if(r.motivo==="protocolo_no_disponible"||r.motivo==="beta_error"||r.motivo==="beta_respuesta_invalida"){toast("No pudimos confirmar el retiro con el servidor. No se envió; probá de nuevo en unos minutos.");return;}
+    toast("No pudimos enviar el retiro. Probá por el chat.");goChat();return;
   }
-  if(res.error){
-    res=await rpc("landing_crear_chat_v2_blindado",{
-      p_public_code:state.publicCode,p_usuario:usuario,
-      p_mensaje:msg,p_tipo:"RETIRO",p_extra:payload
-    });
-  }
-  if(res.error){_restaurarBoton("btnEnviarRetiro","Enviar retiro a revisión");toast("No pudimos enviar el retiro. Probá por el chat.");goChat();return;}
-  const dataR=normalize(res.data)||res.data||{};
-  const solicitudId=dataR?.solicitud_id||dataR?.id||dataR?.solicitudId||"";
-  const chatId=dataR?.chat_id||dataR?.chatId||"";
-  const chatToken=dataR?.chat_token||dataR?.chatToken||"";
-  if(chatId){state.chatId=String(chatId);localStorage.setItem("bet300_chat_id",state.chatId);}
-  if(chatToken){state.chatToken=String(chatToken);localStorage.setItem("bet300_chat_token",state.chatToken);}
-  if(!/^\d+$/.test(String(solicitudId||""))){
+  if(r.porChat){
     toast("Lo tomamos por el chat · un operador lo confirma");
     haptic([20,30,20]);
     renderHome();
@@ -3083,9 +3531,7 @@ async function enviarSolicitudRetiro(){
     setTimeout(()=>subscribePush(),1200);
     return;
   }
-  setPendiente("RETIRO",String(solicitudId));
-  try{localStorage.setItem(_retiroKey(),String(Date.now()));}catch(_e){} // arranca el cooldown de 24h (1 retiro/día)
-  toast("Retiro enviado a revisión 🕓");haptic([20,30,20]);
+  toast(r.estadoValidacion==="PENDIENTE"?"Retiro recibido · verificamos esta cuenta por única vez y te avisamos por el chat.":"Retiro enviado a revisión 🕓");haptic([20,30,20]);
   renderHome();
   goEstado();
   startChatPoll();
@@ -3110,31 +3556,40 @@ function renderClave(){
     </div>`;
 }
 
-async function enviarSolicitudClave(){
-  if(state.nivelAcceso==="SOPORTE"){ toast("Validá tus datos para operar. Escribinos por soporte."); try{goChat();}catch(_e){} return; }
-  if(!state.pcCodigo){ toast("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte."); return; }
-  const claveRaw=($("claveNueva")?.value||"").trim();
-  const clave=claveRaw||"12345a";
-  if(clave.length<6)return toast("La clave debe tener al menos 6 caracteres");
-  if(!/^[a-zA-Z0-9]+$/.test(clave))return toast("Solo letras y números, sin espacios ni símbolos");
-  const btn=$("btnEnviarClave");
-  if(btn){btn.disabled=true;btn.textContent="Enviando...";}
+// Es la única función del Portal que pide un cambio de clave: la usan la pantalla y la ficha del chat.
+async function crearSolicitudClave(claveRaw){
+  const clave=String(claveRaw||"").trim()||"12345a";
+  if(clave.length<6)return {revisar:"La clave debe tener al menos 6 caracteres"};
+  if(!/^[a-zA-Z0-9]+$/.test(clave))return {revisar:"Solo letras y números, sin espacios ni símbolos"};
   const payload={usuario:state.usuario,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,tipo:"CAMBIO_CLAVE",password_nuevo:clave};
   let res=await rpc("landing_portal_v16_crear_solicitud",{p_public_code:state.publicCode,p_usuario:state.usuario,p_tipo:"CAMBIO_CLAVE",p_monto:0,p_titular:"",p_destino:null,p_mensaje:"Solicitud de CAMBIO_CLAVE",p_metadata:payload});
   if(res.error){console.warn("[V18] clave v16 falló",res.error);res=await rpc("landing_crear_chat_v2_blindado",{p_public_code:state.publicCode,p_usuario:state.usuario,p_mensaje:"Solicitud de CAMBIO DE CLAVE",p_tipo:"CAMBIO_CLAVE",p_extra:payload});}
-  if(res.error){toast("No pudimos enviar la solicitud. Probá por el chat.");goChat();return;}
+  if(res.error)return {ok:false};
   const d=normalize(res.data)||res.data||{};
   if(d.chat_id){state.chatId=String(d.chat_id);localStorage.setItem("bet300_chat_id",state.chatId);}
   if(d.chat_token){state.chatToken=String(d.chat_token);localStorage.setItem("bet300_chat_token",state.chatToken);}
-  toast("Solicitud de cambio de clave enviada 🔑");
-  goChat();
-  addMsg('Solicitud de cambio de clave enviada 🔑<br><span class="status-pill">En proceso</span><br>Un operador la procesará en breve. Te avisamos por este mismo chat.',"bot");
-  startChatPoll();startPortalThreadPoll();
-  setTimeout(()=>subscribePush(),1200);
+  return {ok:true};
+}
+async function enviarSolicitudClave(){
+  if(state.nivelAcceso==="SOPORTE"){ toast("Validá tus datos para operar. Escribinos por soporte."); try{goChat();}catch(_e){} return; }
+  if(!state.pcCodigo){ toast("No identificamos tu agente. Abrí el enlace de tu agente o contactá a soporte."); return; }
+  if(!_tomarEnvio("btnEnviarClave")) return;
+  try{
+    const r=await crearSolicitudClave($("claveNueva")?.value);
+    if(r.revisar)return toast(r.revisar);
+    if(!r.ok){toast("No pudimos enviar la solicitud. Probá por el chat.");goChat();return;}
+    toast("Solicitud de cambio de clave enviada 🔑");
+    goChat();
+    addMsg('Solicitud de cambio de clave enviada 🔑<br><span class="status-pill">En proceso</span><br>Un operador la procesará en breve. Te avisamos por este mismo chat.',"bot");
+    startChatPoll();startPortalThreadPoll();
+    setTimeout(()=>subscribePush(),1200);
+  } finally {
+    _soltarEnvio("btnEnviarClave","Solicitar reseteo de clave",true);
+  }
 }
 
 // ── Mensajería libre (chat) ────────────────────────────────────────────────
-async function enviarMensajeSoporte(txt,imagenUrl=null){
+async function enviarMensajeSoporte(txt,imagenUrl=null,solicitudId=null){
   const mensaje=String(txt||"").trim();
   if(!mensaje&&!imagenUrl)return {ok:false,error:"El mensaje está vacío."};
   if(state._sendingSupport)return {ok:false,error:"Esperá a que termine el envío anterior."};
@@ -3146,11 +3601,11 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
 
   // 1) Si todavia no hay conversacion, se abre UNA. landing_chat_abrir_v3 no reutiliza la del
   //    jugador: abre una limpia, sin el historial de meses que traia la anterior.
-  if(!state.chatId || !state.chatToken){
+  const abrirConversacion=async(pedido)=>{
     try{
       const ch = await rpc("landing_chat_abrir_v3", {
         p_usuario: state.usuario, p_telefono: state.telefono || "",
-        p_public_code: state.publicCode, p_solicitud_id: null
+        p_public_code: state.publicCode, p_solicitud_id: pedido?Number(pedido):null
       });
       const c = (ch && !ch.error) ? (normalize(ch.data) || ch.data || {}) : {};
       if(context!==[state.publicCode,state.pcCodigo,state.usuario].join("|"))return {ok:false,error:"Cambiaste de cuenta. Volvé a abrir el chat de esa cuenta."};
@@ -3161,21 +3616,35 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
           localStorage.setItem("bet300_chat_id",state.chatId);
           localStorage.setItem("bet300_chat_token",state.chatToken);
         }catch(_e){}
-        if(typeof guiaAdoptarConversacion==="function")guiaAdoptarConversacion();
-      }else{
-        if(faltaFuncion(ch&&ch.error,'landing_chat_abrir_v3'))legacySupport=true;
-        else return {ok:false,error:"No pudimos confirmar la conversación. Conservamos el mensaje para que puedas reintentar."};
+        return null;
       }
+      if(faltaFuncion(ch&&ch.error,'landing_chat_abrir_v3')){legacySupport=true;return null;}
+      return {ok:false,error:"No pudimos confirmar la conversación. Conservamos el mensaje para que puedas reintentar."};
     }catch(_e){return {ok:false,error:"No pudimos confirmar la conversación. Conservamos el mensaje para que puedas reintentar."};}
+  };
+  const enviarAlChat=()=>rpc("landing_enviar_mensaje_v2",{
+    p_chat_id:state.chatId,p_chat_token:state.chatToken,
+    p_emisor:state.usuario,p_mensaje:mensaje,p_imagen_url:imagenUrl||""
+  });
+  // Con un pedido (el comprobante de una carga) el chat queda atado a esa solicitud: así el operador
+  // lo ve ahí, y no como una consulta suelta de más.
+  const chatPrevio=!!(state.chatId && state.chatToken);
+  if(!chatPrevio){
+    const fallo=await abrirConversacion(solicitudId);
+    if(fallo)return fallo;
   }
 
   // 2) El mensaje va al canal de chat.
   let res=null;
-  if(state.chatId && state.chatToken){
-    res=await rpc("landing_enviar_mensaje_v2",{
-      p_chat_id:state.chatId,p_chat_token:state.chatToken,
-      p_emisor:state.usuario,p_mensaje:mensaje,p_imagen_url:imagenUrl||""
-    });
+  if(state.chatId && state.chatToken)res=await enviarAlChat();
+
+  // Ese chat lo cerró un operador: se abre uno nuevo y se manda ahí, una sola vez. Uno recién abierto
+  // no se reintenta: si también lo rechaza, abrir otro sólo dejaría chats vacíos.
+  if(chatPrevio&&chatCerradoEnServidor(res&&res.error)){
+    olvidarChatCerrado();
+    const fallo=await abrirConversacion(null);
+    if(fallo)return fallo;
+    res=(state.chatId && state.chatToken)?await enviarAlChat():null;
   }
 
   // 3) Sólo una función explícitamente ausente habilita la ruta anterior. Un timeout
@@ -3202,12 +3671,25 @@ async function enviarMensajeSoporte(txt,imagenUrl=null){
   finally{state._sendingSupport=false;}
 }
 
+// Lo que el jugador acaba de mandar, con el número real del servidor para que el tilde lo encuentre.
+function mostrarMensajePropio(txt,imgUrl,result){
+  const meta=result?.message_id?{id:String(result.message_id),tipo_emisor:'USUARIO',chat_id:result.chat_id}:null;
+  // Si la lectura ya lo pintó antes de que volviera la respuesta del envío, no se dibuja otro.
+  if(meta&&typeof portalMensajeClave==='function'&&portalChatGlobos.has(portalMensajeClave(meta)))return;
+  addMsg(txt?esc(txt):"📎 Imagen adjunta","user",imgUrl||null,meta);
+  if(txt)state.shownTexts.add("u|"+txt.substring(0,200));
+  if(imgUrl)state.shownTexts.add("uimg|"+imgUrl.substring(0,80));
+}
 async function sendFreeMessage(){
   const input=$("freeInput"),txt=input.value.trim();
   const hasImg=!!state.composerImage;
   if(!txt&&!hasImg)return;
-  if(!state.usuario){toast("Primero indicá tu usuario");goHome();return;}
   if(state._freeSending||state._sendingSupport)return;
+  // Sin usuario no hay conversación que abrir: se piden los datos acá, con el texto intacto.
+  if(!state.usuario){guiaPedirIdentidad(sendFreeMessage,"Para pasárselo a una persona necesito tus datos 👇");return;}
+  let frenado=false;
+  try{frenado=!!txt&&!hasImg&&guiaFrenarFragmento(txt);}catch(e){console.warn("[asistente]",e);}
+  if(frenado){input.value="";return;}
   state._freeSending=true;
   const button=$("btnEnviarMensaje");if(button)button.disabled=true;
   const file=state.composerImage;
@@ -3221,210 +3703,903 @@ async function sendFreeMessage(){
   if(!result?.ok){addMsg(esc(result?.error||"No se pudo enviar. Reintentá."),"system");return;}
   if(input.value.trim()===txt)input.value="";
   if(state.composerImage===file)clearComposerImage();
-  const meta=result.message_id?{id:String(result.message_id),tipo_emisor:'USUARIO',chat_id:result.chat_id}:null;
-  addMsg(txt?esc(txt):"📎 Imagen adjunta","user",imgUrl,meta);
-  if(txt)state.shownTexts.add("u|"+txt.substring(0,200));
-  if(imgUrl)state.shownTexts.add("uimg|"+imgUrl.substring(0,80));
+  mostrarMensajePropio(txt,imgUrl,result);
+  try{guiaTrasTexto();}catch(e){console.warn("[asistente]",e);}
   }catch(_e){addMsg("No se pudo enviar. Tu mensaje sigue listo para reintentar.","system");}
   finally{state._freeSending=false;if(button)button.disabled=false;}
 }
 
-// ── Ayuda conversacional local ────────────────────────────────────────────
-// Las opciones orientan. Sólo «Hablar con una persona» y el formulario envían
-// un mensaje de soporte; ninguna elección crea una carga ni mueve dinero.
-const GUIA_VERSION=1;
-const GUIA_PASOS={
-  inicio:{text:"Hola. Elegí qué necesitás y vamos de a un paso. También podés escribir o pedir una persona en cualquier momento.",options:[["acceso","No puedo ingresar"],["estado","Ver una solicitud"],["revisar_envio","Ya envié una transferencia"],["carga","Cómo cargar"],["problema","Otro problema"]]},
-  acceso:{text:"Revisá que hayas ingresado el usuario de la plataforma y tu teléfono. Si un operador está validando tu cuenta, la respuesta y el botón Ingresar llegan a este chat.",options:[["ir_inicio","Revisar mis datos"],["persona","Necesito ayuda para ingresar"]]},
-  estado:{text:"En Estado podés ver tu solicitud y el motivo si fue rechazada. Si ya transferiste, no vuelvas a transferir mientras lo revisamos.",options:[["ver_estado","Consultar mi solicitud"],["revisar_envio","No encuentro mi envío"]]},
-  revisar_envio:{text:"Si ya enviaste una transferencia, no la repitas. Podemos revisar qué pasó con algunos datos del envío. Esto es una consulta de soporte: no crea otra carga.",options:[["formulario","Completar datos del envío"],["ver_estado","Primero ver el estado"]]},
-  carga:{text:"1. Copiá los datos vigentes en Cargar. 2. Transferí una sola vez desde tu banco. 3. Volvé y anotá el monto y el nombre del titular de la cuenta desde la que enviaste. El nombre de nuestra cuenta es sólo el destino.",options:[["ir_carga","Abrir Cargar"],["revisar_envio","Ya transferí y tengo un problema"]]},
-  problema:{text:"Podés elegir una de estas ayudas, escribir lo que pasó o pedir atención de una persona. No mandes contraseñas, códigos de acceso ni datos completos de tarjetas.",options:[["acceso","Problema de acceso"],["revisar_envio","Problema con una transferencia"]]},
-  formulario:{text:"Completá abajo los datos de la transferencia que ya hiciste. Se envían al chat para que una persona pueda revisarlos.",options:[["estado","Ver ayuda de estado"],["persona","Prefiero hablar con una persona"]]},
-  persona:{text:"Voy a enviar tu recorrido a una persona para que tenga contexto. Podés seguir escribiendo por este mismo chat.",options:[["persona","Reintentar pedido de atención"],["inicio","Volver a las opciones"]]},
-  enviado:{text:"Tu consulta llegó al chat de atención. Una persona podrá revisar los datos y responderte acá. Si necesitás agregar algo, escribilo abajo.",options:[["ver_estado","Ver estado"],["inicio","Volver a las opciones"]]},
-  ir_inicio:{text:"Abrimos Inicio para revisar tus datos. Tu recorrido queda guardado si volvés al chat.",options:[["acceso","Volver a ayuda de acceso"],["persona","Pedir una persona"]]},
-  ver_estado:{text:"Abrimos Estado. Si el envío no aparece o los datos no coinciden, volvé al chat y elegí Revisar envío.",options:[["revisar_envio","Revisar envío"],["inicio","Otras opciones"]]},
-  ir_carga:{text:"Abrimos el formulario habitual de Cargar. Sólo enviá la solicitud cuando hayas transferido y revisado tus datos.",options:[["revisar_envio","Ya transferí y necesito ayuda"],["inicio","Otras opciones"]]}
+// ── Asistente del chat ─────────────────────────────────────────────────────
+// Se reescribió entero el 1/11, desde el árbol que definió Juan el 21/10. La guía anterior no
+// resolvía nada: mandaba a revisar datos a otra pantalla, y su botón de reintentar volvía a chocar
+// con la falta de usuario sin llamar nunca al servidor. En toda su vida no le llegó a NODO ni un
+// solo pedido.
+//
+// Cómo está armado:
+//  · El árbol son DATOS (GUIA_RAMAS): qué dice cada paso y qué ofrece. Para cambiar un texto o una
+//    opción se toca sólo eso.
+//  · Lo que falta se pide ACÁ MISMO, con una ficha adentro del chat. Nunca se manda a la persona a
+//    otra pantalla a arreglarlo.
+//  · Cargas, retiros, clave y mensajes salen por las MISMAS funciones que usan las pantallas. Acá no
+//    hay un segundo camino.
+//  · Cada lista tiene una sola salida a una persona y una sola vuelta atrás.
+//  · Las opciones van abajo del último globo y al tocarlas desaparecen: lo elegido queda escrito.
+const GUIA_VERSION=2,GUIA_CLAVE="bet300_guia_v2";
+const GUIA_VIGENCIA_MS=12*60*60*1000,GUIA_PERSONA_AVISADA_MS=30*60*1000,GUIA_RECIENTE_MS=24*60*60*1000,GUIA_REPETIR_PEDIDO_MS=5*60*1000;
+const GUIA_SALUDO="<b>Hola 👋 Te atiende el asistente de BET300.</b><br>Es automático y contesta al toque. Resuelvo cargas, retiros y acceso a tu cuenta.<br>Si querés una persona, tenés el botón abajo de todo.";
+// Lo que lee el operador. Está elegido a propósito: el bot del servidor (soporte_auto_mensaje_v1)
+// contesta solo si ve «rechaz», «no me llegó», «ya transferí», «no puedo entrar»… y se metería
+// encima de un pedido que ya va a una persona. La prueba corre estos textos contra sus reglas.
+const GUIA_TEMAS={
+  consulta:"una consulta",
+  carga:"una carga",
+  noAparece:"una transferencia que no me aparece",
+  cargaCaida:"una carga que no salió",
+  monto:"el monto de una carga",
+  otraCuenta:"una transferencia a otra cuenta",
+  sinComprobante:"una transferencia a otra cuenta, sin el comprobante a mano",
+  retiro:"un retiro",
+  retiroSinPago:"un retiro sin cobrar",
+  retiroAjeno:"un retiro que no reconozco",
+  cuenta:"el acceso a mi cuenta",
+  noEntra:"no consigo entrar a mi cuenta"
 };
-let guiaActual=null,guiaBusy=false,guiaPintada="";
-function guiaIdentidad(){return [state.publicCode||"sin-ruta",state.pcCodigo||"sin-oficina",String(state.usuario||"sin-usuario").toLowerCase()].join("|");}
-function guiaClave(){return "bet300_guia_v1:"+encodeURIComponent(guiaIdentidad()+"|"+(state.chatId||"sin-chat"));}
+function guiaTextoPersona(tema){return "Pido hablar con una persona.\nTema: "+(tema||GUIA_TEMAS.consulta)+".";}
+function guiaTextoComprobante(pedido){return "Comprobante de mi transferencia"+(pedido?" · pedido "+pedido:"")+".";}
+function guiaTextoMonto(real,pedido,id){return "Corrección de monto: el pedido decía "+_money(pedido)+" y transferí "+_money(real)+"."+(id?" Pedido "+id+".":"");}
+
+// Sin validar, el menú es corto: nada de cargas, retiros ni fichas que después no se pueden mandar.
+// Se le prometía "completá esto 👇" y abajo le decía que no estaba validado (Juan, 2/11).
+function guiaSinValidar(){return !guiaFaltaIdentidad()&&state.nivelAcceso==="SOPORTE";}
+function guiaYaPasoDatos(){return !!state._altaSoporteEnviado||guiaPersonaAvisada();}
+// Ya mandó sus datos y espera que una persona lo valide. No hay nada que tocar: el Portal se fija
+// solo cada pocos segundos y, apenas lo habilitan, aparece el botón Ingresar. "Ya me activaron"
+// afirmaba algo que el sistema sabe que no pasó, y "Hablar con una persona" pedía lo que ya está
+// en marcha (Juan, 6/11: "el usuario debe esperar a que el operador responda con la validación").
+function guiaEsperandoValidacion(){return guiaSinValidar()&&guiaYaPasoDatos();}
+const GUIA_SIN_VALIDAR_HACE=["validarCuenta","registrarme","olvideUsuario","revalidar","persona","ingresar","validar","registro","gracias"];
+const GUIA_RAMAS={
+  inicio:{dice:()=>!guiaSinValidar()?"¿Con qué te doy una mano?"
+      :guiaYaPasoDatos()?"Tu cuenta está en revisión. Una persona ya tiene tus datos: apenas te habilite, te aparece acá el botón para entrar. No hace falta que hagas nada."
+      :"Tu cuenta todavía no está validada. Validala y después te ayudo con cargas y retiros.",
+    opciones:()=>!guiaSinValidar()?[
+    {t:"💰 Una carga",va:"carga"},
+    {t:"🏧 Un retiro",va:"retiro"},
+    {t:"🔑 Entrar a mi cuenta",va:"cuenta"},
+    {t:"✍️ Otra cosa",hace:"otraCosa"}
+  ]:guiaYaPasoDatos()?[]:[
+    {t:"✅ Validar mi cuenta",hace:"validarCuenta"},
+    {t:"🆕 Soy nuevo",hace:"registrarme"},
+    {t:"🔑 No me acuerdo el usuario",hace:"olvideUsuario"}
+  ]},
+  carga:{tema:"carga",identidad:true,dice:"¿Qué pasó con la carga?",opciones:()=>[
+    {t:"Transferí y no me apareció",hace:"noAparecio",tema:"noAparece"},
+    {t:"Quiero cargar",hace:"fichaCarga"},
+    {t:"Me la rechazaron",hace:"rechazo",tema:"cargaCaida"},
+    {t:"Me equivoqué en el monto",hace:"montoMal",tema:"monto"},
+    {t:"Le transferí a otra cuenta",hace:"otraCuenta",tema:"otraCuenta"}
+  ]},
+  retiro:{tema:"retiro",identidad:true,dice:"¿Qué necesitás del retiro?",opciones:()=>[
+    {t:"Quiero retirar",hace:"fichaRetiro"},
+    {t:"Pedí y no me pagaron",hace:"retiroEstado",tema:"retiroSinPago"},
+    {t:"¿Cuál fue mi último retiro?",hace:"ultimoRetiro"}
+  ]},
+  cuenta:{tema:"cuenta",dice:()=>guiaFaltaIdentidad()?"¿Ya tenés usuario?":"¿Qué te pasa al entrar?",opciones:()=>guiaFaltaIdentidad()?[
+    {t:"Ya tengo usuario",hace:"ingresar"},
+    {t:"Soy nuevo, quiero registrarme",hace:"registrarme"},
+    {t:"No me acuerdo el usuario",hace:"olvideUsuario"}
+  ]:[
+    {t:"Quiero cambiar la clave",hace:"fichaClave"},
+    {t:"No me acuerdo la clave",hace:"fichaClave"},
+    {t:"No me acuerdo el usuario",hace:"miUsuario"},
+    {t:"No me deja entrar igual",hace:"persona",tema:"noEntra",sinEco:true}
+  ]}
+};
+const GUIA_INGRESO={
+  login:{titulo:"Tus datos",usuario:"Tu usuario de la plataforma",ejemplo:"Ej: usuario123",boton:"Entrar"},
+  validar:{titulo:"Validá tu cuenta",usuario:"Tu usuario de la plataforma",ejemplo:"Ej: usuario123",boton:"Validar"},
+  registro:{titulo:"Te creamos el usuario",usuario:"Tu nombre o apodo",ejemplo:"Ej: Juan",boton:"Registrarme"}
+};
+
+let guiaActual=null,guiaPintada=false,guiaOcupada=false,guiaPausaMs=220;
+// A propósito a la manera vieja: la forma corta no existe en iPhone anteriores a iOS 15.4 ni en
+// Chrome anteriores a 93, y ahí rompía el chat entero al recargar.
+function guiaTiene(obj,clave){return Object.prototype.hasOwnProperty.call(obj,clave);}
+
+function guiaIdentidadActual(){return {ruta:state.publicCode||"",usuario:String(state.usuario||"").toLowerCase()};}
 function guiaGuardar(){
-  if(!guiaActual)return;
-  guiaActual.updatedAt=Date.now();
-  try{sessionStorage.setItem(guiaActual.key,JSON.stringify({version:GUIA_VERSION,updatedAt:guiaActual.updatedAt,step:guiaActual.step,path:guiaActual.path.slice(-40),history:guiaActual.history.slice(-40)}));}catch(_e){}
+  const g=guiaActual;if(!g)return;
+  g.usuario=guiaIdentidadActual().usuario;g.updatedAt=Date.now();
+  try{sessionStorage.setItem(GUIA_CLAVE,JSON.stringify({version:GUIA_VERSION,ruta:g.ruta,usuario:g.usuario,nodo:g.nodo,tema:g.tema,burbujas:g.burbujas,personaAt:g.personaAt,pedido:g.pedido,humano:g.humano,fragmentos:g.fragmentos,updatedAt:g.updatedAt}));}catch(_e){}
+}
+function guiaGuardada(ruta,usuario){
+  let s=null;
+  try{s=JSON.parse(sessionStorage.getItem(GUIA_CLAVE)||"null");}catch(_e){}
+  const vale=s&&s.version===GUIA_VERSION&&Number.isFinite(s.updatedAt)&&Date.now()-s.updatedAt<GUIA_VIGENCIA_MS
+    &&s.ruta===ruta&&s.usuario===usuario&&guiaTiene(GUIA_RAMAS,s.nodo)&&Array.isArray(s.burbujas);
+  if(!vale)return null;
+  return {nodo:s.nodo,tema:String(s.tema||""),personaAt:Number(s.personaAt)||0,pedido:s.pedido&&typeof s.pedido==="object"?s.pedido:null,humano:!!s.humano,fragmentos:Number(s.fragmentos)||0,
+    burbujas:s.burbujas.filter(b=>b&&["guide","user"].includes(b.q)&&typeof b.h==="string"&&b.h.length<=1200&&typeof b.at==="string").slice(-40)};
 }
 function guiaCargar(){
-  const key=guiaClave();
-  if(guiaActual?.key===key)return guiaActual;
-  let saved=null;
-  try{saved=JSON.parse(sessionStorage.getItem(key)||"null");}catch(_e){}
-  const valid=saved?.version===GUIA_VERSION&&Number.isFinite(saved.updatedAt)&&Date.now()-saved.updatedAt<12*60*60*1000&&Object.hasOwn(GUIA_PASOS,saved.step)&&Array.isArray(saved.history);
-  const history=valid?saved.history.filter(x=>x&&Object.hasOwn(GUIA_PASOS,x.step)&&typeof x.label==="string"&&x.label.length<=100&&typeof x.at==="string").slice(-40):[];
-  const path=valid&&Array.isArray(saved.path)?saved.path.filter(x=>Object.hasOwn(GUIA_PASOS,x)).slice(-40):["inicio"];
-  guiaActual={key,identity:guiaIdentidad(),step:valid?saved.step:"inicio",path:path.length?path:["inicio"],history,updatedAt:Date.now()};
-  guiaPintada="";
+  const {ruta,usuario}=guiaIdentidadActual();
+  if(guiaActual){
+    // Se identificó recién, adentro del chat: es la misma charla. Otra cuenta u otra oficina, no.
+    if(guiaActual.ruta===ruta&&(guiaActual.usuario===usuario||!guiaActual.usuario))return guiaActual;
+    guiaOlvidar();
+  }
+  guiaActual={ruta,usuario,nodo:"inicio",tema:"",burbujas:[],personaAt:0,pedido:null,humano:false,fragmentos:0,lista:[],fallos:0,ingreso:null,esperaTexto:false,updatedAt:Date.now(),...(guiaGuardada(ruta,usuario)||{})};
   return guiaActual;
 }
-function guiaAdoptarConversacion(){
-  if(!guiaActual||guiaActual.identity!==guiaIdentidad())return;
-  const oldKey=guiaActual.key;
-  guiaActual.key=guiaClave();
-  guiaPintada=guiaActual.key;
-  guiaGuardar();
-  if(oldKey!==guiaActual.key){try{sessionStorage.removeItem(oldKey);}catch(_e){}}
-}
 function guiaOlvidar(){
-  if(guiaActual){try{sessionStorage.removeItem(guiaActual.key);}catch(_e){}}
-  guiaActual=null;guiaPintada="";
+  try{sessionStorage.removeItem(GUIA_CLAVE);}catch(_e){}
+  guiaActual=null;guiaPintada=false;guiaOcupada=false;
+  guiaQuitarAccion();
   document.querySelectorAll(".guide-local").forEach(el=>el.remove());
-  const controls=$("chatGuideControls");if(controls)controls.innerHTML="";
 }
-function guiaBurbuja(text,who,at){return addMsg(escMsg(text),who,null,{local:true,fecha:at||new Date().toISOString()});}
-function guiaMostrar(){
-  const guide=guiaCargar();
-  if(guiaPintada!==guide.key){
-    document.querySelectorAll(".guide-local").forEach(el=>el.remove());
-    guiaBurbuja(GUIA_PASOS.inicio.text,"guide");
-    guide.history.forEach(entry=>{
-      guiaBurbuja(entry.label,"user",entry.at);
-      guiaBurbuja(GUIA_PASOS[entry.step].text,"guide",entry.at);
-    });
-    if(guide.step==="enviado")guiaBurbuja(GUIA_PASOS.enviado.text,"guide");
-    guiaPintada=guide.key;
-  }
-  guiaControles();
-  if(guide.step==="formulario")guiaFormulario();
+function guiaFaltaIdentidad(){return !state.usuario||!state.telefono;}
+// Una persona ya está al tanto: lo que se escriba a mano va directo, sin volver a confirmarlo.
+function guiaPersonaAvisada(){return Date.now()-guiaCargar().personaAt<GUIA_PERSONA_AVISADA_MS;}
+// Lo único que se frena es repetir EXACTAMENTE el mismo pedido enseguida, por el mismo chat y sin
+// que nadie haya contestado. Otro tema, un chat cerrado o una respuesta del operador lo destraban:
+// un pedido nuevo tiene que llegar siempre.
+function guiaPedidoRepetido(texto){
+  const p=guiaCargar().pedido;
+  return !!p&&p.texto===texto&&p.chat===String(state.chatId||"")&&Date.now()-p.at<GUIA_REPETIR_PEDIDO_MS;
 }
-function guiaControles(){
-  const box=$("chatGuideControls");if(!box)return;
-  const guide=guiaCargar(),step=GUIA_PASOS[guide.step]||GUIA_PASOS.inicio;
-  const form=$("guiaRevisionEnvio");if(form)form.classList[guide.step==="formulario"?"remove":"add"]("hidden");
-  box.innerHTML='<div class="guide-progress">Guía automática · '+(guide.step==="inicio"?"Elegí una opción":"Una cosa a la vez")+'</div>'
-    +'<div class="guide-options">'+step.options.map(pair=>'<button type="button" '+(guiaBusy?'disabled ':'')+'onclick="guiaElegir(\''+pair[0]+'\')">'+esc(pair[1])+'</button>').join("")+'</div>'
-    +'<div class="guide-tools"><button type="button" onclick="guiaVolver()" '+(guiaBusy||guide.path.length<2?'disabled':'')+'>Volver</button><button type="button" onclick="guiaElegir(\'inicio\')" '+(guiaBusy?'disabled':'')+'>Inicio de ayuda</button><button type="button" onclick="guiaElegir(\'persona\')" '+(guiaBusy?'disabled':'')+'>Hablar con una persona</button><button type="button" onclick="guiaEscribir()">Escribir</button></div>';
+
+// ── Lo que se ve ─────────────────────────────────────────────────────────────
+function guiaBurbuja(html,who,at){
+  const host=$("messages"),accion=$("guiaAccion");
+  const anterior=accion?accion.previousElementSibling:host?.lastElementChild;
+  if(who==="guide"&&anterior?.classList?.contains("guide"))anterior.classList.add("guia-seguido");
+  return addMsg(html,who,null,{local:true,fecha:at});
 }
-function guiaEscribir(){const input=$("freeInput");if(input){input.focus();try{input.scrollIntoView({block:"nearest"});}catch(_e){}}}
-function guiaRegistrar(step,label,back=false){
-  const guide=guiaCargar();
-  const at=new Date().toISOString();
-  guide.step=step;guide.history.push({step,label,at});guide.history=guide.history.slice(-40);
-  if(!back){guide.path.push(step);guide.path=guide.path.slice(-40);}
+function guiaAnotar(html,who){
+  const g=guiaCargar(),at=new Date().toISOString();
+  g.burbujas.push({q:who,h:html,at});g.burbujas=g.burbujas.slice(-40);
   guiaGuardar();
-  guiaBurbuja(label,"user",at);
-  guiaBurbuja(GUIA_PASOS[step].text,"guide",at);
-  guiaControles();
+  return guiaBurbuja(html,who,at);
 }
-async function guiaElegir(action){
-  if(guiaBusy||!Object.hasOwn(GUIA_PASOS,action)||action==="enviado")return;
-  const guide=guiaCargar();
-  const labels={inicio:"Inicio de ayuda",persona:"Hablar con una persona"};
-  const option=GUIA_PASOS[guide.step].options.find(x=>x[0]===action);
-  if(!option&&!Object.hasOwn(labels,action))return;
-  guiaRegistrar(action,option?option[1]:labels[action]);
-  if(action==="formulario")guiaFormulario();
-  else if(action==="persona")await guiaPedirPersona();
-  else if(action==="ir_inicio")goHome();
-  else if(action==="ver_estado")goEstado();
-  else if(action==="ir_carga")goCarga();
+function guiaDecir(html){return guiaAnotar(html,"guide");}
+function guiaDijo(texto){return guiaAnotar(esc(texto),"user");}
+// Lo que espera una respuesta del jugador (opciones o ficha) es UN solo elemento y va siempre
+// último: lo que llegue mientras tanto se mete arriba suyo.
+function guiaQuitarAccion(){$("guiaAccion")?.remove();}
+function guiaPintarAccion(html,clase){
+  guiaQuitarAccion();
+  const box=document.createElement("div");
+  box.id="guiaAccion";box.className="guia-accion guide-local"+(clase?" "+clase:"");
+  box.innerHTML=html;
+  $("messages").appendChild(box);
+  scrollChat();
+  return box;
 }
-function guiaVolver(){
-  if(guiaBusy)return;
-  const guide=guiaCargar();
-  if(guide.path.length<2)return;
-  // Se vuelve al paso anterior y se conserva el recorrido para el operador.
-  guide.path.pop();
-  guiaRegistrar(guide.path[guide.path.length-1]||"inicio","Volver al paso anterior",true);
-  if(guide.step==="formulario")guiaFormulario();
+function guiaBotones(lista,op={}){
+  const g=guiaCargar(),todas=lista.slice();
+  if(!op.sinPersona)todas.push({t:"👤 Hablar con una persona",hace:"persona",sinEco:true,clase:"humano"});
+  if(!op.sinVolver)todas.push({t:"‹ Otra consulta",eco:"Otra consulta",va:"inicio",clase:"volver"});
+  g.lista=todas;
+  if(!todas.length)return "";
+  // Una opción con href sale de la página (WhatsApp): es un <a> de verdad y no un window.open después
+  // de la pausa, que el iPhone y los bloqueadores frenan porque ya no viene del toque.
+  return '<div class="guia-opciones" role="group" aria-label="Opciones">'
+    +todas.map((o,i)=>o.href
+      ?'<a'+(o.clase?' class="'+o.clase+'"':'')+' href="'+esc(o.href)+'" target="_blank" rel="noopener">'+esc(o.t)+'</a>'
+      :'<button type="button"'+(o.clase?' class="'+o.clase+'"':'')+' onclick="guiaTocar('+i+')">'+esc(o.t)+'</button>').join("")+'</div>';
 }
+function guiaOfrecer(lista,op){guiaPintarAccion(guiaBotones(lista,op));}
+function guiaFicha(html,lista=[],op={}){
+  const box=guiaPintarAccion(html+guiaBotones(lista,op),"con-ficha");
+  try{box.scrollIntoView({block:"start",behavior:"smooth"});}catch(_e){}
+  return box;
+}
+function guiaFallo(texto,reintento,op={}){
+  const lista=reintento?[{t:"Probar de nuevo",hace:reintento,sinEco:true}]:[];
+  guiaPintarAccion('<div class="guia-error" role="alert">'+esc(texto)+'</div>'+guiaBotones(lista,op));
+}
+function guiaErrorFicha(texto,campo){
+  const e=$("guiaError");if(e)e.textContent=texto;
+  if(campo){try{$(campo)?.focus();}catch(_e){}}
+  haptic(18);
+}
+async function guiaCorrer(paso){
+  guiaOcupada=true;
+  guiaPintarAccion('<div class="guia-puntos" role="status" aria-label="Escribiendo"><i></i><i></i><i></i></div>',"guia-espera");
+  try{
+    if(guiaPausaMs)await new Promise(r=>setTimeout(r,guiaPausaMs));
+    await paso();
+  }catch(e){
+    console.warn("[asistente]",e);
+    guiaFallo("Algo falló de mi lado. Probá de nuevo o pedí una persona.");
+  }finally{
+    guiaOcupada=false;
+    if($("guiaAccion")?.classList.contains("guia-espera"))guiaOfrecer([]);
+  }
+}
+function guiaTocar(i){
+  const g=guiaCargar(),o=g.lista[i];
+  // Con una ficha enviándose no se puede salir: se perdería el ticket o el aviso de que falló.
+  if(!o||guiaOcupada||_enviando)return;
+  haptic(6);
+  // El teclado del iPhone sólo se abre adentro del toque, no después de la pausa.
+  if(o.hace==="otraCosa"){try{$("freeInput")?.focus();}catch(_e){}}
+  if(o.tema)g.tema=GUIA_TEMAS[o.tema];
+  if(!o.sinEco)guiaDijo(o.eco||o.t);
+  return guiaCorrer(async()=>{
+    if(guiaChequeo)await guiaChequeo;
+    if(guiaSinValidar()&&(o.va?o.va!=="inicio":!GUIA_SIN_VALIDAR_HACE.includes(o.hace)))return guiaIr("inicio");
+    return o.va?guiaIr(o.va):GUIA_HACE[o.hace](o);
+  });
+}
+function guiaIr(id){
+  if(guiaSinValidar())id="inicio";
+  const g=guiaCargar(),rama=GUIA_RAMAS[id];
+  if(rama.identidad&&guiaFaltaIdentidad())return guiaPedirIdentidad(()=>guiaIr(id));
+  g.nodo=id;g.tema=rama.tema?GUIA_TEMAS[rama.tema]:"";g.ingreso=null;g.esperaTexto=false;
+  guiaDecir(typeof rama.dice==="function"?rama.dice():rama.dice);
+  guiaOfrecer(rama.opciones(),{sinVolver:id==="inicio",sinPersona:id==="inicio"&&guiaEsperandoValidacion()});
+}
+function guiaReponerMenu(){
+  const g=guiaCargar();
+  if(guiaEsperandoValidacion())return guiaOfrecer([],{sinPersona:true,sinVolver:true});
+  if(g.humano)return guiaOfrecer([{t:"Ver opciones",va:"inicio"}],{sinPersona:true,sinVolver:true});
+  const nodo=guiaSinValidar()?"inicio":g.nodo;
+  guiaOfrecer(GUIA_RAMAS[nodo].opciones(),{sinVolver:nodo==="inicio"});
+}
+function guiaMostrar(){
+  const g=guiaCargar();
+  if(guiaPintada)return;
+  guiaPintada=true;
+  guiaChequearCuenta();
+  if(!g.burbujas.length){
+    // Ya viene hablando con una persona: el saludo y el menú no van encima de esa charla.
+    if(g.humano)return guiaReponerMenu();
+    guiaDecir(GUIA_SALUDO);guiaIr("inicio");return;
+  }
+  g.burbujas.forEach(b=>guiaBurbuja(b.h,b.q,b.at));
+  guiaReponerMenu();
+}
+// Al abrir el chat se le pregunta al servidor si la cuenta está validada, ANTES de que pueda elegir
+// algo: el menú arranca con lo que dice el teléfono y, si el servidor dice otra cosa, se rearma.
+// Un toque que llega antes de la respuesta la espera (guiaTocar).
+let guiaChequeo=null;
+function guiaChequearCuenta(){
+  if(guiaFaltaIdentidad())return null;
+  const antes=guiaSinValidar();
+  guiaChequeo=Promise.resolve().then(()=>vinculoPuedeOperar()).catch(()=>{}).then(()=>{
+    guiaChequeo=null;
+    if(guiaSinValidar()===antes||guiaOcupada||$("guiaAccion")?.classList.contains("con-ficha"))return;
+    const g=guiaCargar();
+    if(g.humano)return guiaReponerMenu();
+    guiaIr("inicio");
+  });
+  return guiaChequeo;
+}
+// Validar desde el menú corto. Validado, sigue con lo que había venido a hacer, si había algo.
+function guiaValidarCuenta(){
+  guiaCargar().ingreso={modo:"validar",siguiente:()=>{
+    const que=despuesPendiente();
+    if(que){despuesDeValidar("");return GUIA_DESPUES[que]();}
+    return guiaIr("inicio");
+  }};
+  guiaFichaIngreso();
+}
+// Nunca por encima de una persona: si contesta un operador, el menú se repliega a un solo botón.
+// Sólo si contesta AHORA: un mensaje viejo del historial no le saca el menú al que vuelve.
+function guiaCederAPersona(cuando){
+  if(cuando&&Date.now()-new Date(cuando).getTime()>GUIA_PERSONA_AVISADA_MS)return;
+  const g=guiaCargar();
+  g.pedido=null;
+  if(g.humano)return guiaGuardar();
+  g.humano=true;guiaGuardar();
+  const accion=$("guiaAccion");
+  if(accion&&!guiaOcupada&&!accion.classList.contains("con-ficha"))guiaReponerMenu();
+}
+// Cerraron el chat: lo pedido antes ya no frena un pedido igual.
+function guiaChatCerrado(){
+  if(!guiaActual||!guiaActual.pedido)return;
+  guiaActual.pedido=null;guiaGuardar();
+}
+// Tarjetas que manda el operador con las macros del panel (⟦AYUDA:…⟧).
 function guiaAbrirTarjeta(action){
-  if(guiaBusy||!["inicio","revisar_envio"].includes(action))return;
+  if(guiaOcupada||!["inicio","revisar_envio"].includes(action))return;
   goChat();
-  guiaRegistrar(action,action==="inicio"?"Abrir ayuda paso a paso":"Revisar una transferencia enviada");
+  if(action==="inicio"){guiaDijo("Ver las opciones");return guiaCorrer(()=>guiaIr("inicio"));}
+  guiaCargar().tema=GUIA_TEMAS.noAparece;
+  guiaDijo("Revisar una transferencia");
+  return guiaCorrer(guiaNoAparecio);
 }
-function guiaResumen(){
-  const guide=guiaCargar();
-  const labels=guide.history.slice(-8).map(x=>x.label);
-  while(labels.join(" → ").length>360)labels.shift();
-  return "Resumen de ayuda guiada\nNecesito atención de una persona.\nRecorrido: "+(labels.length?labels.join(" → "):"Inicio de ayuda")
-    +(/^\d{1,18}$/.test(String(state.solicitudId||""))?"\nSolicitud que figura en mi portal: "+state.solicitudId:"");
+
+// ── Lo que escribe a mano ────────────────────────────────────────────────────
+// «?», «hola», «3000»: es el 19 % de los chats y nadie puede contestarlos. No se adivina: se vuelve
+// a ofrecer el menú. Una sola vez, para que nadie se sienta atrapado.
+function guiaEsFragmento(txt){
+  const t=String(txt||"").trim();
+  return t.length<=20&&t.split(/\s+/).filter(Boolean).length<=2;
 }
-async function guiaPedirPersona(){
-  if(guiaBusy)return;
-  if(!state.usuario){guiaBurbuja("Para enviar el pedido, primero indicá tu usuario y teléfono en Inicio. Tu recorrido queda guardado en esta pestaña.","guide");return;}
-  guiaBusy=true;guiaControles();
-  const guide=guiaActual;
+function guiaFrenarFragmento(txt){
+  const g=guiaCargar();
+  // Sólo al arrancar: con una conversación abierta, lo corto puede ser la respuesta a un operador
+  // («5000», «dale», «Juan Perez») y tiene que llegar.
+  if(state.chatId||g.humano||g.esperaTexto||g.fragmentos>=1||guiaPersonaAvisada()||!guiaEsFragmento(txt))return false;
+  if($("guiaAccion")?.classList.contains("con-ficha"))return false;
+  g.fragmentos++;
+  guiaDijo(txt);
+  guiaDecir("Elegí una opción y te ayudo al toque. Si preferís, te paso con una persona.");
+  guiaReponerMenu();
+  return true;
+}
+function guiaTrasTexto(){
+  const g=guiaCargar();
+  g.esperaTexto=false;
+  if(g.humano||guiaPersonaAvisada())return guiaGuardar();
+  g.personaAt=Date.now();guiaGuardar();
+  guiaDecir("Listo, ya le llegó a una persona. Te contesta por acá mismo.");
+  if(!$("guiaAccion")?.classList.contains("con-ficha"))guiaOfrecer([],{sinPersona:true});
+}
+function guiaOtraCosa(){
+  const g=guiaCargar();
+  g.tema=GUIA_TEMAS.consulta;g.esperaTexto=true;
+  guiaDecir("Contame qué pasó y se lo paso a una persona.");
+  guiaOfrecer([],{sinPersona:true});
+}
+
+// ── Quién es ─────────────────────────────────────────────────────────────────
+function guiaPedirIdentidad(siguiente,texto){
+  const g=guiaCargar();
+  if(g.ingreso&&$("guiaEnviar")){g.ingreso.siguiente=siguiente;return;}
+  g.ingreso={modo:"login",siguiente};
+  guiaDecir(texto||"Primero decime quién sos, así veo tu cuenta 👇");
+  guiaFichaIngreso();
+}
+function guiaAbrirIngreso(modo){
+  guiaCargar().ingreso={modo,siguiente:()=>guiaIr("inicio")};
+  guiaFichaIngreso();
+}
+function guiaModoIngreso(modo){
+  const g=guiaCargar();
+  if(_enviando||!g.ingreso)return;
+  // No es otra ficha: sale de la ficha y sigue el mismo camino que la opción del menú.
+  if(modo==="olvido"){
+    if(guiaOcupada)return;
+    g.ingreso=null;guiaDijo("No me acuerdo el usuario");
+    return guiaCorrer(guiaOlvideUsuario);
+  }
+  if(!guiaTiene(GUIA_INGRESO,modo))return;
+  g.ingreso.modo=modo;
+  guiaFichaIngreso();
+}
+function guiaFichaIngreso(){
+  const modo=guiaCargar().ingreso?.modo||"login",d=GUIA_INGRESO[modo];
+  const enlace=(m,t)=>'<button type="button" onclick="guiaModoIngreso(\''+m+'\')">'+t+'</button>';
+  guiaFicha('<form class="guia-ficha" novalidate onsubmit="event.preventDefault();guiaEnviarIngreso()"><h4>'+d.titulo+'</h4>'
+    +(d.usuario?'<label for="guiaUsuario">'+d.usuario+'</label><input id="guiaUsuario" placeholder="'+d.ejemplo+'" value="'+esc(state.usuario||"")+'" autocomplete="username">':'')
+    +'<label for="guiaTelefono">Tu teléfono, con código de área</label><input id="guiaTelefono" placeholder="Ej: 11 2345 6789" inputmode="tel" autocomplete="tel" value="'+esc(state.telefono||"")+'">'
+    +'<div id="guiaError" class="guia-error" role="alert"></div>'
+    +'<button type="submit" id="guiaEnviar" class="action-btn">'+d.boton+'</button>'
+    +'<div class="guia-enlaces">'+(modo==="login"||modo==="validar"?enlace("olvido","No me acuerdo el usuario")+enlace("registro","Soy nuevo"):enlace("login","Ya tengo usuario"))+'</div></form>',[],{sinPersona:true});
+}
+async function guiaEnviarIngreso(){
+  const g=guiaCargar(),modo=g.ingreso?.modo||"login",boton=GUIA_INGRESO[modo].boton;
+  if(!_tomarEnvio("guiaEnviar","Un momento..."))return;
+  const siguiente=g.ingreso?.siguiente;
+  let aviso="";
   try{
-    const mensaje=guiaResumen();
-    const result=await enviarMensajeSoporte(mensaje);
-    if(guide!==guiaActual||guide.identity!==guiaIdentidad())return;
-    if(!result?.ok){guiaBurbuja(result?.error||"No pudimos enviar el pedido. Tocá Reintentar pedido de atención.","system");return;}
-    state.shownTexts.add("u|"+mensaje.substring(0,200));
-    addMsg(escMsg(mensaje),"user");
-    guiaActual.step="enviado";guiaGuardar();
-    guiaBurbuja(GUIA_PASOS.enviado.text,"guide");
-  }catch(_e){guiaBurbuja("No pudimos enviar el pedido. Podés reintentar sin perder el recorrido.","system");}
-  finally{guiaBusy=false;guiaControles();}
+    const usuario=$("guiaUsuario")?.value||"",telefono=$("guiaTelefono")?.value||"";
+    const entra=modo==="login"||modo==="validar";
+    const r=entra?await ingresarJugador(usuario,telefono):pedirRegistroCon(usuario,telefono);
+    if(r.error)return guiaErrorFicha(r.error);
+    if(entra&&r.acceso){
+      guiaQuitarAccion();
+      guiaDecir("Listo, <b>"+esc(state.usuario)+"</b>, ya te reconocí.");
+    }else aviso=entra?"validar":"registro";
+    g.ingreso=null;guiaGuardar();
+    startChatPoll();
+  }catch(e){
+    console.warn("[asistente]",e);
+    return guiaErrorFicha("No pude entrar ahora. Probá de nuevo.");
+  }finally{_soltarEnvio("guiaEnviar",boton,true);}
+  if(!aviso)return guiaCorrer(siguiente||(()=>guiaIr("inicio")));
+  // Si había escrito algo a mano, sale igual después de avisar.
+  return guiaCorrer(async()=>{
+    await guiaAvisarPersona(aviso);
+    if(siguiente===sendFreeMessage)await sendFreeMessage();
+  });
 }
-function guiaFormulario(){
-  const existing=$("guiaRevisionEnvio");
-  if(existing){existing.classList.remove("hidden");try{existing.scrollIntoView({block:"start",behavior:"smooth"});}catch(_e){}return;}
-  const wrap=document.createElement("div");wrap.id="guiaRevisionEnvio";wrap.className="msg guide guide-form guide-local";
-  wrap.innerHTML='<form class="bubble" novalidate onsubmit="event.preventDefault();guiaEnviarRevision()">'
-    +'<h3>Revisar un envío ya realizado</h3><p>Estos datos se envían al chat de atención. <b>No es una carga nueva.</b> No vuelvas a transferir para completar esta consulta.</p>'
-    +'<label for="guiaMotivo">¿Qué pasó?</label><select id="guiaMotivo"><option value="sin_acreditar">Transferí y no veo la acreditación</option><option value="no_envia">No pude enviar el formulario de carga</option><option value="datos_error">Anoté mal los datos de mi envío</option><option value="otro_destino">Transferí a una cuenta diferente</option></select>'
-    +'<label for="guiaMonto">Monto que ya transferiste</label><input id="guiaMonto" inputmode="decimal" placeholder="Ej: 5000" autocomplete="off" maxlength="12">'
-    +'<label for="guiaCuando">Fecha y hora aproximada (opcional)</label><input id="guiaCuando" type="datetime-local">'
-    +'<label for="guiaDetalle">Algo que necesitemos saber (opcional)</label><textarea id="guiaDetalle" rows="2" maxlength="400" placeholder="Ej: el monto que anoté no coincide con el comprobante"></textarea>'
-    +'<div class="campo-ayuda">No incluyas contraseñas, códigos de acceso ni datos completos de tarjetas.</div>'
-    +'<label for="guiaComprobante">Comprobante (opcional)</label><input id="guiaComprobante" type="file" accept="image/jpeg,image/png,image/webp"><div class="campo-ayuda">JPG, PNG o WEBP · hasta 5 MB.</div>'
-    +'<div id="guiaError" class="guide-error" role="alert"></div>'
-    +'<button type="submit" id="guiaEnviar" class="action-btn">Enviar consulta al chat</button></form><div class="meta">Guía automática · revisión con una persona</div>';
-  $("messages").appendChild(wrap);
-  try{wrap.scrollIntoView({block:"start",behavior:"smooth"});}catch(_e){}
+// No se pudo validar solo: va al mismo canal de siempre, con los datos que ya dejó. El operador
+// lo revisa y le aparece el botón Ingresar acá mismo.
+async function guiaAvisarPersona(tipo){
+  const g=guiaCargar(),r=await enviarAltaSoporte(tipo,g.tema);
+  if(!r?.ok)return guiaFalloEnvio(tipo);
+  g.personaAt=Date.now();g.fallos=0;guiaGuardar();
+  guiaDecir({registro:"Listo. Un operador te crea el usuario y te avisa por acá.",
+    validar:"No te pude validar solo, así que ya le pasé tus datos a una persona. Apenas te habilite, te aparece el botón <b>Ingresar</b> acá mismo"+(despuesPendiente()?" y te paso para "+GUIA_DESPUES_TXT[despuesPendiente()]:"")+"."}[tipo]);
+  guiaOfrecer([],{sinPersona:true});
 }
-function guiaValidarRevision(datos){
-  const motivos={sin_acreditar:"Transferí y no veo la acreditación",no_envia:"No pude enviar el formulario de carga",datos_error:"Anoté mal los datos de mi envío",otro_destino:"Transferí a una cuenta diferente"};
-  if(!Object.hasOwn(motivos,datos.motivo))return {error:"Elegí qué pasó con tu envío.",field:"guiaMotivo"};
-  const raw=String(datos.monto||"").trim();
-  const monto=Number(raw.replace(",","."));
-  if(!/^\d{1,9}(?:[.,]\d{1,2})?$/.test(raw)||!Number.isFinite(monto)||monto<=0)return {error:"Anotá el monto que ya transferiste, mayor a cero, sin separador de miles.",field:"guiaMonto"};
-  const cuando=String(datos.cuando||"");
-  if(cuando&&(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(cuando)||!Number.isFinite(Date.parse(cuando))||Date.parse(cuando)>Date.now()+5*60*1000))return {error:"Revisá la fecha: el envío ya debe haberse realizado.",field:"guiaCuando"};
-  if(String(datos.detalle||"").length>400)return {error:"La aclaración puede tener hasta 400 caracteres.",field:"guiaDetalle"};
-  if(datos.file&&(!["image/jpeg","image/png","image/webp"].includes(datos.file.type)||datos.file.size>5*1024*1024))return {error:"Adjuntá una imagen JPG, PNG o WEBP de hasta 5 MB.",field:"guiaComprobante"};
-  return {monto,motivo:motivos[datos.motivo],cuando,detalle:String(datos.detalle||"").trim()};
+function guiaFalloEnvio(reintento){
+  const g=guiaCargar();
+  g.fallos=(g.fallos||0)+1;
+  guiaFallo(g.fallos>1?"Sigue sin salir. Fijate si tenés señal y probá otra vez.":"No pude mandarlo: se cortó la conexión.",reintento,{sinPersona:true});
 }
-async function guiaEnviarRevision(){
-  if(guiaBusy)return;
-  const error=$("guiaError"),button=$("guiaEnviar");
-  if(!button||button.disabled)return;
-  if(!state.usuario){if(error)error.textContent="Para enviar la consulta, primero indicá tu usuario y teléfono en Inicio.";return;}
-  const file=$("guiaComprobante")?.files?.[0]||null;
-  const data=guiaValidarRevision({motivo:$("guiaMotivo")?.value,monto:$("guiaMonto")?.value,cuando:$("guiaCuando")?.value,detalle:$("guiaDetalle")?.value,file});
-  if(data.error){if(error)error.textContent=data.error;$(data.field)?.focus();return;}
-  guiaBusy=true;button.disabled=true;button.textContent="Enviando consulta...";if(error)error.textContent="";guiaControles();
-  const guide=guiaActual;
+// Antes de mostrar la cuenta o el formulario se le pregunta al servidor. Si falta validar, se le
+// piden los datos y, validado, se sigue con lo que quería: nunca ve la cuenta para transferir sin
+// poder pedir la carga después (Juan, 2/11).
+const GUIA_DESPUES={carga:()=>guiaFichaCarga(true),retiro:()=>guiaFichaRetiro(),clave:()=>guiaFichaClave()};
+const GUIA_DESPUES_TXT={carga:"cargar",retiro:"retirar",clave:"cambiar la clave"};
+async function guiaPuedeOperar(que){
+  if(!state.pcCodigo){
+    guiaDecir("No identifico a tu agente. Abrí el enlace que te pasó tu agente y volvé acá.");
+    guiaOfrecer([]);
+    return false;
+  }
+  await vinculoPuedeOperar();
+  if(state.nivelAcceso!=="SOPORTE"){if(despuesPendiente()===que)despuesDeValidar("");return true;}
+  guiaFaltaValidar(que);
+  return false;
+}
+function guiaFaltaValidar(que){
+  despuesDeValidar(que);
+  const para=GUIA_DESPUES_TXT[que]||"operar";
+  // Ya se los pasó a una persona: no se le vuelven a pedir.
+  if(state._altaSoporteEnviado||guiaPersonaAvisada()){
+    guiaDecir("Tu cuenta está en revisión. Una persona ya tiene tus datos: apenas te habilite, te aparece acá el botón para entrar y te paso para "+para+".");
+    return guiaOfrecer([],{sinPersona:true,sinVolver:true});
+  }
+  const g=guiaCargar();
+  g.ingreso={modo:"validar",siguiente:GUIA_DESPUES[que]};
+  guiaDecir("Todavía falta validar tu cuenta. Completá estos datos y, apenas quede validada, te paso para "+para+" 👇");
+  guiaFichaIngreso();
+}
+async function guiaRevalidar(){
+  await reintentarValidacion();
+  if(state.nivelAcceso!=="SOPORTE"){
+    const que=despuesPendiente();
+    if(que){despuesDeValidar("");guiaDecir("Listo, tu cuenta ya está validada. Seguimos 👇");return GUIA_DESPUES[que]();}
+    guiaDecir("Listo, ya estás adentro.");return guiaIr("inicio");
+  }
+  guiaDecir("Todavía no aparece activada. Apenas esté, te sale el botón <b>Ingresar</b> acá mismo.");
+  guiaOfrecer([]);
+}
+// El usuario guardado es lo que el jugador escribió al entrar. Se lo repetía tal cual, y si lo había
+// escrito mal le confirmaba el error (Carlitos, 2/11). Sólo se le dice si el servidor confirma que
+// esa cuenta está vinculada a su teléfono.
+// Si no, por acá no se dice nunca, ni lo dice una persona por este chat: cualquiera puede escribir un
+// teléfono ajeno. Lo pide por WhatsApp desde su número y la oficina le contesta con el usuario y el
+// enlace de ingreso a ese mismo WhatsApp, que sólo lee el dueño del teléfono (Juan, 2/11).
+const GUIA_WHATSAPP_USUARIO="Hola, ¿me pasás mi usuario y el enlace para poder cargar, por favor?";
+async function guiaOlvideUsuario(){
+  if(state.usuario&&state.telefono&&!/^(ayuda|nuevo)-/.test(state.usuario)){
+    const v=await vinculoPuedeOperar();
+    if(v.verdict==="ACCESO"&&v.estado==="VINCULADO"){
+      guiaDecir("Tu usuario es <b>"+esc(state.usuario)+"</b>. Es el nombre con el que entrás a jugar.");
+      return guiaOfrecer([]);
+    }
+  }
+  const numero=await whatsappOficina();
+  if(!numero){
+    guiaDecir("Por seguridad, tu usuario no se dice por acá. Pedíselo a tu oficina por WhatsApp, <b>desde tu número</b>.");
+    return guiaOfrecer([]);
+  }
+  guiaDecir("Por seguridad, tu usuario no se dice por acá. Escribile a tu oficina por WhatsApp <b>desde tu número</b> y te pasan el usuario y el enlace para entrar 👇");
+  guiaOfrecer([{t:"📲 Pedir mi usuario por WhatsApp",href:"https://wa.me/"+numero+"?text="+encodeURIComponent(GUIA_WHATSAPP_USUARIO),clase:"whatsapp"}]);
+}
+
+// ── Una persona ──────────────────────────────────────────────────────────────
+async function guiaPedirPersona(opcion){
+  const g=guiaCargar();
+  if(guiaFaltaIdentidad())return guiaPedirIdentidad(guiaPedirPersona,"Para pasarte con una persona necesito tus datos 👇");
+  const texto=guiaTextoPersona(g.tema);
+  if(guiaPedidoRepetido(texto)){
+    if(opcion?.t)guiaDijo(opcion.t);
+    guiaDecir("Ese pedido ya lo tiene una persona. Si querés sumar algo, escribilo acá abajo.");
+    return guiaOfrecer([],{sinPersona:true});
+  }
+  const r=await enviarMensajeSoporte(texto);
+  if(!r?.ok)return guiaFalloEnvio("persona");
+  mostrarMensajePropio(texto,null,r);
+  g.personaAt=Date.now();g.fallos=0;g.pedido={texto,chat:String(state.chatId||""),at:Date.now()};guiaGuardar();
+  guiaDecir("Te paso con un operador. <b>Ya le mandé lo que hablamos</b>, no tenés que explicar de nuevo. Te contesta por acá mismo.");
+  guiaOfrecer([],{sinPersona:true});
+}
+
+// ── Lo que el sistema ya sabe ────────────────────────────────────────────────
+// Todo sale de la misma lectura del historial que usa la pantalla Estado. Sin respuesta no se
+// inventa nada: se dice y se ofrece probar de nuevo.
+async function guiaHistorial(reintento){
+  const r=await cargarResumenHistorial();
+  if(r&&r.ok)return r.rows||[];
+  guiaFallo("No pude revisar tu cuenta ahora.",reintento);
+  return null;
+}
+function guiaUltima(rows,tipo){return rows.find(r=>estadoNormalizado(r.tipo)===tipo)||null;}
+function guiaEstado(r){
+  const e=estadoNormalizado(r.estado);
+  if(["RECHAZADA","ERROR","ERROR_OPERATIVO"].includes(e))return "rechazada";
+  if(e==="CANCELADA")return "cancelada";
+  return ["OK","APROBADA","ACREDITADA","PAGADA","COMPLETADA"].includes(e)?"hecha":"pendiente";
+}
+function guiaReciente(r){return Date.now()-new Date(r.fecha).getTime()<GUIA_RECIENTE_MS;}
+function guiaPlata(v){return esc(_money(Number(v)||0));}
+function guiaFecha(r){return esc(_fechaCorta(r.fecha));}
+function guiaContarRechazo(r){
+  const motivo=String(r.motivo||"").trim();
+  guiaDecir("Tu carga de <b>"+guiaPlata(r.monto)+"</b> del <b>"+guiaFecha(r)+"</b> se rechazó."+(motivo?"<br>Motivo: <b>"+esc(motivo)+"</b>":" No tengo guardado el motivo."));
+  guiaDecir("Si ya transferiste, mandá el comprobante para que un operador revise la carga.");
+  guiaFichaComprobante(r.solicitud_id,[{t:"Ya sé, gracias",hace:"gracias"}]);
+}
+async function guiaNoAparecio(){
+  const rows=await guiaHistorial("noAparecio");if(!rows)return;
+  const r=guiaUltima(rows,"CARGA"),estado=r&&guiaEstado(r);
+  if(estado==="pendiente"){
+    guiaDecir("Sí, la tengo. Tu carga de <b>"+guiaPlata(r.monto)+"</b> del <b>"+guiaFecha(r)+"</b> está en la fila y la están revisando.");
+    guiaDecir("Mandá el comprobante para que un operador revise la carga.");
+    return guiaFichaComprobante(r.solicitud_id,[{t:"Sigo esperando",hace:"gracias"}]);
+  }
+  if(estado==="rechazada"&&guiaReciente(r))return guiaContarRechazo(r);
+  if(estado==="hecha"&&guiaReciente(r)){
+    guiaDecir("Tu carga de <b>"+guiaPlata(r.monto)+"</b> del <b>"+guiaFecha(r)+"</b> ya está <b>acreditada</b>. Si no la ves en la plataforma, te paso con una persona.");
+    return guiaOfrecer([]);
+  }
+  if(!await guiaPuedeOperar("carga"))return;
+  guiaDecir("No veo ninguna carga reciente tuya. Si ya transferiste, completá esto y queda en la fila 👇");
+  return guiaFichaCarga(true);
+}
+async function guiaRechazo(){
+  const rows=await guiaHistorial("rechazo");if(!rows)return;
+  const r=rows.find(x=>estadoNormalizado(x.tipo)==="CARGA"&&guiaEstado(x)==="rechazada");
+  if(r)return guiaContarRechazo(r);
+  guiaDecir("No veo cargas rechazadas en los últimos 7 días.");
+  guiaOfrecer([]);
+}
+function guiaGracias(){
+  guiaDecir("De nada. Cualquier cosa, acá estoy.");
+  guiaOfrecer([]);
+}
+function guiaCuentaCorta(v){
+  const s=String(v||"").trim();
+  return /^\d{10,}$/.test(s)?"la cuenta terminada en "+s.slice(-4):s;
+}
+function guiaContarRetiro(r){
+  const base="Tu retiro de <b>"+guiaPlata(r.monto)+"</b> del <b>"+guiaFecha(r)+"</b>",estado=guiaEstado(r);
+  const cierre=_jsonDe(r.cierre),total=Number(r.monto_a_pagar)||Number(r.monto)||0,pagado=Number(r.pagado)||0;
+  if(cierre&&typeof cierre==="object")return base+" se cerró: "+esc(cierre.etiqueta||"retiro cerrado")+(cierre.nota?". "+esc(cierre.nota):"")+".";
+  if(estado==="rechazada")return base+" no se pudo pagar."+(String(r.motivo||"").trim()?"<br>Motivo: <b>"+esc(r.motivo)+"</b>":"");
+  if(estado==="cancelada")return base+" se canceló.";
+  if(estado==="hecha")return base+" quedó <b>pagado</b>.";
+  if(pagado>0)return base+": ya te pagamos <b>"+guiaPlata(pagado)+"</b> y faltan <b>"+guiaPlata(Math.max(total-pagado,0))+"</b>.";
+  return base+" está en revisión. Apenas lo paguen te aviso por acá.";
+}
+async function guiaRetiroEstado(){
+  const protocolo=await _consultarRetiroProtocolo(false);
+  if(protocolo&&protocolo.mode==="beta"&&protocolo.ultima_solicitud){
+    const u=protocolo.ultima_solicitud,estado=String(u.estado||"").toUpperCase(),validacion=String(u.estado_validacion||"").toUpperCase();
+    const reciente=Date.now()-new Date(u.actualizada_at||u.creada_at||0).getTime()<7*24*60*60*1000;
+    if(reciente&&(String(u.codigo||"").toUpperCase()==="DNI_MISMATCH"||validacion==="RECHAZADO")){
+      state._retiroDniRechazado=String(u.codigo||"").toUpperCase()==="DNI_MISMATCH";
+      guiaDecir("Tu retiro de <b>"+guiaPlata(u.monto)+"</b> no se pudo pagar porque no se confirmó la titularidad de la cuenta. No se descontaron fichas. Corregí el DNI o los datos de cobro; el DNI rechazado no se puede volver a enviar.");
+      guiaOfrecer([{t:"Corregir DNI o cuenta",hace:"corregirRetiro"},{t:"Hablar con una persona",hace:"persona",tema:"retiroSinPago",sinEco:true}]);
+      return;
+    }
+    if(reciente&&validacion==="PENDIENTE"){
+      guiaDecir("Tu retiro de <b>"+guiaPlata(u.monto)+"</b> está en verificación de titularidad con el banco. Es por única vez para esta cuenta y puede demorar unos minutos. No hace falta que envíes otro retiro; te avisamos por acá cuando termine.");
+      guiaOfrecer([{t:"Hablar con una persona",hace:"persona",tema:"retiroSinPago",sinEco:true}]);
+      return;
+    }
+    if(protocolo.mode==="beta"&&estado==="PAGADA"&&u.id){
+      guiaDecir("Tu último retiro ya figura como pagado. Si todavía no ves la transferencia, te paso con una persona para que lo revisen.");
+      return guiaOfrecer([{t:"Hablar con una persona",hace:"persona",tema:"retiroSinPago",sinEco:true}]);
+    }
+  }else if(protocolo&&protocolo.mode==="error"){
+    guiaDecir("No pude consultar la verificación de tu retiro ahora. Probá de nuevo en unos minutos o escribinos para que una persona lo revise.");
+    return guiaOfrecer([{t:"Probar de nuevo",hace:"retiroEstado",sinEco:true},{t:"Hablar con una persona",hace:"persona",tema:"retiroSinPago",sinEco:true}]);
+  }
+  const rows=await guiaHistorial("retiroEstado");if(!rows)return;
+  const r=guiaUltima(rows,"RETIRO");
+  if(!r){
+    guiaDecir("No veo retiros tuyos en los últimos 7 días.");
+    return guiaOfrecer([{t:"Quiero retirar",hace:"fichaRetiro"}]);
+  }
+  guiaDecir(guiaContarRetiro(r));
+  guiaOfrecer([]);
+}
+async function guiaCorregirRetiro(){
+  const protocolo=await _consultarRetiroProtocolo(true);
+  if(protocolo&&protocolo.mode==="error"){
+    guiaDecir("No pude abrir la corrección ahora. Probá de nuevo en unos minutos o escribinos para que una persona te ayude.");
+    return guiaOfrecer([{t:"Probar de nuevo",hace:"corregirRetiro",sinEco:true},{t:"Hablar con una persona",hace:"persona",tema:"retiroSinPago",sinEco:true}]);
+  }
+  if(protocolo&&protocolo.mode==="beta"){
+    protocolo.cambiarCuenta=true;protocolo.correccion=true;
+    try{localStorage.removeItem(_retiroKey());}catch(_e){}
+    try{olvidarSolicitud(false);}catch(_e){}
+    return guiaFichaRetiro(true);
+  }
+  guiaDecir("Abrí Retirar desde el menú para corregir los datos de cobro o escribinos por chat.");
+  guiaOfrecer([{t:"Hablar con una persona",hace:"persona",tema:"retiroSinPago",sinEco:true}]);
+}
+async function guiaUltimoRetiro(){
+  const rows=await guiaHistorial("ultimoRetiro");if(!rows)return;
+  const r=guiaUltima(rows,"RETIRO");
+  if(!r){
+    guiaDecir("No veo retiros tuyos en los últimos 7 días.");
+    return guiaOfrecer([]);
+  }
+  const destino=guiaCuentaCorta(r.billetera),titular=String(r.titular||"").trim();
+  guiaDecir("El último fue el <b>"+guiaFecha(r)+"</b>: <b>"+guiaPlata(r.monto)+"</b>"+(destino?", a <b>"+esc(destino)+"</b>":"")+(titular?", a nombre de <b>"+esc(titular)+"</b>":"")+".");
+  guiaDecir(guiaContarRetiro(r));
+  guiaOfrecer([{t:"Ese no lo pedí yo",hace:"persona",tema:"retiroAjeno",sinEco:true},{t:"Gracias",hace:"gracias"}],{sinPersona:true});
+}
+
+// ── Comprobante ──────────────────────────────────────────────────────────────
+function guiaFichaComprobante(pedido,extra=[]){
+  guiaCargar().pedidoComprobante=pedido||"";
+  guiaFicha('<form class="guia-ficha" novalidate onsubmit="event.preventDefault();guiaEnviarComprobante()">'
+    +'<h4>📎 Subí el comprobante</h4><p class="sub">Una captura o foto donde se vean el monto, la fecha y el nombre de quien transfirió.</p>'
+    +'<label class="guia-archivo" for="guiaArchivo"><span id="guiaArchivoTexto">Elegir foto o captura</span></label>'
+    +'<input id="guiaArchivo" class="guia-oculto" type="file" accept="image/jpeg,image/png,image/webp" onchange="guiaArchivoElegido(this)">'
+    +'<div id="guiaError" class="guia-error" role="alert"></div>'
+    +'<button type="submit" id="guiaEnviar" class="action-btn">Enviar comprobante</button></form>',extra);
+}
+function guiaArchivoElegido(input){
+  const texto=$("guiaArchivoTexto"),nombre=input?.files?.[0]?.name;
+  if(texto)texto.textContent=nombre?"✓ "+nombre:"Elegir foto o captura";
+  const e=$("guiaError");if(e)e.textContent="";
+}
+async function guiaEnviarComprobante(){
+  const g=guiaCargar(),file=$("guiaArchivo")?.files?.[0];
+  if(!file)return guiaErrorFicha("Elegí la foto o la captura del comprobante.");
+  if(!_tomarEnvio("guiaEnviar","Enviando..."))return;
   try{
-    const imagen=file?await subirImagen(file):null;
-    if(guide!==guiaActual||guide.identity!==guiaIdentidad())return;
-    if(file&&!imagen){if(error)error.textContent="No pudimos subir el comprobante. Tus datos siguen acá para reintentar.";return;}
-    const mensaje=guiaResumen()+"\nConsulta sobre una transferencia YA REALIZADA. No es una carga nueva."
-      +"\nProblema: "+data.motivo+"\nMonto transferido informado: $"+data.monto
-      +(data.cuando?"\nFecha y hora aproximada informada: "+data.cuando.replace("T"," "):"")
-      +(data.detalle?"\nAclaración: "+data.detalle:"")+(imagen?"\nAdjunto comprobante.":"");
-    const result=await enviarMensajeSoporte(mensaje,imagen);
-    if(guide!==guiaActual||guide.identity!==guiaIdentidad())return;
-    if(!result?.ok){if(error)error.textContent=result?.error||"No se pudo enviar. Tus datos siguen acá para reintentar.";return;}
-    state.shownTexts.add("u|"+mensaje.substring(0,200));
-    addMsg(escMsg(mensaje),"user",imagen);
-    $("guiaRevisionEnvio")?.remove();
-    guiaActual.step="enviado";guiaGuardar();
-    guiaBurbuja(GUIA_PASOS.enviado.text,"guide");
-  }catch(_e){if(error)error.textContent="No se pudo enviar. Tus datos siguen acá para reintentar.";}
-  finally{guiaBusy=false;button.disabled=false;button.textContent="Enviar consulta al chat";guiaControles();}
+    const url=await subirImagen(file);
+    if(!url)return guiaErrorFicha("No pude subir la imagen. Tu archivo sigue acá: probá de nuevo.");
+    const texto=guiaTextoComprobante(g.pedidoComprobante);
+    const r=await enviarMensajeSoporte(texto,url,g.pedidoComprobante||null);
+    if(!r?.ok)return guiaErrorFicha("No pude mandarlo. Tu archivo sigue acá: probá de nuevo.");
+    mostrarMensajePropio(texto,url,r);
+    g.personaAt=Date.now();guiaGuardar();
+    guiaDecir("Listo, ya lo tiene el operador. Te avisa por acá.");
+    guiaOfrecer([],{sinPersona:true});
+  }finally{_soltarEnvio("guiaEnviar","Enviar comprobante",true);}
 }
+async function guiaOtraCuenta(){
+  guiaDecir("Dale, <b>mandá el comprobante para que un operador revise la carga</b>.");
+  if(state.nivelAcceso!=="SOPORTE"){
+    let b=null;
+    try{b=await obtenerBilletera();}catch(_e){}
+    if(b?.titular)guiaDecir("Por las dudas: la cuenta que usamos ahora está a nombre de <b>"+esc(b.titular)+"</b>. Si transferiste a esa, está bien.");
+  }
+  guiaFichaComprobante(null,[{t:"No lo tengo ahora",hace:"persona",tema:"sinComprobante",sinEco:true}]);
+}
+
+// ── Monto mal ────────────────────────────────────────────────────────────────
+// El monto de una solicitud hoy sólo lo puede cambiar el operador. Se le avisa con el número exacto
+// y se le dice al jugador que no mande otra: así no quedan dos pedidos por la misma plata.
+async function guiaMontoMal(){
+  const rows=await guiaHistorial("montoMal");if(!rows)return;
+  const r=guiaUltima(rows,"CARGA");
+  if(!r||guiaEstado(r)!=="pendiente"){
+    if(!await guiaPuedeOperar("carga"))return;
+    guiaDecir("No veo ninguna carga tuya en la fila. Si ya transferiste, completá esto y queda con el monto real 👇");
+    return guiaFichaCarga(true);
+  }
+  guiaCargar().corrige={pedido:r.solicitud_id,monto:Number(r.monto)||0};
+  guiaDecir("Tranquilo, <b>no hay ningún problema</b>: la carga se acredita igual. Decime cuánto transferiste en realidad.");
+  guiaFicha('<form class="guia-ficha" novalidate onsubmit="event.preventDefault();guiaEnviarMonto()"><label for="guiaMonto">Monto que transferiste</label>'
+    +'<input id="guiaMonto" type="text" inputmode="numeric" autocomplete="off" placeholder="Ej: 5000" oninput="_soloNumero(this)">'
+    +'<div id="guiaError" class="guia-error" role="alert"></div><button type="submit" id="guiaEnviar" class="action-btn">Confirmar</button></form>');
+}
+async function guiaEnviarMonto(){
+  const g=guiaCargar(),real=Number(String($("guiaMonto")?.value||"").trim());
+  if(!(real>0))return guiaErrorFicha("Escribí el monto que transferiste.","guiaMonto");
+  if(!_tomarEnvio("guiaEnviar","Enviando..."))return;
+  try{
+    const texto=guiaTextoMonto(real,g.corrige?.monto,g.corrige?.pedido);
+    const r=await enviarMensajeSoporte(texto);
+    if(!r?.ok)return guiaErrorFicha("No pude avisarle al operador. Probá de nuevo.");
+    mostrarMensajePropio(texto,null,r);
+    g.personaAt=Date.now();guiaGuardar();
+    guiaDecir("Listo, ya le avisé al operador que transferiste <b>"+guiaPlata(real)+"</b>. Él acomoda tu pedido: no hace falta que mandes otro.");
+    guiaOfrecer([],{sinPersona:true});
+  }finally{_soltarEnvio("guiaEnviar","Confirmar",true);}
+}
+
+// ── Fichas de carga y retiro ─────────────────────────────────────────────────
+// Se completan adentro del chat y al enviarlas se dan vuelta: el dorso es el ticket de lo pedido.
+function guiaEnCara(form){return '<div class="guia-flip"><div class="guia-cara">'+form+'</div><div class="guia-cara dorso"></div></div>';}
+function guiaDatoCopiable(rotulo,valor){
+  return valor?'<button type="button" class="guia-dato" data-valor="'+esc(valor)+'" onclick="guiaCopiar(this)"><span class="r"><span>'+esc(rotulo)+'</span><b>'+esc(valor)+'</b></span><i data-lbl="Copiar">Copiar</i></button>':"";
+}
+function guiaCopiar(boton){copyText(boton.dataset.valor,boton.querySelector("i"));}
+function guiaTicket(d){
+  return '<div class="guia-ticket"><div class="tk-cab"><b>✓ Listo, ya está pedido</b><em>'+esc(d.sub)+'</em></div><div class="tk-cuerpo">'
+    +d.filas.filter(f=>f[1]).map((f,i)=>'<div class="tk-fila'+(i?'':' grande')+'"><span>'+esc(f[0])+'</span><b>'+esc(f[1])+'</b></div>').join("")
+    +'</div><div class="tk-pie"><i></i><span>'+esc(d.estado)+'</span></div></div>';
+}
+function guiaDarVuelta(html){
+  const box=$("guiaAccion"),flip=box?.querySelector(".guia-flip"),dorso=box?.querySelector(".guia-cara.dorso"),frente=box?.querySelector(".guia-cara:not(.dorso)");
+  if(!flip||!dorso)return;
+  dorso.innerHTML=html;
+  box.querySelector(".guia-opciones")?.remove();
+  // Deja de ser «lo pendiente»: queda en la charla como comprobante de lo que pidió. El botón ya no
+  // se reactiva, y lo de adelante no se puede volver a mandar mientras gira.
+  $("guiaEnviar")?.removeAttribute("id");
+  box.removeAttribute("id");box.classList.remove("con-ficha");
+  flip.classList.add("dada");
+  setTimeout(()=>{frente?.remove();scrollChat();},780);
+  scrollChat();
+}
+// Mismo criterio que la pantalla: si el teléfono sabe de una pendiente no se crea otra, salvo que el
+// servidor confirme que no hay ninguna. Sin respuesta, se espera.
+async function guiaHaySolicitudEnCurso(){
+  if(!tieneSolicitudPendiente())return _sincronizarSolicitudActiva();
+  const r=await _leerSolicitudActiva();
+  if(r.ok&&!r.fila){limpiarPendienteSilencioso();return false;}
+  return true;
+}
+function guiaSolicitudEnCurso(){
+  const esRetiro=estadoNormalizado(state.pendingTipo)==="RETIRO";
+  guiaQuitarAccion();
+  guiaDecir("Ya tenés "+(esRetiro?"un retiro":"una carga")+" en revisión. Cuando termine vas a poder pedir otra cosa.");
+  guiaOfrecer([{t:"¿Cómo va?",hace:esRetiro?"retiroEstado":"noAparecio"}]);
+}
+function guiaTrasCrear(r,que){
+  startChatPoll();
+  if(r.motivo==="no_habilitado"){_vinculoOk=null;vinculoPuedeOperar().finally(()=>guiaFaltaValidar(que||"carga"));return false;}
+  if(!r.ok){guiaErrorFicha("No pude mandar el pedido. Tus datos siguen acá: probá de nuevo.");return false;}
+  if(r.porChat){
+    guiaQuitarAccion();
+    guiaDecir("Lo tomamos por el chat. Un operador lo confirma por acá.");
+    guiaOfrecer([],{sinPersona:true});
+    return false;
+  }
+  renderHome();
+  setTimeout(()=>startEstadoPoll(),8000);
+  setTimeout(()=>subscribePush(),1200);
+  return true;
+}
+async function guiaFichaCarga(sinAviso){
+  if(!await guiaPuedeOperar("carga"))return;
+  if(await guiaHaySolicitudEnCurso())return guiaSolicitudEnCurso();
+  const b=await obtenerBilletera();
+  if(!b){
+    guiaDecir("Ahora no tengo una cuenta para pasarte. Tocá Hablar con una persona y te la dan.");
+    return guiaOfrecer([]);
+  }
+  if(!sinAviso)guiaDecir("Dale, completá esto 👇");
+  guiaFicha(guiaEnCara('<form class="guia-ficha" novalidate onsubmit="event.preventDefault();guiaEnviarCarga()"><h4>¿Cuánto vas a cargar?</h4>'
+    +'<label for="guiaMonto">Monto transferido (mínimo '+esc(_money(_minCarga()))+')</label>'
+    +'<input id="guiaMonto" type="text" inputmode="numeric" autocomplete="off" placeholder="Ej: 5000" oninput="_soloNumero(this)">'
+    +'<label>Transferí a esta cuenta · tocá para copiar</label>'
+    +guiaDatoCopiable("Alias",b.alias)+guiaDatoCopiable("CBU / CVU",b.cbu||b.cvu)
+    +(b.titular?'<div class="guia-nota">A nombre de <b>'+esc(b.titular)+'</b></div>':'')
+    +'<label for="guiaTitular">¿A nombre de quién está la cuenta desde la que transferís?</label>'
+    +'<input id="guiaTitular" placeholder="Nombre y apellido" autocomplete="name" value="'+esc(_titularPrevio())+'" oninput="onTitularInput(this)">'
+    +'<div id="guiaAvisoTitular" class="titular-aviso" style="display:none"></div>'
+    +'<div class="guia-aviso">Tiene que ser <b>la cuenta desde la que sale la plata</b>. Si transferís desde la cuenta de otra persona, poné ese nombre.</div>'
+    +'<div id="guiaError" class="guia-error" role="alert"></div>'
+    +'<button type="submit" id="guiaEnviar" class="action-btn">Ya transferí · Pedir la carga</button></form>'));
+}
+async function guiaEnviarCarga(){
+  if(!_tomarEnvio("guiaEnviar","Enviando..."))return;
+  try{
+    _marcarToque();
+    const monto=String($("guiaMonto")?.value||"").trim(),titular=String($("guiaTitular")?.value||"").trim();
+    if(!(Number(monto)>0))return guiaErrorFicha("Escribí el monto que transferiste.","guiaMonto");
+    if(Number(monto)<_minCarga())return guiaErrorFicha("La carga mínima es "+_money(_minCarga())+".","guiaMonto");
+    const mal=await revisarTitularCarga(titular);
+    if(mal)return guiaErrorFicha(mal.aviso,"guiaTitular");
+    if(await guiaHaySolicitudEnCurso())return guiaSolicitudEnCurso();
+    const b=state.billetera||{},r=await crearSolicitudCarga(state.usuario,monto,titular,true);
+    if(!guiaTrasCrear(r,"carga"))return;
+    guiaDarVuelta(guiaTicket({sub:"Apenas la veamos te la acreditamos.",estado:"Esperando que la revisen",filas:[
+      ["Vas a cargar",_money(Number(monto))],["Transferiste a",b.alias||b.cbu||b.cvu],["A nombre de",b.titular],["Desde la cuenta de",titular],["N° de pedido","#"+r.solicitudId]]}));
+    guiaDecir("Mandá el comprobante para que un operador revise la carga.");
+    guiaOfrecer([{t:"📎 Subir el comprobante",hace:"comprobante"}]);
+  }finally{_soltarEnvio("guiaEnviar","Ya transferí · Pedir la carga",true);}
+}
+async function guiaFichaRetiro(){
+  if(!await guiaPuedeOperar("retiro"))return;
+  if(await guiaHaySolicitudEnCurso())return guiaSolicitudEnCurso();
+  const correccion=!!(state._retiroProtocolo&&state._retiroProtocolo.correccion);
+  const resto=retiroCooldownRestanteMs();
+  if(resto>0&&!correccion){
+    guiaDecir("Ya pediste un retiro hoy. Podés pedir otro en <b>"+esc(_fmtRestante(resto))+"</b>.");
+    return guiaOfrecer([]);
+  }
+  const previos=await leerDatosRetiro();
+  if(previos&&previos.error){
+    guiaDecir("No pudimos comprobar si esta cuenta está habilitada. Probá de nuevo en unos minutos.");
+    return guiaOfrecer([{t:"Probar de nuevo",hace:"fichaRetiro",sinEco:true},{t:"Hablar con una persona",hace:"persona",tema:"retiro",sinEco:true}]);
+  }
+  const beta=!!(previos&&previos.beta),bloqueada=beta&&previos.validado&&!correccion&&!state._retiroProtocolo.cambiarCuenta;
+  guiaDecir("Dale, completá esto 👇");
+  guiaFicha(guiaEnCara('<form class="guia-ficha" novalidate onsubmit="event.preventDefault();guiaEnviarRetiro()"><h4>¿Cuánto querés retirar?</h4>'
+    +'<label for="guiaMonto">Monto (mínimo '+esc(_money(_minRetiro()))+')</label>'
+    +'<input id="guiaMonto" type="text" inputmode="numeric" autocomplete="off" placeholder="Ej: 10000" oninput="_soloNumero(this)">'
+    +'<div id="guiaCuentaVerificada" style="display:'+(bloqueada?'block':'none')+';margin:10px 0;padding:11px;border:1px solid #31506a;border-radius:10px">'
+      +'<b>Cuenta de cobro verificada</b><br>'+esc(previos&&previos.destino||'')+' · '+esc(previos&&previos.titular||'')
+      +'<br><span>La titularidad ya fue confirmada para esta cuenta.</span><br><button type="button" class="link-btn" onclick="guiaCambiarCuentaRetiro()">Cambiar cuenta de cobro</button></div>'
+    +'<div id="guiaCuentaCampos" style="display:'+(bloqueada?'none':'block')+'">'
+    +'<label for="guiaDestino">¿A qué CBU o alias te lo mandamos?</label>'
+    +'<input id="guiaDestino" placeholder="Alias o CBU/CVU donde cobrás" value="'+esc(previos?.destino||"")+'">'
+    +'<label for="guiaTitular">¿A nombre de quién está esa cuenta?</label>'
+    +'<input id="guiaTitular" placeholder="Nombre y apellido" autocomplete="name" value="'+esc(_soloLetras(previos?.titular||""))+'" oninput="onTitularInput(this)">'
+    +'<div id="guiaAvisoTitular" class="titular-aviso" style="display:none"></div>'
+    +(previos&&!beta?'<div class="guia-nota">Pusimos los datos de tu último retiro. Si cobrás en otra cuenta, cambialos.</div>':'')
+    +'</div><div id="guiaDniWrap" style="display:'+(beta&&!bloqueada?'block':'none')+'"></div>'
+    +'<div class="guia-aviso">Tiene que ser <b>una cuenta tuya</b>. Si es una cuenta nueva, confirmamos la titularidad una sola vez antes del primer pago.</div>'
+    +'<div id="guiaError" class="guia-error" role="alert"></div>'
+    +'<button type="submit" id="guiaEnviar" class="action-btn">Pedir el retiro</button></form>'));
+  if(beta&&!bloqueada)_mostrarDniRetiro("guiaDniWrap");
+}
+function guiaCambiarCuentaRetiro(){
+  if(state._retiroProtocolo){state._retiroProtocolo.cambiarCuenta=true;state._retiroProtocolo.correccion=true;}
+  const card=$("guiaCuentaVerificada"),fields=$("guiaCuentaCampos"),dni=$("guiaDniWrap");
+  if(card)card.style.display="none";
+  if(fields)fields.style.display="block";
+  if(dni){dni.style.display="block";_mostrarDniRetiro("guiaDniWrap");}
+  try{$("guiaDestino")?.focus();}catch(_e){}
+}
+async function guiaEnviarRetiro(){
+  if(!_tomarEnvio("guiaEnviar","Enviando..."))return;
+  try{
+    _marcarToque();
+    const monto=Math.abs(Number(String($("guiaMonto")?.value||"").trim()));
+    const destino=String($("guiaDestino")?.value||"").trim(),titular=String($("guiaTitular")?.value||"").trim(),dni=String($("guiaDni")?.value||"").replace(/\D/g,"");
+    if(!monto)return guiaErrorFicha("Escribí cuánto querés retirar.","guiaMonto");
+    if(monto<_minRetiro())return guiaErrorFicha("El retiro mínimo es "+_money(_minRetiro())+".","guiaMonto");
+    if(destino.length<6)return guiaErrorFicha("Escribí el alias o CBU completo.","guiaDestino");
+    const mal=validarTitular(titular);
+    if(mal)return guiaErrorFicha(mal,"guiaTitular");
+    if(await guiaHaySolicitudEnCurso())return guiaSolicitudEnCurso();
+    const resto=retiroCooldownRestanteMs();
+    const correccion=!!(state._retiroProtocolo&&state._retiroProtocolo.correccion);
+    if(resto>0&&!correccion)return guiaErrorFicha("Ya pediste un retiro hoy. Podés pedir otro en "+_fmtRestante(resto)+".");
+    const protocolo=await _consultarRetiroProtocolo(false),instrumento=protocolo.instrumento||null;
+    const requiereDni=protocolo.mode==="beta"&&(!(instrumento
+      &&String(instrumento.destino||"").trim().toUpperCase()===String(destino||"").trim().replace(/\s+/g,"").toUpperCase()
+      &&String(instrumento.titular||"").trim().toUpperCase()===String(titular||"").trim().replace(/\s+/g," ").toUpperCase())
+      ||!!protocolo.cambiarCuenta||correccion);
+    if(protocolo.mode==="error")return guiaErrorFicha("No pudimos comprobar la verificación de retiro. Probá de nuevo en unos minutos.");
+    if(requiereDni&&!/^\d{8}$/.test(dni))return guiaErrorFicha("Ingresá el DNI de 8 dígitos del titular de la cuenta.","guiaDni");
+    const r=await crearSolicitudRetiro(state.usuario,monto,destino,titular,true,dni);
+    if(!r.ok&&r.mensaje)return guiaErrorFicha(r.mensaje);
+    if(!r.ok&&(r.motivo==="protocolo_no_disponible"||r.motivo==="beta_error"||r.motivo==="beta_respuesta_invalida"))
+      return guiaErrorFicha("No se envió el retiro porque no pudimos confirmar el servidor. Probá de nuevo en unos minutos.");
+    if(!guiaTrasCrear(r,"retiro"))return;
+    const enValidacion=r.estadoValidacion==="PENDIENTE";
+    guiaDarVuelta(guiaTicket({sub:enValidacion?"Verificamos esta cuenta por única vez y te avisamos por el chat.":"Lo revisan y te lo transferimos.",estado:enValidacion?"Verificando titularidad":"Esperando que lo aprueben",filas:[
+      ["Vas a retirar",_money(monto)],["Te lo mandamos a",destino],["A nombre de",titular],["N° de pedido","#"+r.solicitudId]]}));
+    guiaOfrecer([]);
+  }finally{_soltarEnvio("guiaEnviar","Pedir el retiro",true);}
+}
+
+// ── Clave ────────────────────────────────────────────────────────────────────
+async function guiaFichaClave(){
+  if(!await guiaPuedeOperar("clave"))return;
+  guiaDecir("Dale. Escribí la clave que quieras, o dejalo vacío y queda <b>12345a</b>.");
+  guiaFicha('<form class="guia-ficha" novalidate onsubmit="event.preventDefault();guiaEnviarClave()"><label for="guiaClaveNueva">Clave nueva (opcional)</label>'
+    +'<input id="guiaClaveNueva" placeholder="Mínimo 6, letras y números" autocomplete="off">'
+    +'<div id="guiaError" class="guia-error" role="alert"></div><button type="submit" id="guiaEnviar" class="action-btn">Cambiar la clave</button></form>');
+}
+async function guiaEnviarClave(){
+  if(!_tomarEnvio("guiaEnviar","Enviando..."))return;
+  try{
+    const r=await crearSolicitudClave($("guiaClaveNueva")?.value||"");
+    if(r.revisar)return guiaErrorFicha(r.revisar,"guiaClaveNueva");
+    if(!r.ok)return guiaErrorFicha("No pude pedir el cambio. Probá de nuevo.");
+    startChatPoll();
+    guiaDecir("Listo, pedí el cambio de clave. Te aviso por acá apenas esté.");
+    guiaOfrecer([]);
+  }finally{_soltarEnvio("guiaEnviar","Cambiar la clave",true);}
+}
+
+const GUIA_HACE={persona:guiaPedirPersona,otraCosa:guiaOtraCosa,noAparecio:guiaNoAparecio,fichaCarga:()=>guiaFichaCarga(),rechazo:guiaRechazo,
+  montoMal:guiaMontoMal,otraCuenta:guiaOtraCuenta,comprobante:()=>guiaFichaComprobante(solicitudIdValido()),fichaRetiro:guiaFichaRetiro,
+  retiroEstado:guiaRetiroEstado,corregirRetiro:guiaCorregirRetiro,ultimoRetiro:guiaUltimoRetiro,fichaClave:guiaFichaClave,miUsuario:guiaOlvideUsuario,gracias:guiaGracias,revalidar:guiaRevalidar,
+  ingresar:()=>guiaAbrirIngreso("login"),validarCuenta:guiaValidarCuenta,registrarme:()=>guiaAbrirIngreso("registro"),olvideUsuario:guiaOlvideUsuario,
+  validar:()=>guiaAvisarPersona("validar"),registro:()=>guiaAvisarPersona("registro")};
 
 // ── Push PWA ──────────────────────────────────────────────────────────────
 const VAPID_PUB_KEY="BAH2MtolgsjjO31mPNwMi0WIl-T4LEDocaGSc1F3RUE0F7ZOF-1eJ1gXSuisalnR6tu0ZYcISWtnRdH-S5MFYBw";

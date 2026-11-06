@@ -270,6 +270,7 @@ async function cargarSolicitudesPortal(silencioso=false){
       try{
         if(deps.window.jugadorRegistrarDato && Array.isArray(deps.V154P.solicitudes)){
           deps.window.__jugHarvested = deps.window.__jugHarvested || new Set();
+          const _tandaJug = [];
           deps.V154P.solicitudes.forEach(function(s){
             const sid = String(s.ID||s.SOLICITUD_ID||''); if(!sid || deps.window.__jugHarvested.has(sid)) return;
             // Una consulta de SOPORTE —y sobre todo un alta nueva ("soy nuevo, apodo X, tel Y")— es lo
@@ -289,8 +290,11 @@ async function cargarSolicitudesPortal(silencioso=false){
               cbu: esRet ? String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||(meta&&(meta.cbu||meta.destino))||'').trim() : '',
               fecha: s.FECHA_CREACION || s.FECHA || undefined
             };
-            if(dato.telefono || dato.titular || dato.cbu) deps.window.jugadorRegistrarDato(u, dato);
+            if(dato.telefono || dato.titular || dato.cbu) _tandaJug.push([u, dato]);
           });
+          // Una sola lectura y escritura del almacén para toda la tanda (ver jugadorRegistrarDatos).
+          if(deps.window.jugadorRegistrarDatos) deps.window.jugadorRegistrarDatos(_tandaJug);
+          else _tandaJug.forEach(function(par){ deps.window.jugadorRegistrarDato(par[0], par[1]); });
         }
       }catch(_e){}
       // Actualizamos stats generales, pero la caja de inicio queda en manos del render portal.

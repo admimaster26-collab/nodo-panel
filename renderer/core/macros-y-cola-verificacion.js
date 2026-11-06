@@ -197,11 +197,16 @@ async function procesarColaVerificacion(){
   }
 }
 
-// Arranca el procesador automático cuando hay Electron
+// Arranca el procesador automático cuando hay Electron. Los dos relojes esperan su paso del arranque
+// por etapas: sin oficina pedían pc_codigo=null cada 5 y 10 segundos desde la pantalla de login.
 if(window.ctrlElectron){
-  setInterval(procesarColaVerificacion, 5000);
+  setInterval(function(){
+    if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
+    return procesarColaVerificacion();
+  }, 5000);
   // Actualiza badge de pendientes cada 10s
   setInterval(async ()=>{
+    if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
     const { count } = await supabaseClient.from("verificaciones")
       .select("id", { count:"exact", head:true })
       .eq("pc_codigo", pcOperativa).eq("estado","PENDIENTE");

@@ -64,6 +64,24 @@ test('Agentes: sesión caída se dice y no se lee nada', async () => {
   assert.equal(t.pruebas.vigente('Automatismos').ok, false);
 });
 
+test('Agentes: «Lectura de fichas» sólo queda verde si obtuvo un saldo numérico', async () => {
+  const pedidos = [];
+  const t = armar({ ctrlElectron: {}, callDrex: async (metodo) => {
+    pedidos.push(metodo);
+    return metodo === 'estadoPagina' ? { ok:true } : { balance:{ raw:'$ 25.000', value:25000 } };
+  }});
+  await t.pruebas.correr();
+  assert.deepEqual(pedidos,['estadoPagina','obtenerSaldoAgente']);
+  assert.equal(t.pruebas.vigente('Lectura de fichas').ok,true);
+  const muestra=t.root.NodoSalud.snapshot().rows.find(row=>row.integration==='RETIROS'&&row.stage==='DATA');
+  assert.equal(muestra.code,'FICHAS_SALDO_LEIDO');
+
+  const invalida=armar({ ctrlElectron:{}, callDrex:async metodo=>metodo==='estadoPagina'?{}:{balance:{raw:'',value:null}} });
+  await invalida.pruebas.correr();
+  assert.equal(invalida.pruebas.vigente('Lectura de fichas').ok,false);
+  assert.equal(invalida.pruebas.vigente('Lectura de fichas').detalle,'El casino no devolvió el saldo');
+});
+
 test('Agentes ocupado: no se lo molesta', async () => {
   const pedidos = [];
   const t = armar({ ctrlElectron: {}, _drexGlobalBusy: true, callDrex: async (m) => { pedidos.push(m); return {}; } });

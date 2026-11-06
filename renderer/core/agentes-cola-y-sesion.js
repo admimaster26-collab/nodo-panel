@@ -576,6 +576,9 @@ function _sondaAgenteOcupado(){
 async function _sondaSesionTick(){
   if(_sondaCorriendo) return;
   if(!window.ctrlElectron) return;                    // sólo en la app de escritorio
+  // Sin puesto elegido no hay sesión que cuidar: seis minutos en el login abrían Agentes y
+  // refrescaban el panel para ninguna oficina.
+  if(window.nodoOficinaLista && !window.nodoOficinaLista()) return;
   if(window._drexSinSesion) return;                   // ya está el login en pantalla
   if(_sondaAgenteOcupado()) return;                   // hay algo operando: eso ya prueba la sesión
 

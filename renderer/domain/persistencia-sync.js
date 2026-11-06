@@ -9,7 +9,7 @@
   const SYNC_FN = 'nodo_beta_persistencia_sync_v1';
   const READ_FN = 'nodo_beta_persistencia_leer_v1';
   const REQUIRED_CAP = 'persistence.local.v1';
-  const ACK_PREFIX = 'nodo_persistencia_ack_v1_';
+  const ACK_PREFIX = 'nodo_persistencia_cas_v1_';
   const INST_KEY = 'nodo_persistencia_instalacion_v1';
 
   function normText(value, max){
@@ -80,7 +80,7 @@
 
     const capabilityByOffice = new Map();
 
-    function readAckStore(pc){
+    function readState(pc){
       const storage = getStorage();
       const office = normOffice(pc);
       if(!storage || !office) return { jugadores: {}, movimientos: {}, cotejos: {}, colas: {} };
@@ -93,13 +93,18 @@
       };
     }
 
-    function writeAckStore(pc, ackStore){
+    function readAckStore(pc){
+      const state=readState(pc), ack={jugadores:{},movimientos:{},cotejos:{},colas:{}};
+      for(const family of Object.keys(ack)) for(const [id,item] of Object.entries(state[family])){
+        if(item && typeof item==='object' && item.revision && item.signature) ack[family][id]=item.signature;
+      }
+      return ack;
+    }
+    function writeState(pc, ackStore){
       const storage = getStorage();
       const office = normOffice(pc);
-      if(!storage || !office || !ackStore) return;
-      try{
-        storage.setItem(ACK_PREFIX + office, JSON.stringify(ackStore));
-      }catch(_e){}
+      if(!storage || !office || !ackStore) throw new Error('PERSISTENCIA_STORAGE_REQUIRED');
+      storage.setItem(ACK_PREFIX + office, JSON.stringify(ackStore));
     }
 
     function signatureOf(item){
@@ -195,7 +200,7 @@
         });
 
         if(Array.isArray(j.bonos)){
-          j.bonos.slice(0, 10).forEach(function(b, idx){
+          j.bonos.forEach(function(b, idx){
             if(!b || typeof b !== 'object') return;
             const fecha = normText(b.fecha || j.creado || '', 40) || null;
             const pct = Number(b.pct) || 0;
@@ -339,7 +344,8 @@
       const colas = [];
       const chuPend = safeJsonParse(storage.getItem('nodo_chu_pendientes'), []);
       if(Array.isArray(chuPend)){
-        chuPend.slice(0, 25).forEach(function(entry, idx){
+        chuPend.forEach(function(entry, idx){
+          if(colas.length>=25)return;
           const itemId = 'chu:' + normText(entry && (entry.id || entry.solicitudId || entry.historialId || (entry.usuario + '_' + (entry.ts || idx))), 120);
           const item = {
             cola_tipo: 'CHUNIOR_PENDIENTE',
@@ -359,7 +365,8 @@
 
       const outboxRaw = safeJsonParse(storage.getItem('nodo_chat_outbox_v1'), []);
       const outboxList = Array.isArray(outboxRaw) ? outboxRaw : Object.values(outboxRaw || {});
-      outboxList.slice(0, 25).forEach(function(entry, idx){
+      outboxList.forEach(function(entry, idx){
+        if(colas.length>=50)return;
         if(!entry || typeof entry !== 'object') return;
         const itemId = 'outbox:' + normText(entry.clientMsgId || entry.id || idx, 120);
         const item = {
@@ -393,7 +400,8 @@
         return { mode: 'legacy', reason: 'no_transport' };
       }
       const cached = capabilityByOffice.get(office);
-      if(cached && cached.mode === 'beta') return cached;
+      const now=(cfg.now || Date.now)();
+      if(cached && now-cached.at>=0 && now-cached.at<60000) return cached;
 
       let build = 'renderer';
       if(typeof panelAPI.getContext === 'function'){
@@ -416,24 +424,35 @@
       });
       const { data, error } = unwrapRpc(raw);
       capHealth?.reply?.(error);
-      if(error || !data || data.ok !== true || data.enabled !== true){
+      if(error || !data || data.ok !== true || data.contract !== 'nodo.beta.v1' || normOffice(data.scope?.pc_codigo)!==office){
         capHealth?.record?.('DATA', error ? 'ERROR' : 'UNKNOWN', error ? (error.code || 'CAPACIDADES_ERROR') : 'CAPACIDADES_DISABLED');
-        return { mode: 'legacy', reason: error ? (error.code || 'rpc_error') : 'disabled', error };
+        return { mode: 'error', reason:'contract', error:error || {code:'PERSISTENCIA_CAPABILITY_CONTRACT'} };
       }
       const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
       capHealth?.record?.('DATA', 'OK', 'CAPACIDADES_PERSISTENCIA_OK');
       if(!caps.includes(REQUIRED_CAP)){
-        return { mode: 'legacy', reason: 'capability_missing', capabilities: caps };
+        const state={mode:'legacy',reason:'capability_missing',capabilities:caps,at:now};
+        capabilityByOffice.set(office,state);return state;
       }
-      const state = { mode: 'beta', capabilities: caps, office, build };
+      const state = { mode: 'beta', capabilities: caps, office, build, at:now };
       capabilityByOffice.set(office, state);
       return state;
     }
 
-    async function sync(options){
+    const flights=new Map();
+    function sync(options){
+      const pc=getOffice(options?.pc);
+      if(flights.has(pc))return flights.get(pc);
+      const flight=syncOnce(options).catch(error=>{
+        getHealth()?.begin?.('PERSISTENCIA')?.record?.('EFFECT','ERROR','PERSISTENCIA_SYNC_FAILED');
+        return {mode:'beta',synced:false,error:{code:'PERSISTENCIA_SYNC_FAILED'}};
+      }).finally(()=>flights.delete(pc));
+      flights.set(pc,flight);return flight;
+    }
+    async function syncOnce(options){
       const opts = options || {};
       const pc = getOffice(opts.pc);
-      const health = getHealth()?.begin?.('CONCILIACION');
+      const health = getHealth()?.begin?.('PERSISTENCIA');
       if(!pc){
         health?.record?.('DATA', 'UNKNOWN', 'PERSISTENCIA_NO_OFFICE');
         return { mode: 'legacy', synced: false, reason: 'no_office' };
@@ -441,46 +460,70 @@
       const cap = await ensureCapability(pc);
       if(cap.mode !== 'beta'){
         health?.record?.('CONNECTED', cap.reason === 'rpc_error' ? 'ERROR' : 'UNKNOWN', 'PERSISTENCIA_LEGACY_' + String(cap.reason || 'MODE').toUpperCase());
-        return { mode: 'legacy', synced: false, reason: cap.reason };
+        return { mode: cap.mode, synced: false, reason: cap.reason, error:cap.error };
       }
       const batch = collectPending(pc);
-      if(batch.total === 0 && !opts.forceEmpty){
-        health?.record?.('DATA', 'OK', 'PERSISTENCIA_UP_TO_DATE');
-        return { mode: 'beta', synced: true, empty: true, acceptedTotal: 0 };
+      const state=readState(pc), installation=getInstallation(pc), blocked=[];
+      const itemId=(family,item)=>String(family==='jugadores'?item.source_id:family==='movimientos'?item.movimiento_key:family==='cotejos'?item.cotejo_key:item.item_id);
+      const itemKey=(family,item)=>family==='jugadores'?[item.source_id,item.campo]:family==='colas'?[installation,item.cola_tipo,item.item_id]:[itemId(family,item)];
+      for(const family of Object.keys(batch.payload)){
+        const pending=[];
+        for(const item of batch.payload[family]){
+          const id=itemId(family,item), entry=state[family][id] || {revision:'0'};
+          if(entry.conflict){blocked.push({family,id,code:entry.conflict.code});continue;}
+          if(!entry.pending){
+            const mutation=cfg.mutationId?.() || getWindow().crypto?.randomUUID?.() || Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+            entry.pending={signature:batch.signatures[family][id],item:{...item,_sync:{base_revision:entry.revision,mutation_id:mutation}}};
+          }
+          state[family][id]=entry;pending.push(entry.pending.item);
+        }
+        batch.payload[family]=pending;
       }
+      batch.total=Object.values(batch.payload).reduce((n,rows)=>n+rows.length,0);
+      if(batch.total === 0 && !opts.forceEmpty){
+        health?.record?.('DATA', blocked.length?'DEGRADED':'OK', blocked.length?'PERSISTENCIA_CONFLICT':'PERSISTENCIA_UP_TO_DATE');
+        return { mode: 'beta', synced: !blocked.length, empty: true, acceptedTotal: 0,conflicts:blocked };
+      }
+      // Persist the exact mutation before sending: a lost ACK retries the same write.
+      writeState(pc,state);
 
       const panelAPI = getPanelApi();
       const raw = await panelAPI.rpc(SYNC_FN, {
         p_pc_codigo: pc,
-        p_instalacion: getInstallation(pc),
+        p_instalacion: installation,
         p_version: normText(cfg.version || cap.build || 'beta-persistencia-v1', 64),
         p_lote: batch.payload
       });
       const { data, error } = unwrapRpc(raw);
       health?.reply?.(error);
-      if(error || !data || data.ok !== true || normOffice(data.scope && data.scope.pc_codigo) !== pc){
+      if(error || !data || data.ok !== true || data.contract!=='nodo.beta.v1' || data.protocol!=='persistence.cas.v1' ||
+        data.scope?.instalacion!==installation || normOffice(data.scope?.pc_codigo)!==pc || !Array.isArray(data.receipts) || !Array.isArray(data.conflicts)){
         health?.record?.('EFFECT', 'ERROR', error ? (error.code || 'PERSISTENCIA_SYNC_FAILED') : 'PERSISTENCIA_INVALID_ACK');
         return { mode: 'beta', synced: false, error: error || { code: 'PERSISTENCIA_INVALID_ACK', message: 'El servidor no confirmó la recepción.' } };
       }
 
-      const acked = (data.acknowledged && typeof data.acknowledged === 'object') ? data.acknowledged : {};
-      const store = readAckStore(pc);
-      ['jugadores', 'movimientos', 'cotejos', 'colas'].forEach(function(cat){
-        const ids = Array.isArray(acked[cat]) ? acked[cat] : [];
-        ids.forEach(function(id){
-          const key = normText(id, 256);
-          if(key && batch.signatures[cat] && batch.signatures[cat][key]){
-            store[cat][key] = batch.signatures[cat][key];
-          }
-        });
-      });
-      writeAckStore(pc, store);
+      const acked={jugadores:[],movimientos:[],cotejos:[],colas:[]},results=[...data.receipts,...data.conflicts],seen=new Set();
+      for(const result of results){
+        const sent=batch.payload[result.family]?.find(item=>itemId(result.family,item)===result.id && JSON.stringify(itemKey(result.family,item))===JSON.stringify(result.key));
+        const key=JSON.stringify([result.family,result.key]);
+        if(!sent || seen.has(key) || result.mutation_id!==sent._sync.mutation_id || !/^(0|[1-9][0-9]{0,18})$/.test(result.revision||'') ||
+          (data.receipts.includes(result) ? result.accepted!==true || BigInt(result.revision)!==BigInt(sent._sync.base_revision)+1n : result.accepted!==false || !['REVISION_CONFLICT','MUTATION_REUSED'].includes(result.code))) throw new Error('PERSISTENCIA_INVALID_RECEIPT');
+        seen.add(key);
+      }
+      if(seen.size!==batch.total)throw new Error('PERSISTENCIA_INCOMPLETE_ACK');
+      for(const result of results){
+        const entry=state[result.family][result.id];
+        if(result.accepted){entry.revision=result.revision;entry.signature=entry.pending.signature;delete entry.pending;acked[result.family].push(result.id);}
+        else{entry.conflict={code:result.code,serverRevision:result.revision};}
+      }
+      writeState(pc,state);
       health?.record?.('DATA', 'OK', 'PERSISTENCIA_PAYLOAD_VALID');
-      health?.record?.('EFFECT', 'OK', 'PERSISTENCIA_SYNC_ACK');
+      health?.record?.('EFFECT', data.conflicts.length||blocked.length?'DEGRADED':'OK', data.conflicts.length||blocked.length?'PERSISTENCIA_CONFLICT':'PERSISTENCIA_SYNC_ACK');
       return {
         mode: 'beta',
-        synced: true,
-        acceptedTotal: Number(data.accepted_total) || 0,
+        synced: data.conflicts.length===0 && blocked.length===0,
+        acceptedTotal: data.receipts.length,
+        conflicts:[...blocked,...data.conflicts],
         acknowledged: acked
       };
     }
@@ -488,7 +531,7 @@
     async function hydrate(options){
       const opts = options || {};
       const pc = getOffice(opts.pc);
-      const health = getHealth()?.begin?.('CONCILIACION');
+      const health = getHealth()?.begin?.('PERSISTENCIA');
       if(!pc) return { mode: 'legacy', hydrated: false, reason: 'no_office' };
       const cap = await ensureCapability(pc);
       if(cap.mode !== 'beta') return { mode: 'legacy', hydrated: false, reason: cap.reason };
@@ -499,11 +542,13 @@
         p_usuario: opts.usuario ? normUser(opts.usuario) : null,
         p_referencia_id: opts.referenciaId ? normText(opts.referenciaId, 120) : null,
         p_tipo: normText(opts.tipo || 'TODO', 32).toUpperCase(),
-        p_limit: Number(opts.limit) > 0 ? Math.min(Number(opts.limit), 200) : 100
+        p_limit: Number(opts.limit) > 0 ? Math.min(Number(opts.limit), 200) : 100,
+        p_cursor: opts.cursor || null
       });
       const { data, error } = unwrapRpc(raw);
       health?.reply?.(error);
-      if(error || !data || data.ok !== true || normOffice(data.scope && data.scope.pc_codigo) !== pc){
+      if(error || !data || data.ok !== true || data.contract!=='nodo.beta.v1' || data.protocol!=='persistence.cas.v1' || normOffice(data.scope?.pc_codigo)!==pc ||
+        typeof data.has_more!=='boolean' || (data.has_more ? !data.next_cursor || JSON.stringify(data.next_cursor)===JSON.stringify(opts.cursor) : data.next_cursor!==null)){
         health?.record?.('DATA', 'ERROR', error ? (error.code || 'PERSISTENCIA_READ_FAILED') : 'PERSISTENCIA_INVALID_READ');
         return { mode: 'beta', hydrated: false, error: error || { code: 'PERSISTENCIA_INVALID_READ' } };
       }
@@ -618,6 +663,7 @@
       return {
         mode: 'beta',
         hydrated: true,
+        hasMore:data.has_more,nextCursor:data.next_cursor,
         merged: { jugadores: mergedJugadores, movimientos: mergedMovimientos, cotejos: mergedCotejos },
         colasObservadas: Array.isArray(data.colas_observadas) ? data.colas_observadas : []
       };
@@ -631,7 +677,9 @@
       if(syncTimer){ try{ clearTimer(syncTimer); }catch(_e){} }
       syncTimer = setTimer(function(){
         syncTimer = null;
-        try{ void sync(); }catch(_e){}
+        void sync().then(result=>{
+          if(result.acceptedTotal>0 && collectPending().total>0)scheduleSync();
+        }).catch(()=>{});
       }, Number(delayMs) > 0 ? Number(delayMs) : 4000);
     }
 

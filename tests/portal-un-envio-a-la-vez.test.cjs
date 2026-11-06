@@ -72,6 +72,7 @@ function armar(opciones){
     sacar('function _restaurarBoton('),
     sacar('function _tomarEnvio('),
     sacar('function _soltarEnvio('),
+    sacar('async function revisarTitularCarga('),
     sacar('async function enviarSolicitudCargaDirecta(')
   ].join('\n'), ctx);
   return ctx;

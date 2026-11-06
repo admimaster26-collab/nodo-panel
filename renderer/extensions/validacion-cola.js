@@ -85,7 +85,9 @@
 
     health?.reply(error);
     if(error){ health?.record('DATA','ERROR','VALIDACION_READ_FAILED'); throw error; }
-    health?.record('DATA','OK','VALIDACION_READ_OK');
+    // Sin sesión iniciada no hay oficina: leer no prueba nada de la oficina (6/11, PCs en pc_codigo=null).
+    let _valOficina="";try{_valOficina=(typeof pcOperativa!=="undefined"&&pcOperativa)||"";}catch(_e){}
+    health?.record('DATA',_valOficina?'OK':'UNKNOWN',_valOficina?'VALIDACION_READ_OK':'VALIDACION_SIN_OFICINA');
     return {source,data:data||[]};
   }
 
@@ -430,6 +432,8 @@
   // Actualización liviana de badge cada tanto si la vista no está abierta.
   setInterval(async function(){
     try{
+      // Espera su paso del arranque por etapas: sin oficina leía desde la pantalla de login.
+      if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
       // El apartado de Verificaciones fue ELIMINADO: sin el elemento, `!undefined` daba true y este
       // código creía que la vista estaba activa (seguía renderizando/polleando al pedo).
       const _elVerif=document.getElementById("viewVerificaciones");

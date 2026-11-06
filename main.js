@@ -35,7 +35,7 @@ const { configureEnvironment } = require('./main/config');
 const { createProxyService } = require('./main/proxy');
 const { createAgentBackends } = require('./main/agent-backends');
 const { createSessionHeaders } = require('./main/session-headers');
-const { createPanelWindow } = require('./main/panel-window');
+const { createPanelWindow, anotarFalla } = require('./main/panel-window');
 const { createChuniorWindowService } = require('./main/chunior-window');
 const { createRequestRegistry } = require('./main/request-registry');
 const { createAgentWindowService } = require('./main/agent-window');
@@ -56,7 +56,10 @@ configureEnvironment({ app, rootDir });
 const proxy = createProxyService({ app, session });
 const backends = createAgentBackends({ app, rootDir });
 const headers = createSessionHeaders({ session, backends });
-const panel = createPanelWindow({ BrowserWindow, rootDir, icon });
+// Cierres y trabas de la pantalla y de los procesos de Electron, uno por línea, en cada PC.
+const fallasLog = path.join(app.getPath('userData'), 'nodo-fallas.log');
+app.on('child-process-gone', (_e, d) => anotarFalla(fallasLog, 'se cerro un proceso: ' + JSON.stringify(d)));
+const panel = createPanelWindow({ BrowserWindow, rootDir, icon, logPath: fallasLog });
 const chunior = createChuniorWindowService({ BrowserWindow, icon, headers, panel });
 // Visor de imágenes del chat: ventana aparte y una sola. Se registra solo sus IPC.
 const visorImagen = createImageWindowService({ BrowserWindow, ipcMain, rootDir, icon });

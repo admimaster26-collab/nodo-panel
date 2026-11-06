@@ -92,6 +92,8 @@
   }
   setTimeout(initPiloto,700);
   setInterval(function(){
+    // fixLabels recorre TODOS los elementos de la página: con la ventana abajo o en el login, no.
+    if(window.nodoSeVe && !window.nodoSeVe(document.getElementById("appView"))) return;
     fixLabels();
     stabilizeChatBadges();
     installMacroButtonIfMissing();

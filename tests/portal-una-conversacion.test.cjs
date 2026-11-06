@@ -35,7 +35,7 @@ function sacar(firma){
 
 // Base falsa que se comporta como la de verdad: crear_solicitud NO devuelve el token (igual que en
 // producción), crear_chat_v2_blindado SÍ, y enviar_mensaje_v2 exige los dos.
-function armar({ chatRota = false, chatAusente = false, envioRoto = false } = {}){
+function armar({ chatRota = false, chatAusente = false, envioRoto = false, chatCerrado = '' } = {}){
   const llamadas = [];
   let proximaSolicitud = 1000;
   const ctx = {
@@ -49,6 +49,8 @@ function armar({ chatRota = false, chatAusente = false, envioRoto = false } = {}
     billeteraPayloadPlano: () => ({}),
     _marcaDeTiempo: () => ({}),
     addMsg(){}, startChatPoll(){}, startPortalThreadPoll(){},
+    CLAVES_CHAT: ['bet300_chat_id','bet300_chat_token'],
+    _borrar(claves){ claves.forEach(k => ctx.localStorage.removeItem(k)); },
     Number, String, Object,
     async rpc(nombre, args){
       llamadas.push({ nombre, args });
@@ -67,17 +69,66 @@ function armar({ chatRota = false, chatAusente = false, envioRoto = false } = {}
       if(nombre === 'landing_enviar_mensaje_v2'){
         if(envioRoto)return {error:{code:'TIMEOUT',message:'respuesta perdida'}};
         if(!args.p_chat_id || !args.p_chat_token) return { error:{ message:'Chat no autorizado' } };
+        // Tal cual el servidor: un chat CERRADO contesta lo mismo que un token equivocado.
+        if(chatCerrado && args.p_chat_id === chatCerrado) return { error:{ code:'P0001', message:'Chat no autorizado' } };
         return { data: { ok:true, mensaje:'Mensaje enviado', mensaje_id: 1 } };
       }
       return { data: null };
     }
   };
   vm.createContext(ctx);
+  vm.runInContext(sacar('function chatCerradoEnServidor('), ctx);
+  vm.runInContext(sacar('function olvidarChatCerrado('), ctx);
   vm.runInContext(sacar('async function enviarMensajeSoporte('), ctx);
   const creadas = () => llamadas.filter(x => x.nombre === 'landing_portal_v16_crear_solicitud').length;
   const enviados = () => llamadas.filter(x => x.nombre === 'landing_enviar_mensaje_v2').length;
   return { ctx, llamadas, creadas, enviados };
 }
+
+// El 89 % de los chats terminan cerrados por el operador. Del 11/10 al 1/11 el jugador que volvía
+// con el chat guardado recibía 'Revisá tus datos de acceso' y su mensaje no salía nunca.
+test('chat cerrado: abre uno nuevo y el mensaje llega, una sola vez', async () => {
+  const c = armar({ chatCerrado:'55' });
+  c.ctx.state.chatId = '55'; c.ctx.state.chatToken = 'tok-viejo';
+  c.ctx.localStorage.setItem('bet300_chat_id','55');
+  const r = await c.ctx.enviarMensajeSoporte('sigo sin poder cargar');
+  assert.equal(r.ok, true, 'el mensaje salió');
+  assert.equal(r.chat_id, '77', 'por la conversación nueva');
+  assert.equal(c.ctx.state.chatId, '77');
+  assert.equal(c.ctx.localStorage.getItem('bet300_chat_id'), '77', 'y el teléfono olvidó la cerrada');
+  assert.equal(c.llamadas.filter(x => x.nombre === 'landing_chat_abrir_v3').length, 1, 'una sola apertura');
+  assert.equal(c.enviados(), 2, 'el intento rechazado y el que entró');
+  assert.equal(c.creadas(), 0, 'no crea solicitudes');
+});
+
+test('un chat recién abierto que también rechaza no abre otro: avisa y listo', async () => {
+  const c = armar({ chatCerrado:'77' });
+  const r = await c.ctx.enviarMensajeSoporte('hola');
+  assert.equal(r.ok, false);
+  assert.equal(c.llamadas.filter(x => x.nombre === 'landing_chat_abrir_v3').length, 1, 'una sola apertura');
+});
+
+test('el comprobante de una carga abre el chat atado a esa solicitud, sin consulta de más', async () => {
+  const c = armar();
+  await c.ctx.enviarMensajeSoporte('Comprobante', 'https://demo.invalid/c.png', 378404);
+  assert.equal(c.llamadas.find(x => x.nombre === 'landing_chat_abrir_v3').args.p_solicitud_id, 378404);
+});
+
+test('si la conversación de esa solicitud ya estaba cerrada, la nueva no se ata a ella', async () => {
+  const c = armar({ chatCerrado:'55' });
+  c.ctx.state.chatId = '55'; c.ctx.state.chatToken = 'tok-viejo';
+  const r = await c.ctx.enviarMensajeSoporte('Comprobante', 'https://demo.invalid/c.png', 378404);
+  assert.equal(r.ok, true);
+  assert.equal(c.llamadas.find(x => x.nombre === 'landing_chat_abrir_v3').args.p_solicitud_id, null);
+});
+
+test('si el chat nuevo tampoco abre, avisa y no se queda intentando', async () => {
+  const c = armar({ chatCerrado:'55', chatRota:true });
+  c.ctx.state.chatId = '55'; c.ctx.state.chatToken = 'tok-viejo';
+  const r = await c.ctx.enviarMensajeSoporte('hola');
+  assert.equal(r.ok, false);
+  assert.equal(c.enviados(), 1, 'un solo envío: no reintenta a ciegas');
+});
 
 test('una consulta va al CANAL DE CHAT, no crea solicitud', async () => {
   // Era lo que faltaba de lo que pidio Juan: redirigir la pagina nueva a los canales que

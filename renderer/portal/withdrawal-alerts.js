@@ -11,9 +11,10 @@ const api = {};
   // ══════════════════════════════════════════════════════════════════════════
   // ALERTAS DE RETIRO · SOLO INFORMAN, NO BLOQUEAN
   // Dos datos que el operador no tenía forma de ver al aprobar un retiro:
-  //   1. BONO SIN LIBERAR — el usuario cobró bono de primer ingreso hace poco. El bono
-  //      no es retirable hasta jugarlo 2x, pero para la plataforma son fichas comunes.
-  //      Clave: en el 67% de los casos el retiro lo paga OTRO turno, que no sabe del bono.
+  //   1. RETIRA LA CARGA Y EL BONO — cobró bono de primer ingreso y ahora saca lo que cargó
+  //      más el bono, sin ganar nada encima: no lo jugó. Si saca más que carga + bono, jugó
+  //      y ganó, y avisar es ruido (Juan, 4/11). Para la plataforma el bono son fichas comunes
+  //      y en el 67% de los casos el retiro lo paga OTRO turno, que no sabe del bono.
   //   2. CBU REPETIDO — ese CBU ya lo usaron otras cuentas (multicuenta). El CBU es el
   //      único dato que no se puede falsear: la plata tiene que caer en una cuenta real.
   // NINGUNA deshabilita botones ni corta el flujo. El operador ve el aviso y decide.
@@ -69,24 +70,26 @@ const api = {};
       const exp = !!opts.expandido;
       const chips = [];
 
-      // ── 1 · Bono sin liberar ──────────────────────────────────────────
+      // ── 1 · Retira la carga y el bono ─────────────────────────────────
+      // cargado_real y retirado_previo cuentan desde la carga que recibió el bono.
+      // Si lo que se lleva por encima de lo que cargó es justo el bono, no jugó: sacó lo mismo
+      // que puso más el bono. Si es más, ganó jugando; menos, perdió jugando o no toca el bono.
+      // En la semana al 4/11 fue 1 de 41 retiros de jugadores con bono; "parte del bono" daba
+      // también a quien cargó 218.000 y retiró 220.000, que jugó todo.
       const bono = Number(a.bono_monto||0);
       const hs   = Number(a.bono_horas||0);
-      if(bono > 0 && hs <= _ALERTA_BONO_HS){
-        const cargado  = Number(a.cargado_real||0);
-        const retirado = Number(a.retirado_previo||0);
-        const pedido   = Math.abs(Number(opts.monto||0));
-        const deMas    = (retirado + pedido) - cargado;
-        const cuando   = hs < 24 ? (hs.toFixed(1)+' h') : (Math.round(hs/24)+' d');
-        let txt = '🎁 <b>BONO SIN LIBERAR</b> · '+deps.esc(deps.money(bono))+' hace '+cuando;
+      const cargado  = Number(a.cargado_real||0);
+      const retirado = Number(a.retirado_previo||0);
+      const pedido   = Math.abs(Number(opts.monto||0));
+      const deMas    = (retirado + pedido) - cargado;
+      if(bono > 0 && hs <= _ALERTA_BONO_HS && pedido > 0 && Math.abs(deMas - bono) < 1){
+        const cuando = hs < 24 ? (hs.toFixed(1)+' h') : (Math.round(hs/24)+' d');
+        let txt = '🎁 <b>RETIRA LA CARGA Y EL BONO</b>'
+                + ' · cargó '+deps.esc(deps.money(cargado))+' + bono '+deps.esc(deps.money(bono));
         if(exp){
-          txt += '<div style="margin-top:4px;font-weight:600">Cargó '+deps.esc(deps.money(cargado))
-               + ' · ya retiró '+deps.esc(deps.money(retirado))
-               + (pedido ? (' · pide '+deps.esc(deps.money(pedido))) : '')
-               + (deMas > 0 ? ('<br><b style="color:#fbbf24">Con este retiro se lleva '+deps.esc(deps.money(deMas))+' por encima de lo que cargó</b>') : '')
-               + '<br><span style="opacity:.8">El bono debe jugarse 2× antes de retirarse — verificá antes de aprobar.</span></div>';
-        } else if(deMas > 0){
-          txt += ' · se lleva <b>'+deps.esc(deps.money(deMas))+'</b> de más';
+          txt += '<div style="margin-top:4px;font-weight:600">Bono de hace '+cuando
+               + (retirado > 0 ? (' · ya retiró '+deps.esc(deps.money(retirado))) : '')
+               + ' · pide '+deps.esc(deps.money(pedido))+'</div>';
         }
         chips.push({ txt: txt, color: '#fbbf24', bg: 'rgba(251,191,36,.12)', bd: 'rgba(251,191,36,.4)' });
       }

@@ -157,7 +157,7 @@
       const tail = !options.beforeId && cached?._expanded ? cached : page;
       _mensajes.set(S(chatId), {...page,rows,_expanded:expanded,
         has_more:tail.has_more,next_before_id:tail.next_before_id,
-        legacy_thread:options.beforeId ? (cached?.legacy_thread || page.legacy_thread || []) : (page.legacy_thread || [])});
+        legacy_thread:NodoChatMessage.sinCopias(options.beforeId ? (cached?.legacy_thread || page.legacy_thread || []) : (page.legacy_thread || []),rows)});
       return rows;
     }
     try{
@@ -295,7 +295,7 @@
   }
   function getSavedMsgs(ticket){try{return JSON.parse(localStorage.getItem(storageKey(ticket))||"[]")}catch(_e){return[]}}
   function setSavedMsgs(ticket,msgs){try{localStorage.setItem(storageKey(ticket),JSON.stringify(msgs||[]));return true;}catch(_e){return false;}}
-  const betaRetries=new Map();
+  const betaRetries=new Map(), betaCargando=new Set();
   function freshTicket(ticket){
     if(!ticket) return null;
     return ticketsAgrupadosFinal().find(t=>ticket._chatId ? t._chatId===ticket._chatId : ticket.id ? t.id===ticket.id : U(t.usuario)===U(ticket.usuario))||ticket;
@@ -478,7 +478,10 @@
           if(t._beta){
             // A user name is not a conversation identity. Only an explicit bridge
             // may reuse legacy ownership; two episodes of the same user stay separate.
-            const index=list.findIndex(g=>g._chatId && g._chatId===t._chatId);
+            // El puente también se reconoce por la solicitud que guarda el chat: la solicitud no guarda
+            // el número del chat, y el mismo chat salía dos veces en la lista (Juan, 2/11).
+            const sid=Number(t.solicitudId||0);
+            const index=list.findIndex(g=>(g._chatId && g._chatId===t._chatId) || (!g._beta && sid && (g.items||[]).some(s=>idSol(s)===sid)));
             if(index<0){list.push(t);return;}
             const old=list[index];
             list[index]={...old,...t,items:old.items,masterId:old.masterId,_legacyThread:old.thread,
@@ -888,7 +891,6 @@
         _cot=document.createElement("div"); _cot.id="altaCotejoConsulta";
         sub.parentNode.insertBefore(_cot, sub.nextSibling);
       }
-      if(window._altaCotejoConsulta) window._altaCotejoConsulta(fresh);
     }catch(_e){}
 
     // Mezclamos el thread del SERVIDOR con la copia LOCAL (localStorage). Antes el render leía
@@ -897,6 +899,13 @@
     // dedup-ea (mismo origen+fecha+mensaje), así el server y el local no se duplican, y los mensajes
     // aún-no-propagados al server igual se ven y sobreviven una recarga.
     const betaPage=fresh._beta?window._chatCanalNuevo?.paginaMensajes(fresh._chatId):null;
+    // Sin los mensajes en memoria se dibujaba la conversación vacía y nadie los volvía a pedir.
+    if(fresh._beta&&!betaPage&&fresh._chatId&&!betaCargando.has(S(fresh._chatId))){
+      const id=S(fresh._chatId);betaCargando.add(id);
+      Promise.resolve(window._chatCanalNuevo?.mensajesDe?.(id))
+        .then(()=>{if(S(window.__nodoChatCurrentTicket?._chatId)===id&&window._chatCanalNuevo?.paginaMensajes(id))renderChatConversationStep5();},e=>console.warn('mensajes del chat:',e))
+        .finally(()=>betaCargando.delete(id));
+    }
     if(fresh._beta) fresh.thread=(betaPage?.rows||[]).concat((betaPage?.legacy_thread||[]).map(m=>({...m,id:null,_legacy:true})));
     const combined=(fresh.thread||[]).concat(getSavedMsgs(fresh));
     // Canonical IDs identify messages. Equal text/time does not prove two
@@ -906,6 +915,9 @@
       const key=m.id?'id:'+m.id:m.portal_key?'legacy:'+m.portal_key:m.request_id?'request:'+m.request_id:'local:'+index;
       map.set(key,map.has(key)?NodoChatMessage.merge(map.get(key),m):m);return map;
     },new Map()).values()].filter(m=>!NodoChatMessage.isFiller(m)).sort((a,b)=>toDate(a.fecha)-toDate(b.fecha)) : uniqThread(combined);
+    // La tarjeta de cotejo mira la conversación entera. Antes, en el canal nuevo, veía sólo el último
+    // mensaje: cambiaba con cada mensaje y se redibujaba con el botón debajo del clic.
+    try{ if(window._altaCotejoConsulta) window._altaCotejoConsulta({...fresh,thread:msgs}); }catch(_e){}
     // Parchear imagen_url desde window.chatMensajes cuando el RPC no lo incluye en chat_thread.
     // Matching por timestamp más cercano (diferencia < 5 min) para evitar asignar imagen incorrecta
     // cuando hay múltiples mensajes con imagen.
@@ -943,7 +955,7 @@
       const imgHtml = imgSrc ? `<div class="wq2-img" style="margin-top:6px"><img src="${E(imgSrc)}" data-titulo="${E(NodoChatMessage.author(m,fresh.usuario))}" style="max-width:100%;height:auto;max-height:min(46vh,420px);border-radius:8px;display:block;cursor:zoom-in;object-fit:contain;background:#0b0f16;border:1px solid rgba(255,255,255,0.12)" title="Clic para verla en una ventana aparte" onclick="if(window.nodoVerImagenCompleta){window.nodoVerImagenCompleta(this.src,this.dataset.titulo||'');}else{window.open(this.src,'_blank');}" onerror="this.onerror=null;this.style.opacity='0.6';this.alt='No se pudo cargar la imagen';"></div>` : "";
       const editBtn=(op && !imgSrc && m.fecha && !fresh._beta)?`<button class="wq2-edit" onclick="editarMensajeOperador('${E(m.fecha)}')" title="Editar este mensaje (también se actualiza para el cliente)">✏️</button>`:"";
       const editedTag=m.editado?`<span class="wq2-edited" title="Mensaje editado">· editado</span>`:"";
-      const retryBtn=fresh._beta && !fresh._legacyOwner && m.request_id && !m.persisted ?
+      const retryBtn=fresh._beta && m.request_id && !m.persisted ?
         `<button type="button" data-beta-request-id="${E(m.request_id)}" onclick="nodoReintentarMensajeBeta(this.dataset.betaRequestId)">Confirmación pendiente · Reintentar</button>`:'';
       const receipt=fresh._beta && m.id?` data-beta-message-id="${E(m.id)}" data-beta-role="${E(NodoChatMessage.role(m))}"`:'';
       html+=`<div${receipt} class="wq2-row ${NodoChatMessage.className(m)}"><div class="wq2-bubble"><div class="wq2-author">${E(NodoChatMessage.author(m,fresh.usuario))}</div>${E(NodoChatMessage.visibleText(m)).replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time" title="${E(m.fecha)}">${hora(m.fecha)}${editedTag}${editBtn}${retryBtn}</div></div></div>`;
@@ -998,9 +1010,18 @@
   async function persistirChatStep5(ticket,estadoChat,extraMsg=null){
     const operador=(window.operador?.usuario||window.operador?.nombre||"panel");
     const fresh=freshTicket(ticket);
-    // A canonical conversation has one writer. A bridge owned by solicitudes
-    // keeps its existing writer; no simultaneous second send and no global ID fallback.
-    if(fresh._canalNuevo && !fresh._legacyOwner){
+    // Una conversación, un solo escritor, nunca los dos a la vez: ver NodoChatMessage.escritor.
+    let caeAlHilo=false;
+    // Un chat que el jugador ya no lee, como uno de mayo que sigue abierto: el mensaje va al hilo de
+    // su usuario, que el Portal lee siempre. Escribir en ese chat era decir "enviado" a nadie.
+    const texto=S(extraMsg?.mensaje).trim();
+    const sesiones=window._chatCanalNuevo?.crudas?.()||[];
+    if(fresh._beta&&texto&&!extraMsg.imagen_url&&sesiones.some(s=>S(s.chat_id)===S(fresh._chatId))&&S(fresh._chatId)!==NodoChatMessage.chatVigente(sesiones,fresh.usuario,Date.now())){
+      const {data,error}=await supabaseClient.rpc('panel_chat_iniciar',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:_pcActualChat(),p_usuario:fresh.usuario,p_mensaje:texto,p_operador:operador});
+      if(error||data?.ok!==true)throw new Error(error?.message||data?.error||'El servidor no confirmó el mensaje');
+      return;
+    }
+    if(NodoChatMessage.escritor(fresh,!!extraMsg)==='CANAL'){
       if(!extraMsg) return; // Accepting locally is neither a message nor a read receipt.
       const chatId=S(fresh._chatId);
       if(!chatId)throw new Error('No se identificó la conversación');
@@ -1010,11 +1031,29 @@
         const pending=getSavedMsgs(fresh).filter(m=>m.fecha!==extraMsg.fecha || m.request_id && m.request_id!==extraMsg.request_id);
         pending.push(extraMsg);
         if(!setSavedMsgs(fresh,pending))throw new Error('No se pudo conservar el identificador para reintentar el mensaje');
-        const confirmed=await window.NodoBetaChat.enviar(chatId,extraMsg);
-        const saved=getSavedMsgs(fresh).map(m=>m.request_id===extraMsg.request_id?{...m,...NodoChatMessage.normalize(confirmed),persisted:true}:m);
-        setSavedMsgs(fresh,saved);
-        return;
+        let confirmed=null;
+        try{confirmed=await window.NodoBetaChat.enviar(chatId,extraMsg);}
+        catch(e){
+          // Lo cerraron recién y este NODO todavía no se enteró: por el hilo igual le llega al jugador.
+          if(!fresh._legacyOwner||!/BETA_CHAT_CLOSED/.test(e?.message||''))throw e;
+          setSavedMsgs(fresh,getSavedMsgs(fresh).filter(m=>m.request_id!==extraMsg.request_id));
+          caeAlHilo=true;
+        }
+        if(!caeAlHilo){
+          const saved=getSavedMsgs(fresh).map(m=>m.request_id===extraMsg.request_id?{...m,...NodoChatMessage.normalize(confirmed),persisted:true}:m);
+          setSavedMsgs(fresh,saved);
+          // Copia en el hilo, igual que la de los mensajes del jugador: es lo único que el Portal puede
+          // leer cuando este chat se cierre, y lo que ven las PCs sin actualizar. Se agrega en el
+          // servidor, sin pisar el hilo, y deja la bandeja al día. Portal y NODO no la muestran doble.
+          const copia=S(extraMsg.mensaje).trim();
+          if((fresh._legacyOwner||fresh.solicitudId)&&copia&&window.PANEL_DATA_SECRET){
+            supabaseClient.rpc('panel_chat_iniciar',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:_pcActualChat(),p_usuario:fresh.usuario,p_mensaje:copia,p_operador:operador})
+              .then(r=>{if(r?.error||r?.data?.ok===false)console.warn('copia en el hilo:',r?.error||r?.data?.error);},e=>console.warn('copia en el hilo:',e));
+          }
+          return;
+        }
       }
+      if(!caeAlHilo){
       if(typeof window.panelAPI?.rpc!=='function')throw new Error('Canal de chat no disponible');
       const _chatHealth=window.NodoSalud?.begin?.('CHAT');
       const result=await window.panelAPI.rpc(extraMsg.imagen_url?'panel_nodo_send_chat_message':'panel_core_enviar_chat_json',{
@@ -1030,6 +1069,7 @@
       }
       _chatHealth?.record?.('EFFECT','OK');
       return;
+      }
     }
     if(typeof actualizarSolicitudPortal!=="function")throw new Error("actualizarSolicitudPortal no disponible");
     const thread=uniqThread(fresh._legacyThread||fresh.thread);
@@ -1135,7 +1175,7 @@
 
   window.nodoReintentarMensajeBeta=async function(requestId){
     const ticket=window.__nodoChatCurrentTicket;
-    if(!ticket?._beta || ticket._legacyOwner || ticket._betaPc!==_pcActualChat())return{ok:false,error:'BETA_CONTEXT_CHANGED'};
+    if(!ticket?._beta || ticket._betaPc!==_pcActualChat())return{ok:false,error:'BETA_CONTEXT_CHANGED'};
     const key=ticket._betaPc+'|'+ticket._chatId+'|'+requestId;
     if(betaRetries.has(key))return betaRetries.get(key);
     const message=getSavedMsgs(ticket).find(m=>m.request_id===requestId && !m.persisted);
@@ -1160,10 +1200,16 @@
     // nuevo no encontraría el ticket (sigue bajo el apodo). PERO desde la validación MANUAL (sin
     // chat de por medio) NO usamos el ticket abierto: iría al chat equivocado (bug). Ahí ruteamos
     // por usuario. Fallback en ambos casos: por usuario.
-    let fresh = (preferirTicketAbierto && window.__nodoChatCurrentTicket)
-      ? (ticketsAgrupadosFinal().find(t=>U(t.usuario)===U(window.__nodoChatCurrentTicket.usuario)) || window.__nodoChatCurrentTicket)
-      : null;
-    if(!fresh){ const u=U(usuario); if(u) fresh=ticketsAgrupadosFinal().find(t=>U(t.usuario)===u); }
+    // Por el canal nuevo, sólo al chat que el jugador está leyendo. Con un chat viejo abierto, esto
+    // agarraba el primero que encontraba: NODO decía "enviado" y al jugador no le llegaba nada.
+    const elegir=nombre=>{
+      const u=U(nombre),propios=u?ticketsAgrupadosFinal().filter(t=>U(t.usuario)===u):[];
+      const vigente=NodoChatMessage.chatVigente(window._chatCanalNuevo?.crudas?.(),u,Date.now());
+      return propios.find(t=>t._beta&&S(t._chatId)===vigente)||propios.find(t=>!t._beta)||null;
+    };
+    const actual=preferirTicketAbierto?window.__nodoChatCurrentTicket:null;
+    let fresh=actual?(elegir(actual.usuario)||(actual._beta?null:actual)):null;
+    if(!fresh) fresh=elegir(usuario);
     if(!fresh) return {ok:false,error:"sin-ticket"};
     const msgObj={origen:"OPERADOR",tipo:"OPERADOR",usuario:fresh.usuario,operador:(window.operador?.usuario||window.operador?.nombre||"panel"),mensaje:texto,fecha:new Date().toISOString()};
     const saved=getSavedMsgs(fresh); saved.push(msgObj); setSavedMsgs(fresh,saved);
@@ -1185,12 +1231,12 @@
   // tenía ninguna forma de empezar una conversación. panel_chat_iniciar crea la solicitud de
   // SOPORTE —la misma que lee el portal— con nuestro mensaje como primero del hilo, o lo suma a la
   // que ya exista en esta oficina.
-  window.nodoIniciarChat=async function(usuario,texto){
+  window.nodoIniciarChat=async function(usuario,texto,preferirTicketAbierto){
     const u=S(usuario).trim(); texto=S(texto).trim();
     if(!u||!texto) return {ok:false,error:"faltan-datos"};
     // Si ya tiene conversación en la bandeja, va por el camino de siempre.
     try{
-      const r0=await window.nodoEnviarMensajePortal(u,texto,false);
+      const r0=await window.nodoEnviarMensajePortal(u,texto,!!preferirTicketAbierto);
       if(r0&&r0.ok) return {ok:true,existente:true};
       if(r0&&r0.error&&r0.error!=="sin-ticket") return r0;
     }catch(_e){}
@@ -1261,15 +1307,19 @@
       // funcionado — y en el refresco siguiente la consulta volvía. (Juan, 3/10: "fallos
       // reportados en cerrar chats".)
       if(ticket._canalNuevo && ticket._chatId){
-        // Motivo vacío a propósito: se cierra en silencio. Con el motivo puesto, la base le
-        // escribe al JUGADOR "Cerrado manualmente desde panel" — texto nuestro, interno.
-        const r = await window.panelAPI.rpc('panel_v14_cerrar_chat_json',
-          { p_session_id:null, p_chat_id:String(ticket._chatId), p_motivo:'' });
-        if(r && r.error) throw new Error(r.error.message || 'no se pudo cerrar la conversación');
-        algoSeCerro=true;
-        // Y la solicitud puente que la acompaña, para que no quede abierta en la bandeja.
-        const sidPuente = Number(ticket.solicitudId||0);
-        if(sidPuente) await actualizarSolicitudPortal(sidPuente,"CERRADO",{chat_estado:"CERRADO"});
+        for(const chat of NodoChatMessage.chatsDeLaConsulta(ticket,window._chatCanalNuevo?.tickets?.(false))){
+          // Motivo vacío a propósito: se cierra en silencio. Con el motivo puesto, la base le
+          // escribe al JUGADOR "Cerrado manualmente desde panel" — texto nuestro, interno.
+          const r = await window.panelAPI.rpc('panel_v14_cerrar_chat_json',
+            { p_session_id:null, p_chat_id:String(chat._chatId), p_motivo:'' });
+          if(r && r.error) throw new Error(r.error.message || 'no se pudo cerrar la conversación');
+          algoSeCerro=true;
+          // Sólo la solicitud puente. Un chat también puede estar atado a una carga o un retiro de
+          // verdad: cerrarlo acá la sacaba de la fila, o le pisaba el ACREDITADA.
+          const sid = Number(chat.solicitudId||0);
+          if(sid && soporteRows(true).some(s=>Number(idSol(s))===sid)) await actualizarSolicitudPortal(sid,"CERRADO",{chat_estado:"CERRADO"});
+        }
+        try{ await window._chatCanalNuevo?.cargar?.(true); }catch(e){ console.warn('refrescar chats al cerrar:',e); }
       }
       // Cerrar "para la vista" y no en la base es lo peor de los dos mundos: el operador la da
       // por resuelta y le vuelve sola.
@@ -1485,6 +1535,9 @@
 
   setInterval(()=>{
     try{
+      // Con el chat minimizado, la ventana abajo o todavía en el login no se repinta nada: el
+      // contador de no leídos no depende de esto (chat-no-leidos.js lee los datos, no la lista).
+      if(window.nodoSeVe&&!window.nodoSeVe(document.getElementById("chatList")||document.getElementById("v15ChatList")))return;
       if(document.body.classList.contains("nodo-chat-open"))renderChatConversationStep5();
       renderChatListStep2Final();
     }catch(_e){}

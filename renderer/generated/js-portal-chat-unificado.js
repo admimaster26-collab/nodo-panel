@@ -170,8 +170,8 @@
     await window.abrirChat(id);
   };
 
-  // Recarga inicial segura.
-  setTimeout(function(){ try{ cargarChats(true); }catch(_e){} }, 1200);
+  // La primera carga de chats la hace el arranque por etapas, ya con la oficina elegida
+  // (login-y-realtime.js). Acá había otra a los 1,2 s, todavía en el login.
 })();
 
 
@@ -364,7 +364,5 @@
   window.v15CargarChatsCompacto = window.cargarChats;
   window.v15EnviarChatCompacto = window.enviarChat;
   window.v15AbrirChatCompacto = async function(id){ await window.abrirChat(id); };
-
-  setTimeout(function(){ try{ cargarChats(true); }catch(_e){} }, 1000);
 })();
 

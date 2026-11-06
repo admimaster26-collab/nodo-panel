@@ -361,7 +361,9 @@ function renderInicio(){
   renderFichasInicio();
   renderBillerasInicio();
   poblarManualBilletera();
-  if(!_historialCargado) cargarHistorial();
+  // El historial lo trae el arranque por etapas, después del primer dibujo: si esto lo pedía, salía
+  // junto con las solicitudes (y antes del login, para ninguna oficina).
+  if(!_historialCargado && (!window.nodoArranqueHabilitado || window.nodoArranqueHabilitado('historial'))) cargarHistorial();
 }
 // ── Estado de fichas en Inicio ────────────────────────────────────────────────
 function renderFichasInicio(extraEstado, extraTexto){
@@ -415,7 +417,10 @@ function renderBillerasInicio(){
     return normalizar(b.ACTIVA)==='SI' && normalizar(b.ESTADO||'ACTIVA') !== 'FUSIONADA';
   });
   if(!lista.length){
-    el.innerHTML = '<div class="small" style="color:var(--muted);padding:8px">Sin billeteras operativas para esta oficina.</div>';
+    // Recién elegido el puesto las billeteras llegan después de las solicitudes: mientras tanto no
+    // se dice que no hay.
+    const _cargando = typeof window.nodoBilleterasCargando === 'function' && window.nodoBilleterasCargando();
+    el.innerHTML = '<div class="small" style="color:var(--muted);padding:8px">'+(_cargando ? 'Cargando billeteras…' : 'Sin billeteras operativas para esta oficina.')+'</div>';
     renderEstadoLanding();
     return;
   }

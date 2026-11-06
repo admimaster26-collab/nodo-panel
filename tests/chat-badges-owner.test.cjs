@@ -276,3 +276,88 @@ test('Inicio muestra el mismo contador y alerta aunque haya otra cantidad de esp
   assert.match(alerts.textContent, /Hay 2 mensaje/);
   assert.doesNotMatch(alerts.textContent, /91|53/);
 });
+
+// Juan, 1/11: desde el chat se le contestaba en uno de mayo que seguía abierto. NODO decía
+// "Respuesta guardada" y al jugador no le llegaba nada.
+test('la respuesta escrita en un chat viejo va al hilo del jugador; en el chat vigente, por el canal y con copia',async()=>{
+  const correr=async(actualizado)=>{
+    const h=harness(),enviados=[],rpcs=[];
+    const current={id:'BETA_5',_beta:true,_canalNuevo:true,_betaPc:'DEMO',_chatId:'CHAT_X',usuario:'demo',solicitudId:'77',accepted:true};
+    h.sb.pcOperativa='DEMO';h.sb.PANEL_DATA_SECRET='s';h.sb.crypto={randomUUID:()=>'01234567-89ab-4def-8123-456789abcdef'};
+    h.sb.__nodoChatCurrentTicket=current;
+    h.sb._chatCanalNuevo={tickets:()=>[],paginaMensajes:()=>null,crudas:()=>[{sesion_id:'5',chat_id:'CHAT_X',usuario:'demo',estado:'ABIERTO',updated_at:actualizado}]};
+    h.sb.NodoBetaChat={observeRendered:noop,enviar:async(id,msg)=>{enviados.push(id);return{id:'91',tipo_emisor:'OPERADOR',mensaje:msg.mensaje,created_at:new Date().toISOString()};}};
+    h.sb.supabaseClient={rpc:async(name,args)=>{rpcs.push({name,args});return{data:{ok:true}};}};
+    h.load('renderer/chat/message-model.js');h.load('renderer/chat/chat-hilos.js');
+    h.add('chatInput').value='te respondo';h.add('chatBody');
+    const r=await h.sb.enviarChat();
+    await new Promise(resolve=>setImmediate(resolve));
+    return {r,enviados,rpcs};
+  };
+  const viejo=await correr('2026-05-17T21:06:00Z');
+  assert.equal(viejo.r.ok,true);
+  assert.deepEqual(viejo.enviados,[],'nada al chat de mayo');
+  assert.deepEqual(viejo.rpcs.map(c=>[c.name,c.args.p_usuario,c.args.p_mensaje]),[['panel_chat_iniciar','demo','te respondo']]);
+  const vigente=await correr(new Date().toISOString());
+  assert.equal(vigente.r.ok,true);
+  assert.deepEqual(vigente.enviados,['CHAT_X'],'el chat que el jugador lee recibe el mensaje');
+  assert.deepEqual(vigente.rpcs.map(c=>c.name),['panel_chat_iniciar'],'y queda copia en el hilo para cuando el chat se cierre');
+});
+
+// Juan, 2/11: "los chats titilan y desaparecen". La conversación abierta quedaba sin los mensajes del
+// jugador porque la marca del chat abierto estaba vacía y nadie volvía a pedirlos.
+test('la conversación abierta pide sus mensajes si no los tiene, y los dibuja al llegar',async()=>{
+  const h=harness(),pedidos=[];let pagina=null;
+  const current={id:'BETA_9',_beta:true,_canalNuevo:true,_betaPc:'DEMO',_chatId:'CHAT_P',usuario:'demo',accepted:true};
+  h.sb.pcOperativa='DEMO';h.sb.__nodoChatCurrentTicket=current;
+  h.sb._chatCanalNuevo={tickets:()=>[],crudas:()=>[],paginaMensajes:id=>id==='CHAT_P'?pagina:null,
+    mensajesDe:async id=>{pedidos.push(id);pagina={rows:[{id:'1',tipo_emisor:'USUARIO',mensaje:'hola soy el jugador',created_at:at(1)}],legacy_thread:[]};return pagina.rows;}};
+  h.sb.NodoBetaChat={observeRendered:noop};
+  h.load('renderer/chat/message-model.js');h.load('renderer/chat/chat-hilos.js');
+  h.add('chatInput').value='';const body=h.add('chatBody');
+  h.sb.renderChatMensajes?.();
+  for(let i=0;i<5&&!/hola soy el jugador/.test(body.innerHTML);i++)await new Promise(r=>setImmediate(r));
+  assert.deepEqual(pedidos,['CHAT_P'],'los pide una vez');
+  assert.match(body.innerHTML,/hola soy el jugador/);
+});
+test('el reloj de 5 segundos y el que carga los mensajes miran el chat que está en pantalla',()=>{
+  const src=f=>fs.readFileSync(path.join(ROOT,f),'utf8');
+  assert.match(src('renderer/portal/chat.js'),/const chatId = \(_enPantalla && _enPantalla\._beta && _enPantalla\._chatId\) \|\|/);
+  // Juan, 6/11: el reloj de 5 s del puente pedía lo mismo que NodoRealtime. Quedó uno solo, el de
+  // NodoRealtime, cada 5 s y mirando también el chat del canal nuevo que está en pantalla.
+  assert.match(src('renderer/core/login-y-realtime.js'),/\|\| \(window\.__nodoChatCurrentTicket && window\.__nodoChatCurrentTicket\._beta\)\),/);
+  assert.match(src('renderer/runtime/realtime.js'),/if\(hasOpenChat\(\)\) reads\.request\('conversation'\);\s*\}, 5000\)/);
+  assert.doesNotMatch(src('renderer/extensions/portal-bridge.js'),/cargarChatPortalActual\(true\); \}, 5000\)/);
+});
+
+// Juan, 2/11: después de validar, la tarjeta de arriba seguía pidiendo revisión.
+test('la tarjeta de cotejo toma lo declarado por el jugador, no lo que le escribió el operador',()=>{
+  const src=fs.readFileSync(path.join(ROOT,'renderer/core/cotejo-alta.js'),'utf8');
+  assert.match(src,/\.filter\(delJugador\)\.map\(/);
+  const hilos=fs.readFileSync(path.join(ROOT,'renderer/chat/chat-hilos.js'),'utf8');
+  assert.match(hilos,/_altaCotejoConsulta\(\{\.\.\.fresh,thread:msgs\}\)/,'con la conversación entera, no el último mensaje');
+  assert.doesNotMatch(hilos,/_altaCotejoConsulta\(fresh\)/);
+});
+
+// Juan, 2/11: la lista mostraba dos "noex90" con el mismo mensaje: el chat y su solicitud puente.
+test('el chat y su solicitud puente son una sola conversación en la lista',()=>{
+  const h=harness();
+  h.sb.pcOperativa='DEMO';
+  h.sb.V154P={solicitudes:[{ID:77,TIPO:'SOPORTE',ESTADO:'EN_REVISION',USUARIO:'demo',FECHA_CREACION:at(1),metadata:{puente_chat:true}}]};
+  const beta={id:'BETA_5',usuario:'demo',items:[],thread:[],fecha:at(2),mensaje:'hola',solicitudId:'77',_beta:true,_canalNuevo:true,_chatId:'CHAT_X',_betaPc:'DEMO'};
+  const otro={...beta,id:'BETA_6',_chatId:'CHAT_Y',solicitudId:'78'};
+  h.sb._chatCanalNuevo={tickets:()=>[beta,otro],crudas:()=>[],paginaMensajes:()=>null};
+  h.load('renderer/chat/message-model.js');h.load('renderer/chat/chat-hilos.js');
+  const lista=h.sb.ticketsAgrupados().filter(x=>x.usuario==='demo');
+  assert.equal(lista.length,2,'una por chat: el puente se junta con el suyo y el otro chat sigue aparte');
+  const unido=lista.find(x=>x._chatId==='CHAT_X');
+  assert.equal(unido._legacyOwner,true);assert.equal(unido.items.length,1);
+  assert.equal(lista.find(x=>x._chatId==='CHAT_Y').items.length,0);
+});
+
+test('si ya salió el aviso de validación, la tarjeta coteja lo validado y no lo que escribió mal el jugador',()=>{
+  const src=fs.readFileSync(path.join(ROOT,'renderer/core/cotejo-alta.js'),'utf8');
+  assert.ok(src.includes("match(/⟦INGRESAR:([^|⟧]*)\\|?([^⟧]*)⟧/)"));
+  assert.ok(src.includes('uDecl=ingU; tDecl=ingT||tDecl;'));
+  assert.ok(src.includes('if(delJugador(m)) return;'),'el aviso lo escribe el operador, no el jugador');
+});

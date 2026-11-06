@@ -4038,3 +4038,111 @@ Juan, 1/11, con capturas. Cada caso, con su causa comprobada:
 **Detectado y sin tocar:** `scripts/auditar-desconexiones.cjs` marca 18 definiciones pisadas, casi todas del chat viejo. Son código muerto, no corren.
 
 **Estado:** panel en fuentes, sin commitear ni publicar. Servidor: `servidor/chat-contador-d131.sql` **SIN APLICAR**: el clasificador frenó `apply_migration` el 1/11. Ensayado aislado (PGlite 22/22) y, en producción, sólo el cálculo de lectura: da 6. El texto de `chat-contador-d131-vuelta-atras.sql` reproduce el md5 del corte; no se ensayó ejecutándolo en producción. Hasta aplicarlo el contador sigue contando lo viejo en P1, la única oficina con este contrato.
+
+## D-132 · El chat del Portal no le llegaba a nadie: guía en círculo y chat cerrado sin salida
+
+Juan, 1/11, probando en `intento`. Dos causas distintas, comprobadas en el servidor:
+
+- **La guía no mandaba nada.** Sin usuario cargado, "Hablar con una persona" y "Reintentar" chocaban con la misma condición, mostraban el mismo aviso y no llamaban nunca al servidor: en los registros no hay ningún intento a esa hora, y en toda la historia hay **0** mensajes de esa guía. Además mandaba a revisar datos a otra pantalla y ofrecía tres formas de volver.
+- **Chat cerrado sin salida.** El servidor contesta "Chat no autorizado" (o `BETA_CHAT_NOT_AUTHORIZED`) tanto a un token malo como a un chat cerrado, y el 89 % de los chats terminan cerrados (2.679 de 2.996 en 14 días). El cambio del 11/10 sacó el camino de respaldo, así que el jugador que volvía recibía "Revisá tus datos de acceso", su mensaje no salía, y la lectura quedaba en error con el cartel de sin conexión. **Producción (v18.3) no lo tiene:** conserva el respaldo. Estaba sólo en `Portal` y en `intento`.
+
+**Arreglo.** Se reescribió el asistente desde el árbol del 21/10 (artefacto "Árbol del chat guiado"): el árbol son datos, lo que falta se pide adentro del chat, y cargas, retiros, clave y entrada salen por una sola función compartida con las pantallas (`crearSolicitudCarga`, `crearSolicitudRetiro`, `crearSolicitudClave`, `ingresarJugador`). Un chat cerrado deja de leerse sin tocar lo que está en pantalla, se vuelve a probar cada minuto porque NODO lo puede reabrir, y el próximo mensaje del jugador abre otro chat, una sola vez.
+
+**Cuidado con el bot.** `trg_chat_autorespuesta` corre `soporte_auto_mensaje_v1` sobre el primer mensaje de cada chat y contesta según palabras ("ya transferí", "rechaz", "no puedo entrar"...). Los textos del asistente están elegidos para no dispararlo: si se cambia uno, `tests/portal-guia-chat.test.cjs` lo controla contra una copia de esas reglas. Los 16 textos se corrieron el 1/11 contra la función real: no contesta ninguno.
+
+**Sin resolver.** El monto de una solicitud no se puede cambiar desde el Portal: "Me equivoqué en el monto" le avisa al operador con el número exacto. Corregirlo solo necesita una función nueva en el servidor. El bot sigue contestando el texto libre.
+
+**Corregido el mismo día:** un freno propio de 30 minutos dejaba sin enviar cualquier pedido a una persona después de la validación: "No me deja entrar igual" desaparecía, decía "Ya le avisé" y a NODO no llegaba nada. Ahora sólo se frena repetir exactamente el mismo pedido durante 5 minutos, por el mismo chat y sin respuesta del operador.
+
+**Revisión independiente, mismo día.** Encontró y quedó corregido: respuestas cortas a un operador que el freno de mensajes sueltos no dejaba salir (ahora corre sólo sin conversación abierta); una segunda carga posible si el servidor no contestaba; botones trabados con una solicitud pendiente; el comprobante creaba una consulta de más (ahora va atado a su carga); pedir por el chat borraba la charla; un texto con "Alias:" armaba una tarjeta de transferencia falsa y podía ejecutar código al tocar Copiar.
+
+**Estado:** `Portal` v2.1.10 en el repo y en `intento`. Producción sigue en v18.3 hasta que Juan lo apruebe y se publique.
+
+## D-133 · Cada mensaje del chat se ve dos veces por el canal nuevo
+
+Juan, 1/11: "se duplican los envíos de mensajes". En el servidor cada mensaje está **una sola vez**. Lo que se repite es lo que se muestra, en el Portal y en NODO, sólo en las oficinas con el canal nuevo (hoy P1).
+
+`landing_enviar_mensaje_v2` y `trg_chat_autorespuesta` copian cada mensaje al hilo de la solicitud sin guardarle el número. `nodo_beta.hilo_legacy` sacaba las copias comparando ese número, así que nunca sacó ninguna: de 7.290 entradas de hilo en 7 días, 0 tienen número. Hay 3.346 copias en 1.377 chats, todas a menos de 1 segundo del original; ninguna entre 1 y 60 segundos.
+
+**Arreglo preparado:** `servidor/chat-espejo-d133.sql`. Es copia lo que tiene el mismo lado, el mismo texto y el mismo segundo. Compara como texto para que una fecha rota no pueda tirar abajo la lectura. Las 3.944 entradas que existen sólo en el hilo, como "Ya validamos tu cuenta", siguen saliendo. Vuelta atrás: `servidor/chat-espejo-d133-vuelta-atras.sql`, su texto da el md5 del corte (`f4011245f4b887f2ca3df5d824e2c2c7`).
+
+**Resuelto sin tocar el servidor:** como planteó Juan, se detecta el canal igual que la billetera. Con NODO en el canal nuevo, Portal (v2.1.11) y NODO usan `sinCopias` y no muestran la copia. Comprobado en NODO real con dos chats de prueba. Queda un límite: en chats de más de 50 mensajes las copias más viejas pueden verse dobles.
+
+**Estado:** el parche de servidor queda listo y **sin aplicar**. Ya no hace falta para verlo bien; sólo cubriría ese límite. El clasificador frenó `apply_migration` el 1/11.
+
+## D-134 · El canal nuevo casi no escribía: el puente decidía por él
+
+Juan, 1/11. En 24 horas `nodo_beta_chat_enviar_v1` se usó una vez. `persistirChatStep5` mandaba al hilo viejo todo chat con solicitud puente, y **todo** chat abierto desde el Portal la tiene. Por eso "Ya validamos" y "rechazada" iban al hilo viejo aunque NODO estuviera en el canal nuevo.
+
+**Arreglo:** `NodoChatMessage.escritor` decide un solo escritor. Con NODO en el canal nuevo y el chat abierto escribe el canal nuevo, aunque haya puente; el estado de la bandeja se guarda aparte, sin el mensaje. Con el chat cerrado, o en una oficina sin el canal, sigue el camino de siempre. Comprobado con un mensaje real a `pruebaxx`: entró por `nodo_beta_chat_enviar_v1`, quedó una vez en `chat_mensajes` y nada en el hilo viejo.
+
+**Pendiente:** los cinco archivos de `servidor/dominios` (solicitudes, historial, perfil, persistencia, exportación) **SIN APLICAR**. El clasificador frenó `apply_migration` el 1/11. Sólo crean objetos nuevos, salvo `nodo_beta_capacidades_v1`, que se reemplaza. Ensayo aislado 18/18. Vuelta atrás: `servidor/dominios/vuelta-atras-dominios.sql`, reproduce el md5 del corte.
+
+**Diferencia detectada:** la fuente de `nodo_beta_chat_enviar_v1` reabre un chat cerrado y producción responde `BETA_CHAT_CLOSED`. Por eso falla un chequeo de `beta:verify-sql`.
+
+## D-135 · NODO decía "enviado" y al jugador no le llegaba: cada pantalla lee sólo su chat
+
+Juan, 1/11. Con el chat abierto, el Portal lee ese chat y nada más. Un mismo usuario puede tener varios abiertos (`pruebaxx`: 5; 107 usuarios con más de uno) y NODO escribía en cualquiera: "intento de comunicacion" cayó en un chat del 17/05. La encargada recibió una prueba que Juan no vio porque cada pantalla tenía su chat.
+
+En `chat_mensajes` no hay filas repetidas (0 en los chats de las últimas 5 horas). El duplicado es de lectura: tabla más copia en el hilo, siempre a menos de 3 s. El desorden también: lo del hilo se pegaba al final.
+
+**Modelo:** como las herramientas de mensajería, una línea por conversación, un identificador por mensaje y el orden lo pone el servidor, no el reloj de cada cliente. Sin id en las copias se compara lado, texto y 10 s: es un puente, no el arreglo final.
+
+**Arreglo:** `chatVigente` decide el chat que el jugador lee; si no hay, va a `panel_chat_iniciar`. Respuesta por canal deja copia en el hilo. Comprobado con el Portal publicado leyendo como `pruebaxx`: una vez con chat cerrado y con chat abierto, en orden y sin perderse al abrirse otro chat. El Portal (v2.1.14) lee siempre el hilo del usuario y ubica cada globo por hora del servidor.
+
+**Límites:** sólo cubre lo que tenga esta versión: Portal de producción (v18.3) y NODO oficial siguen igual. Imágenes a un chat no vigente siguen por el camino anterior.
+
+**Otro daño:** el botón de cerrar viejo pisaba cualquier solicitud atada al chat. Dejó CERRADO tres cargas de prueba de P1 que estaban acreditadas o aprobadas: 143 (`noex90`, $20, 01/11 09:16), 45 y 62 (`pruebaxx`, $10 y $15, 01/11 18:18, todavía con el NODO sin recargar). No se revirtieron: cambiar el estado puede mandarle avisos al jugador y son de prueba. Con el arreglo, cerrar desde NODO el chat 1242237 de `pruebaxx` (2/11) cerró el chat y su consulta, y nada más.
+
+**Falta:** probarlo de punta a punta con el Portal real leyendo: considerar que llegó sólo si el globo aparece. Arreglo definitivo en servidor: que la copia lleve el id del mensaje (`servidor/chat-espejo-d133.sql` es el primer paso, sin aplicar).
+
+**Avisos automáticos (2/11):** carga acreditada, rechazos y pagos de retiro le abren conversación al jugador si no tiene una. Se deja de lado lo que frenaba D-92: Juan, "no veo necesario trabar una característica"; la bandeja ya tiene chats sin contestar que nadie cierra. Comprobado: un aviso a `pruebaxx` sin chat abierto se ve una vez en el Portal.
+
+## D-136 · Bonos: el registro por campaña se cortó el 4/10 y hay dos funciones abiertas
+
+Detalle y plan en `docs/PLAN_BONIFICACIONES.md`. `bono_otorgados` nunca la escribió ningún NODO: se llenó una vez el 4/10 copiando el historial, y desde entonces hay 509 bonos sin fila. `bono_reiniciar_lista_negra` y `bono_anotar` se pueden llamar con la clave pública del Portal. Arreglo escrito en `servidor/bonos-cerrar-escrituras.sql`, **sin aplicar**: el control automático frenó `apply_migration` el 2/11.
+
+## D-137 · Chat que titila, botón de crear cuenta muerto, tarjeta que no se resuelve y chats dobles
+
+Juan y Lourdes, 2/11, probando con pepita (P1). Una sola causa para los tres primeros: NODO pedía los mensajes del chat por una marca que el código viejo vacía (`abrirChat`, `chatActualId`). Con la marca vacía no se volvían a pedir y la conversación quedaba con lo del operador. La tarjeta de cotejo leía sólo el último mensaje y también los del operador: cambiaba con cada mensaje, se redibujaba debajo del clic de "Crear la cuenta" y, después de validar, tomaba el "Usuario: noex90" del aviso como declarado.
+
+**Arreglo:** el cargador y el reloj de 5 s miran el chat en pantalla; si no hay mensajes en memoria se piden. La tarjeta lee la conversación entera, sólo lo del jugador, y si ya salió el aviso de validación (⟦INGRESAR⟧) coteja lo validado. El chat y su solicitud puente se juntan por el número de solicitud. Portal v2.1.15: no deja de leer el chat al aprobarse o cancelarse una solicitud, y una lectura colgada se repite a los 20 s.
+
+**Comprobado en NODO real:** 17 globos estables 40 s con la marca vaciada a propósito; tarjeta en VALIDADO noex90; una sola entrada por chat. Portal v2.1.15 publicado y probado con `pruebaxx`. **No se reprodujo** el alta de un jugador nuevo de punta a punta.
+
+## D-138 · Discord decía "8 solicitudes pendientes" y NODO no tenía ninguna
+
+Juan, 2/11. El cartel de OFI SAN decía 8 y el de OFIALV 13. Las dos pantallas decían "No hay solicitudes Portal pendientes", y en la base ninguna oficina tenía más de 3 abiertas. El de OFIALV decía "Última carga hace 15 min" a las 11:51 y lo mismo dos minutos y medio después: estaba congelado. Los dos NODO llevaban 45 h y 12 días abiertos, con la v2.1.5 del 3/10.
+
+**Causa:** NODO mandaba el estado y nunca leía la respuesta de Discord. Si Discord dejaba de aceptar, o el panel dejaba de mandar, quedaba a la vista lo último aceptado, sin límite de tiempo. Además, el número se contaba aparte de la lista, con otra lista de estados cerrados: CERRADO contaba distinto en cada lado.
+
+**Arreglo:**
+- `main/discord.js` espera la respuesta de cada envío. Si no llega en 20 s, corta y vuelve a conectar, y al cortar Discord borra lo viejo. Si Discord lo rechaza, borra la presencia. Si el panel no manda nada en 5 minutos, también la borra.
+- El panel manda su estado cada minuto aunque no cambie nada, y publica el mismo número que dibujó la lista de Inicio. Si el último refresco falló, publica "Sin datos: no se pudo consultar".
+
+**Comprobado:** contra el Discord de la PC de Juan, cada envío se contesta en menos de 0,4 s, y el borrado se acepta. El NODO de prueba (P1) reiniciado publica el número de la pantalla y estuvo 150 s conectado, sin reconexiones ni borrados de más. Pasan las 949 pruebas.
+
+**Límite:** las oficinas siguen con la v2.1.5 hasta que se publique una versión nueva y se reinicien.
+
+## D-139 · El jugador sin validar veía la cuenta, transfería y después no podía pedir la carga
+
+Juan, 2/11, con captura: "Tu usuario todavía no está habilitado para operar" aparecía debajo de la cuenta para transferir, recién al tocar "Ya transferí · Pedir la carga". El jugador se frustra y se va sin cargar.
+
+**Causa:** el Portal decidía mostrar la cuenta según lo guardado en el teléfono (`bet300_nivel_acceso`). Sólo frenaba si decía "sin validar". El servidor, en cambio, controla el vínculo al recibir el pedido. Si lo guardado era viejo, de otra cuenta, o venía del botón Ingresar, el jugador veía la cuenta y el servidor le rechazaba la carga. El botón Ingresar marcaba habilitado aunque el servidor dijera que la cuenta no figuraba ("confiamos en la validación").
+
+**Arreglo (Portal v2.1.16):** antes de mostrar la cuenta, el retiro o la clave, se le pregunta al servidor lo mismo que controla al recibir el pedido. Eso vale en el asistente y en las pantallas Cargar, Retirar y Clave.
+- Si el servidor dice que no, el jugador no ve nada para transferir: "Todavía falta validar tu cuenta. Completá estos datos y, apenas quede validada, te paso para cargar". Ve una ficha con usuario y teléfono ya escritos.
+- Si se valida solo, sigue derecho a la carga. Si no, sus datos le llegan a una persona una vez, y al tocar Ingresar o "Ya me activaron" sigue con la carga, sin empezar de nuevo.
+- Ingresar ya no marca habilitado lo que el servidor rechaza: le avisa al operador una vez.
+- Si el servidor no contesta, no se frena a nadie, porque controla igual al recibir el pedido.
+
+**Comprobado en el Portal publicado (intento, v2.1.16)** con `pruebaxx`:
+- Con un teléfono que no es el suyo, el asistente y el botón "Cargar saldo" piden validar y no muestran la cuenta.
+- Con el teléfono correcto, ve la cuenta como siempre.
+- No se creó ningún pedido. Pasan las 956 pruebas.
+
+**No probado:** que lo valide un operador de punta a punta, porque manda mensajes reales a la bandeja de P1.
+
+**v2.1.17 (Carlitos, 2/11):** "No me acuerdo el usuario" le contestaba "Tu usuario es juan" con lo que el jugador había escrito al entrar. Si lo había escrito mal, le confirmaba el error. Ahora lo dice sólo si el servidor confirma que esa cuenta está vinculada a su teléfono (ACCESO y VINCULADO). Si no, le pide el teléfono y una persona se lo busca. Comprobado en intento: `pruebaxx` bien escrito recibe su usuario; mal escrito (`pruebaxy`) con el mismo teléfono no ve nada repetido y se le pide el teléfono.
+
+**v2.1.18 (Carlitos y Juan, 2/11):** "Transferí y no me apareció" decía "completá esto 👇" y abajo "tu cuenta todavía no está validada", sin ficha. Se revisaba después de prometer. Ahora la cuenta se revisa al abrir el chat. Sin validar, el menú es corto (Validar mi cuenta, Soy nuevo, No me acuerdo el usuario, Hablar con una persona), o sólo "Ya me activaron" si ya pasó sus datos. Un toque que llega antes de la respuesta del servidor la espera. El teléfono pide 10 números con código de área en el ingreso, el registro y el "no me acuerdo", en pantalla y en el chat: llegaban pedidos con "Tel: 111234". Comprobado en intento con `pruebaxx`: con un teléfono ajeno, menú corto; un teléfono de 6 números se frena en la ficha sin mandar nada; con el suyo, el menú entero.

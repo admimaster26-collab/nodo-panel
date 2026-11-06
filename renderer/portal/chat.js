@@ -31,13 +31,27 @@ const api = {};
     let betaActive=false,betaError=false;
     try{betaActive=beta && await beta.ready();}
     catch(e){betaError=true;r={data:null,error:{message:e.message}};}
+    // El canal nuevo anota su propia salud (beta-chat.js). El camino de siempre no anotaba nada y el
+    // semáforo decía "sin actividad" con los chats llegando (P4, 6/11).
+    const health=!betaActive&&!betaError?deps.window.NodoSalud?.begin('CHAT'):null;
+    let porRespaldo=false;
     if(betaActive){
       try { r={data:await deps.window._chatCanalNuevo.cargar(),error:null}; }
       catch(e) { r={data:null,error:{message:e.message}}; }
     }else if(!betaError) r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
     if(!betaActive && !betaError && (r?.error || !deps.normArr(r?.data).length)){
+      const primeraFallo=!!r?.error;
       const fb = await deps.rpc("panel_v154_plus_listar_chat_sesiones", {p_pc_codigo: canal});
-      if(!fb?.error) r = fb;
+      if(!fb?.error){ r = fb; porRespaldo=primeraFallo || deps.normArr(fb?.data).length>0; }
+    }
+    if(health){
+      health.reply(r?.error);
+      if(r?.error) health.record('DATA','ERROR',health.errorCode(r.error));
+      else if(!Array.isArray(r?.data) && !deps.normArr(r?.data).length) health.record('DATA','ERROR','CHAT_INVALID_DATA');
+      // La lista vacía con chats ya cargados se descarta (ver ANTI-PARPADEO): no se la da por buena.
+      else if(!deps.normArr(r.data).length && Array.isArray(deps.V154P.chats) && deps.V154P.chats.length) health.record('DATA','DEGRADED','CHAT_LIST_EMPTY_KEPT');
+      // La lista de respaldo no trae la hora del último mensaje: llega, pero a medias.
+      else health.record('DATA',porRespaldo?'DEGRADED':'OK',porRespaldo?'CHAT_LIST_FALLBACK':'CHAT_LIST_VALID');
     }
 
     if(r?.error){
@@ -63,8 +77,16 @@ const api = {};
       try{ deps.chats = deps.V154P.chats.slice(); }catch(_e){}
     }
 
-    if(typeof deps.v15RenderChatList === "function") deps.v15RenderChatList();
-    else if(typeof deps.renderChatList === "function") deps.renderChatList();
+    try{
+      if(typeof deps.v15RenderChatList === "function") deps.v15RenderChatList();
+      else if(typeof deps.renderChatList === "function") deps.renderChatList();
+      else health?.record('RENDER','UNKNOWN','CHAT_RENDER_UNAVAILABLE');
+    }catch(e){ health?.record('RENDER','ERROR','CHAT_RENDER_FAILED'); throw e; }
+    if(health && (typeof deps.v15RenderChatList === "function" || typeof deps.renderChatList === "function")){
+      // Se dibujó sin errores en una lista que está en la pantalla; si no hay lista, no se sabe.
+      const caja=deps.document.getElementById("chatList")||deps.document.getElementById("v15ChatList");
+      health.record('RENDER',caja?'OK':'UNKNOWN',caja?'CHAT_LIST_RENDERED':'CHAT_LIST_NOT_ON_SCREEN');
+    }
 
     // Auto-refrescar conversación abierta si hay un ticket activo
     try{
@@ -84,7 +106,11 @@ const api = {};
   }
 
   async function cargarChatPortalActual(silencioso=false){
-    const chatId = deps.window.chatActualId || deps.window.v15ChatActualId || deps.V154P.chatActual;
+    // Manda el chat que está en pantalla. La marca suelta la vacían varios lados del código viejo, y
+    // con ella vacía NODO dejaba de pedir los mensajes: la conversación quedaba con lo que había
+    // escrito el operador y nada del jugador (Juan, 2/11: "los chats titilan y desaparecen").
+    const _enPantalla = deps.window.__nodoChatCurrentTicket;
+    const chatId = (_enPantalla && _enPantalla._beta && _enPantalla._chatId) || deps.window.chatActualId || deps.window.v15ChatActualId || deps.V154P.chatActual;
     if(!chatId) return;
 
     deps.V154P.chatActual = String(chatId);

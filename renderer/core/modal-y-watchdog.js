@@ -52,10 +52,16 @@ async function refrescarSaldoAgente(){
     if(_conCandado) _drexGlobalUnlock();
   }
 }
+// La primera lectura abre la ventana de Agentes: espera su paso del arranque por etapas, que la
+// hace él mismo (login-y-realtime.js). Antes se abría a los 4 s, todavía en el login.
+function _saldoAgenteSiToca(){
+  if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('agentes')) return;
+  return refrescarSaldoAgente();
+}
 if(enElectron){
   // Refresca el saldo del agente cada 60 segundos
-  setInterval(refrescarSaldoAgente, 60000);
-  setTimeout(refrescarSaldoAgente, 4000); // 4s después del load inicial
+  setInterval(_saldoAgenteSiToca, 60000);
+  setTimeout(_saldoAgenteSiToca, 4000); // 4s después del load inicial
 }
 
 // Rechequeo MANUAL de fichas (portado de NexoBetaChan): relee Drex + Chunior y compara AHORA.
@@ -400,6 +406,11 @@ function _watchdogTrigger(delayMs){
 }
 
 if(enElectron){
-  // Arranca el watchdog 12s después del load (da tiempo a que la ventana de Chunior esté lista)
-  setTimeout(_watchdogIniciar, 12000);
+  // Arranca el watchdog 12s después del load (da tiempo a que la ventana de Chunior esté lista).
+  // Lee las fichas con la ventana de Agentes: si para entonces no se eligió el puesto, lo arranca
+  // el paso "agentes" del arranque por etapas.
+  setTimeout(function(){
+    if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('agentes')) return;
+    _watchdogIniciar();
+  }, 12000);
 }

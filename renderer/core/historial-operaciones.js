@@ -208,50 +208,76 @@ window._histBetaCapCache = window._histBetaCapCache || {};
 async function _histBetaConsultar(cursor){
   const pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase();
   if(!pc || !window.panelAPI || typeof window.panelAPI.rpc !== 'function') return { mode: 'legacy' };
+  const filtros=_histFiltrosActivos(), queryKey=JSON.stringify([pc,filtros]);
+  const requestEpoch=window._histRequestEpoch=(window._histRequestEpoch||0)+1;
   try{
     if(typeof window.panelAPI.getContext === 'function'){
       const rawCtx = await window.panelAPI.getContext();
       const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
       if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(pc))) return { mode: 'legacy' };
     }
-    if(window._histBetaCapCache[pc] !== true){
+    if(!(Date.now() - window._histBetaCapCache[pc] >= 0 && Date.now() - window._histBetaCapCache[pc] < 60000)){
       const capRes = await window.panelAPI.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: pc, p_activate: false });
       const capData = capRes && capRes.data;
       const caps = (capData && Array.isArray(capData.capabilities)) ? capData.capabilities : [];
-      if(!capData || capData.ok !== true || capData.enabled !== true || !caps.includes('historial.filters.v1')){
-        return { mode: 'legacy' };
+      if(capRes?.error || !capData || capData.ok !== true || capData.contract !== 'nodo.beta.v1' || capData.scope?.pc_codigo !== pc){
+        return { mode: 'beta', data: null, error: capRes?.error || {code:'HISTORIAL_CAPABILITY_CONTRACT'} };
       }
-      window._histBetaCapCache[pc] = true;
+      if(!caps.includes('historial.filters.v1')) return { mode: 'legacy' };
+      window._histBetaCapCache[pc] = Date.now();
     }
     const r = await window.panelAPI.rpc('nodo_beta_historial_v1', {
       p_pc_codigo: pc,
-      p_filtros: _histFiltrosActivos(),
+      p_filtros: filtros,
       p_limit: 200,
       p_cursor: cursor || null
     });
     if(r && r.error){
-      if(r.error.code === 'PGRST202' || r.error.code === '42883') return { mode: 'legacy' };
       return { mode: 'beta', data: null, error: r.error };
     }
     const d = r && r.data;
-    if(!d || d.ok !== true || !Array.isArray(d.rows)){
+    if(requestEpoch!==window._histRequestEpoch || queryKey!==JSON.stringify([String(window.pcOperativa || pcOperativa || '').trim().toUpperCase(),_histFiltrosActivos()])){
+      return {mode:'beta',data:null,error:{code:'HISTORIAL_CONTEXT_CHANGED'}};
+    }
+    if(!d || d.ok !== true || d.contract !== 'nodo.beta.v1' || d.scope?.pc_codigo !== pc ||
+      pc !== String(window.pcOperativa || pcOperativa || '').trim().toUpperCase() || !Array.isArray(d.rows)){
       return { mode: 'beta', data: null, error: { code: 'HISTORIAL_INVALID_DATA', message: 'Respuesta beta inválida' } };
     }
     return {
       mode: 'beta',
       data: d.rows,
       error: null,
+      queryKey,
       totals: d.totals || null,
       billeteras: Array.isArray(d.billeteras) ? d.billeteras : [],
       hasMore: d.has_more === true,
       nextCursor: d.next_cursor || null
     };
   }catch(_e){
-    return { mode: 'legacy' };
+    return { mode: 'beta', data: null, error: {code:'HISTORIAL_TRANSPORT_ERROR'} };
   }
+}
+// Beta draws the SQL page. A changed filter requests a new page, never filters a subset.
+function _histMostrarPaginaBeta(){
+  if(window._histBetaActive!==true)return false;
+  const pc=String(window.pcOperativa || pcOperativa || '').trim().toUpperCase();
+  const key=JSON.stringify([pc,_histFiltrosActivos()]);
+  const total=document.getElementById('histFilterTotal');
+  if(window._histBetaFiltersKey!==key){
+    if(total)total.textContent='Consultando servidor…';
+    clearTimeout(window._histBetaFilterTimer);
+    window._histBetaFilterTimer=setTimeout(()=>{void cargarHistorial();},180);
+    return true;
+  }
+  renderHistorial(window._historialData || []);
+  if(total)total.textContent=String(window._histBetaTotals?.total_rows ?? 0)+' resultados en servidor';
+  const summary=document.getElementById('histFilterSummary');
+  if(summary)summary.textContent='Filtros resueltos en servidor';
+  return true;
 }
 window.cargarMasHistorialBeta = async function(){
   if(!window._histBetaHasMore || !window._histBetaNextCursor) return;
+  if(window._histBetaFiltersKey!==JSON.stringify([String(window.pcOperativa || pcOperativa || '').trim().toUpperCase(),_histFiltrosActivos()]))return cargarHistorial();
   const health = window.NodoSalud?.begin('HISTORIAL');
   try{
     const res = await _histBetaConsultar(window._histBetaNextCursor);
@@ -261,7 +287,7 @@ window.cargarMasHistorialBeta = async function(){
       return;
     }
     health?.reply(null);
-    health?.record('DATA', 'OK', 'HISTORIAL_PAGE_VALID');
+    health?.record('DATA', res.totals?.requiere_revision?'DEGRADED':'OK', res.totals?.requiere_revision?'HISTORIAL_REVISION_REQUIRED':'HISTORIAL_PAGE_VALID');
     const seen = new Set((_historialData || []).map(function(x){ return String(x.id); }));
     res.data.forEach(function(row){
       if(row && row.id != null && !seen.has(String(row.id))){
@@ -271,6 +297,7 @@ window.cargarMasHistorialBeta = async function(){
     });
     window._historialData = _historialData;
     window._histBetaTotals = res.totals || window._histBetaTotals;
+    window._histBetaFiltersKey = res.queryKey;
     window._histBetaHasMore = res.hasMore;
     window._histBetaNextCursor = res.nextCursor;
     filtrarHistorial();
@@ -293,15 +320,19 @@ async function cargarHistorial(){
   // de operaciones que nacen desde solicitudes del portal.
   const _v = _histVentana();
   const _betaRes = await _histBetaConsultar(null);
+  if(_betaRes.error?.code==='HISTORIAL_CONTEXT_CHANGED')return;
   let data, error;
   if(_betaRes.mode === 'beta'){
+    window._histBetaActive = true;
     data = _betaRes.data;
     error = _betaRes.error;
     window._histBetaTotals = _betaRes.totals || null;
     window._histBetaBilleteras = _betaRes.billeteras || [];
     window._histBetaHasMore = !!_betaRes.hasMore;
     window._histBetaNextCursor = _betaRes.nextCursor || null;
+    if(!_betaRes.error)window._histBetaFiltersKey = _betaRes.queryKey;
   } else {
+    window._histBetaActive = false;
     window._histBetaTotals = null;
     window._histBetaBilleteras = null;
     window._histBetaHasMore = false;
@@ -338,7 +369,7 @@ async function cargarHistorial(){
     if(el)el.innerHTML='<div class="err-box">El servidor no devolvió un historial válido. Se conserva la copia anterior.</div>';
     return;
   }
-  health?.record('DATA','OK','HISTORIAL_LIST_VALID');
+  health?.record('DATA',window._histBetaTotals?.requiere_revision?'DEGRADED':'OK',window._histBetaTotals?.requiere_revision?'HISTORIAL_REVISION_REQUIRED':'HISTORIAL_LIST_VALID');
   _historialData = data;
   // Mismo caso: el CRM y el expediente leen window._historialData y siempre les daba undefined.
   try{ window._historialData = _historialData; }catch(_e){}
@@ -354,6 +385,7 @@ async function cargarHistorial(){
     if(window.jugadorRegistrarDato){
       window.__jugHistSeeded = window.__jugHistSeeded || new Set();
       const _okEstadosJug = ['OK','PAGADA','ACREDITADA','COMPLETADA','APROBADA'];
+      const _tandaJug = [];
       _historialData.forEach(function(h){
         if(!h || !h.usuario) return;
         const sid = String(h.id!=null ? h.id : (h.usuario+'_'+(h.created_at||'')));
@@ -363,13 +395,16 @@ async function cargarHistorial(){
         const esRet = String(h.tipo||'').toUpperCase()==='RETIRO';
         const opOk  = _okEstadosJug.includes(String(h.estado||'').toUpperCase());
         // Se registra SIEMPRE (aunque no haya titular/CBU) para que el usuario EXISTA en el arbolito.
-        window.jugadorRegistrarDato(h.usuario, {
+        _tandaJug.push([h.usuario, {
           cbu: esRet ? (p.cbu||p.destino) : '',
           titular: p.titular,
           instrumentoVerificado: esRet && opOk,   // retiro pagado a ese destino = instrumento verificado
           fecha: h.created_at
-        });
+        }]);
       });
+      // Una sola lectura y escritura del almacén para toda la tanda (ver jugadorRegistrarDatos).
+      if(window.jugadorRegistrarDatos) window.jugadorRegistrarDatos(_tandaJug);
+      else _tandaJug.forEach(function(par){ window.jugadorRegistrarDato(par[0], par[1]); });
     }
   }catch(_e){}
 
@@ -446,6 +481,7 @@ async function _cargarOperacionesAgenteAhora(){
 }
 
 function filtrarHistorial(){
+  if(_histMostrarPaginaBeta())return;
   const tipo    = document.getElementById("filtHistTipo")?.value||"";
   const estado  = document.getElementById("filtHistEstado")?.value||"";
   const origen  = document.getElementById("filtHistOrigen")?.value||"";
@@ -675,7 +711,7 @@ function renderHistorial(lista){
   if(window._histBetaTotals){
     const _bt = window._histBetaTotals;
     html = '<div class="small" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;margin-bottom:8px;background:#161b22;border:1px solid #262d3a;border-radius:8px;color:#c9d1d9">'
-      + '<span>📊 <b>Totales en servidor:</b> ' + Number(_bt.total_rows||0) + ' filas · <span style="color:#22c55e">⬆ ' + Number(_bt.cargas||0) + ' (' + money(Number(_bt.monto_cargas||0)) + ')</span> · <span style="color:#fb923c">⬇ ' + Number(_bt.retiros||0) + ' (' + money(Number(_bt.monto_retiros||0)) + ')</span> · Neto <b>' + money(Number(_bt.neto||0)) + '</b></span>'
+      + (_bt.requiere_revision ? '<span>Hay reversiones pendientes de cotejo. Los totales requieren revisión.</span>' : '<span>📊 <b>Totales en servidor:</b> ' + Number(_bt.total_rows||0) + ' filas · <span style="color:#22c55e">⬆ ' + Number(_bt.cargas||0) + ' (' + money(Number(_bt.monto_cargas||0)) + ')</span> · <span style="color:#fb923c">⬇ ' + Number(_bt.retiros||0) + ' (' + money(Number(_bt.monto_retiros||0)) + ')</span> · Neto <b>' + money(Number(_bt.neto||0)) + '</b></span>')
       + (window._histBetaHasMore ? '<button class="mini-btn blue" onclick="cargarMasHistorialBeta()">Ver más del servidor</button>' : '<span style="color:#8b949e">Página completa</span>')
       + '</div>' + html;
   }

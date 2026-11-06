@@ -113,6 +113,7 @@ api.abrirModalRetiroV2 = function(id, opts){
   const objetivo = (meta.monto_restante!=null) ? Math.max(0, Number(meta.monto_restante)||0) : declarado;
   deps.withdrawalState.current = {
     id:id, usuario:String(s.USUARIO||''), titular:String(s.TITULAR||s.NOMBRE_COMPLETO||''),
+    solicitud:s, metadata:meta,
     cbu:String(s.CBU||s.CVU||s.CBU_ALIAS||s.DESTINO||'').trim(),
     declarado:declarado, objetivo:objetivo, yaPagado:Number(meta.monto_pagado||0)||0,
     _metaTotal:(meta.monto_total!=null?Number(meta.monto_total):null), // total real de un parcial previo

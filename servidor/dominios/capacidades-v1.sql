@@ -40,7 +40,20 @@ begin
     raise exception using errcode='42P01', message='BETA_CLIENTS_TABLE_MISSING';
   end if;
 
-  v_caps := jsonb_build_array('chat.list.v1','chat.messages.v1','chat.read.v1','chat.send.v1','health.v1','portal.seen.v1')
+  -- La existencia del contrato habilita negociación; no certifica datos ni UI.
+  v_caps := '[]'::jsonb
+    || case when to_regprocedure('public.nodo_beta_chat_lista_v1(text,text,text,text,integer,bigint)') is not null
+            then jsonb_build_array('chat.list.v1') else '[]'::jsonb end
+    || case when to_regprocedure('public.nodo_beta_chat_mensajes_v1(text,text,text,integer,bigint)') is not null
+            then jsonb_build_array('chat.messages.v1') else '[]'::jsonb end
+    || case when to_regprocedure('public.nodo_beta_chat_leido_v1(text,text,text,bigint[])') is not null
+            then jsonb_build_array('chat.read.v1') else '[]'::jsonb end
+    || case when to_regprocedure('public.nodo_beta_chat_enviar_v1(text,text,text,text,text,text,uuid)') is not null
+            then jsonb_build_array('chat.send.v1') else '[]'::jsonb end
+    || case when to_regprocedure('public.nodo_beta_salud_v1(text,text,jsonb,text)') is not null
+            then jsonb_build_array('health.v1') else '[]'::jsonb end
+    || case when to_regprocedure('public.landing_beta_chat_leer_v1(bigint,text,integer,bigint)') is not null
+            then jsonb_build_array('portal.seen.v1') else '[]'::jsonb end
     || case when to_regprocedure('public.nodo_beta_perfil_v1(text,text,text)') is not null
              and to_regprocedure('public.nodo_beta_perfil_detalle_v1(text,text,text,integer,jsonb)') is not null
             then jsonb_build_array('perfil.summary.v1','perfil.detail.v1') else '[]'::jsonb end

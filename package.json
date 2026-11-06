@@ -11,6 +11,7 @@
     "test": "node --require ./tests/helpers/offline-network.cjs --test tests/*.test.cjs",
     "codigo": "node scripts/contexto-codigo.cjs",
     "audit:desconexiones": "node scripts/auditar-desconexiones.cjs",
+    "audit:visual": "node scripts/detectar-trazabilidad-visual.cjs",
     "beta:verify-sql": "node scripts/verify-beta-server.cjs",
     "prestart": "npm run panel:build",
     "predev": "npm run panel:build",

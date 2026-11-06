@@ -180,6 +180,6 @@
     return res;
   };
 
-  // Carga forzada al iniciar, después del login/render inicial.
-  setTimeout(function(){ try{ cargarBilleteras(false).then(function(){ try{ renderInicio(); }catch(_e){} }); }catch(_e){} }, 1800);
+  // La primera carga la hace el arranque por etapas, después de dibujar el Inicio y ya con la
+  // oficina elegida (login-y-realtime.js). Acá había una a los 1,8 s que corría en el login.
 })();

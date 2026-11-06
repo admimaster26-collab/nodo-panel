@@ -89,6 +89,14 @@ window._altaNuevoUsarSugerencia = function(usuario, telefono){
   try{ _altaNuevoCotejar(); }catch(_e){}
 };
 
+// Valida el alias que ya existe en el casino con el teléfono escrito: el mismo camino que "Validar y
+// vincular" (verifica en Agentes, vincula y le manda el botón Ingresar).
+window._altaValidarExistente = function(el){
+  const u = el && el.getAttribute('data-u'), t = el && el.getAttribute('data-t');
+  if(!u || !t) return;
+  try{ cerrarModal(); }catch(_e){}
+  return ejecutarVincular(u, t, true);
+};
 async function _ejecutarCrearUsuario(){
   const usuario = (document.getElementById("nuevoJugUsuario")?.value || "").trim().toLowerCase().replace(/\s+/g, "");
   const clave   = (document.getElementById("nuevoJugClave")?.value   || "").trim() || "12345a";
@@ -146,7 +154,11 @@ async function _ejecutarCrearUsuario(){
       } else {
         extra = '<div style="margin-top:8px;font-size:12px;color:var(--muted)">No se generaron alternativas libres. Probá con otra base.</div>';
       }
-      if(resEl) resEl.innerHTML = '<div class="err-box" style="padding:10px;margin-top:8px">❌ El alias <b>'+escapeHtml(usuario)+'</b> ya existe en el casino.'+extra+'</div>';
+      // Si ya existe puede ser ÉL: se ofrece validarlo con este teléfono en vez de inventarle otro alias
+      // (annamartinezz, 6/11: existía con los datos exactos y la ventana sólo ofrecía crear otro).
+      const _validarEste = '<div style="margin-top:8px"><button type="button" class="mini-btn green" data-u="'+escapeHtml(usuario)+'" data-t="'+escapeHtml(String(telefono).replace(/\D/g,''))+'"'
+        + ' onclick="_altaValidarExistente(this)">✓ Es este jugador: validarlo con este teléfono</button></div>';
+      if(resEl) resEl.innerHTML = '<div class="err-box" style="padding:10px;margin-top:8px">❌ El alias <b>'+escapeHtml(usuario)+'</b> ya existe en el casino.'+_validarEste+extra+'</div>';
     } else {
       const msg = r?.message || "No se pudo crear el usuario.";
       if(resEl) resEl.innerHTML = '<div class="err-box" style="margin-top:8px">❌ ' + escapeHtml(msg) + '</div>';

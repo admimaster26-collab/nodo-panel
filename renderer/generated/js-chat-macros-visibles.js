@@ -210,6 +210,7 @@
 
   setInterval(function(){
     try{
+      if(window.nodoSeVe && !window.nodoSeVe(document.getElementById("viewChat"))) return;   // el chat no se ve
       installCss();
       ensureVisibleMacroButton();
     }catch(_e){}

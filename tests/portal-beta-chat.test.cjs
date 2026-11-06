@@ -48,11 +48,11 @@ function harness(handler=async()=>beta()){
     _onPollOk(){ctx.successes++;},_onPollFail(){ctx.failures++;},successes:0,failures:0,
     autoChequeoValidacion(){},bumpUnread(){ctx.unread++;},unread:0,showOperatorBubble(){},notificarLocal(){},mostrarBotonIngresar(){},
     scrollChat(){},_fechaCorta:()=>'',now:()=>'',esc:x=>String(x||''),escMsg:x=>String(x||''),parseTransferCard:()=>null,renderTransferCardHtml:()=>'',
-    localStorage:{setItem(){}}
+    localStorage:{setItem(){}},setTimeout,CLAVES_CHAT:['bet300_chat_id','bet300_chat_token'],_borrar(claves){ctx.borradas=claves;}
   };
   vm.createContext(ctx);
   vm.runInContext(block,ctx);
-  for(const name of ['chatMessageRole','chatHelpMessage','addMsg','savePortalThreadSeen','threadKey','renderThreadMsg','portalChatRenderLegacy','incomingOperatorMsg'])vm.runInContext(fn(name),ctx);
+  for(const name of ['chatAgregar','chatMessageRole','chatHelpMessage','addMsg','savePortalThreadSeen','threadKey','renderThreadMsg','portalChatRenderLegacy','incomingOperatorMsg'])vm.runInContext(fn(name),ctx);
   return {ctx,calls,elements,intervals,messages:()=>elements.get('messages').children.filter(n=>n.className.startsWith('msg ')),ticks:()=>elements.get('messages').children.filter(n=>n.tick).map(n=>n.tick.textContent)};
 }
 test('beta resuelta y dos entradas de arranque comparten un timer y un vuelo',async()=>{
@@ -63,6 +63,93 @@ test('beta resuelta y dos entradas de arranque comparten un timer y un vuelo',as
   assert.deepEqual(h.calls.map(c=>c.name),['landing_beta_chat_leer_v1']);
   assert.equal(h.ctx.portalChatEstado().contrato,'nodo.beta.v1');assert.equal(h.messages().length,1);
   h.ctx.stopPortalThreadPoll();assert.equal(h.intervals.size,0);
+});
+// 9 de cada 10 chats terminan cerrados. Sin esto el poll tiraba error cada 5 segundos, aparecía el
+// cartel de sin conexión y no se leía nada más: el jugador que volvía quedaba ciego.
+for(const [nombre,error] of [['canal nuevo',{code:'42501',message:'BETA_CHAT_NOT_AUTHORIZED'}],['canal viejo',{code:'P0001',message:'Chat no autorizado'}]]){
+  test('un chat cerrado no es una falla: sigue leyendo el hilo y no insiste cada 5 segundos: '+nombre,async()=>{
+    const h=harness(async name=>{
+      if(name==='landing_portal_chat_thread_get')return {data:{chat_thread:[]}};
+      if(error.code==='42501')return {error};
+      if(name==='landing_beta_chat_leer_v1')return {data:{ok:true,available:false,contract:'legacy',reason:'NO_ACTIVE_NODE'}};
+      return {error};
+    });
+    await h.ctx.pollPortalThread();
+    assert.equal(h.ctx.state.chatId,'70','se conserva: desde NODO se puede reabrir');
+    assert.equal(h.ctx.failures,0,'no es una caída de conexión');
+    assert.equal(h.calls.at(-1).name,'landing_portal_chat_thread_get','sigue leyendo el hilo del jugador');
+    const antes=h.calls.filter(c=>c.name!=='landing_portal_chat_thread_get').length;
+    await h.ctx.pollPortalThread();
+    assert.equal(h.calls.filter(c=>c.name!=='landing_portal_chat_thread_get').length,antes,'no vuelve a golpear el chat cerrado enseguida');
+  });
+}
+// Juan, 1/11: el mismo mensaje se veía dos veces. Una solicitud no se duplica porque vive en un solo
+// lugar; el chat se guarda en dos, y por el canal nuevo llegaban los dos.
+test('con NODO en el canal nuevo la copia del hilo viejo no se muestra, y lo que está sólo ahí sí',async()=>{
+  const fila=(id,extra)=>({id:String(id),created_at:'2026-11-01T20:03:59.461861+00:00',...extra});
+  const h=harness(async()=>beta([
+    fila(17244,{tipo_emisor:'USUARIO',emisor:'demo',mensaje:'hola'}),
+    fila(17245,{tipo_emisor:'OPERADOR',emisor:'OPERADOR',auto:true,mensaje:'Tu carga fue rechazada'})
+  ],{legacy_thread:[
+    {portal_key:'legacy:1:1',origen:'USUARIO',mensaje:'hola',fecha:'2026-11-01T20:03:59Z'},
+    {portal_key:'legacy:1:2',origen:'OPERADOR',auto:true,mensaje:'Tu carga fue rechazada',fecha:'2026-11-01T20:04:01.484Z'},
+    {portal_key:'legacy:1:3',origen:'OPERADOR',mensaje:'Ya validamos tu cuenta',fecha:'2026-11-01T20:03:59.900Z'},
+    {portal_key:'legacy:1:4',origen:'USUARIO',mensaje:'hola',fecha:'2026-11-01T20:10:00Z'}
+  ]}));
+  await h.ctx.pollPortalThread();
+  const textos=h.messages().map(n=>n.innerHTML.match(/class="bubble">([^<]*)/)[1]);
+  assert.deepEqual(textos,['hola','Tu carga fue rechazada','Ya validamos tu cuenta','hola'],'cada mensaje una vez; el mismo texto en otro momento es otro mensaje');
+  await h.ctx.pollPortalThread();assert.equal(h.messages().length,4);
+});
+test('al cerrarse el chat lo conversado se queda, sin repetirse ni contar como nuevo',async()=>{
+  let cerrado=false;
+  const h=harness(async name=>{
+    if(name==='landing_portal_chat_thread_get')return {data:{chat_thread:[
+      {origen:'USUARIO',mensaje:'igual',fecha:'2026-10-25T12:00:00Z'},
+      {origen:'OPERADOR',operador:'Ana',mensaje:'te contesto',fecha:'2026-10-25T12:00:01Z'},
+      {origen:'OPERADOR',operador:'Ana',mensaje:'tu solicitud fue rechazada',fecha:'2026-10-25T12:00:02Z'}]}};
+    if(cerrado)return {error:{code:'42501',message:'BETA_CHAT_NOT_AUTHORIZED'}};
+    return beta([message(1),message(2,{tipo_emisor:'OPERADOR',emisor:'OPERADOR',mensaje:'te contesto'})]);
+  });
+  await h.ctx.pollPortalThread();assert.equal(h.messages().length,2);
+  h.ctx.state.screen='home';cerrado=true;
+  await h.ctx.pollPortalThread();
+  assert.equal(h.messages().length,3,'los dos de antes siguen y entra sólo lo nuevo del hilo');
+  assert.equal(h.ctx.unread,1,'lo viejo no cuenta como nuevo');
+});
+test('si NODO reabre el chat, el jugador vuelve a leerlo solo',async()=>{
+  let cerrado=true;
+  const h=harness(async name=>{
+    if(name==='landing_portal_chat_thread_get')return {data:{chat_thread:[]}};
+    return cerrado?{error:{code:'42501',message:'BETA_CHAT_NOT_AUTHORIZED'}}:beta([message(5,{tipo_emisor:'OPERADOR',emisor:'OPERADOR',mensaje:'reabrí'})]);
+  });
+  await h.ctx.pollPortalThread();assert.equal(h.messages().length,0);
+  cerrado=false;vm.runInContext('portalChatCerradoHasta=0',h.ctx);
+  await h.ctx.pollPortalThread();assert.equal(h.messages().length,1);
+});
+test('al salir del canal nuevo no se repinta lo que ya estaba',async()=>{
+  let nuevo=true;
+  const h=harness(async name=>{
+    if(name==='landing_beta_chat_leer_v1')return nuevo?beta([message(1)]):{data:{ok:true,available:false,contract:'legacy',reason:'NO_ACTIVE_NODE'}};
+    if(name==='landing_leer_chat_v2')return {data:[{...message(1)}]};
+    return {data:{chat_thread:[{origen:'USUARIO',mensaje:'igual',fecha:'2026-10-25T12:00:00Z'}]}};
+  });
+  await h.ctx.pollPortalThread();assert.equal(h.messages().length,1);
+  nuevo=false;await h.ctx.pollPortalThread();
+  assert.equal(h.messages().length,1,'un solo globo por mensaje');
+  vm.runInContext('portalChatRevisarEn=Infinity',h.ctx);await h.ctx.pollPortalThread();
+  assert.equal(h.messages().length,1,'y sigue en uno');
+});
+test('al pasar al canal nuevo, lo recién enviado se queda en su lugar y no se repite',async()=>{
+  const h=harness(async()=>beta([message(701,{mensaje:'hola'})]));
+  h.ctx.portalChatRuta='probe';
+  const propio=h.ctx.addMsg('hola','user',null,{id:'701',tipo_emisor:'USUARIO'});
+  const respuesta=h.ctx.addMsg('te contesto','guide',null,{local:true});
+  await h.ctx.pollPortalThread();
+  const lista=h.elements.get('messages').children;
+  assert.equal(h.messages().filter(n=>n.className==='msg user').length,1,'un solo globo');
+  assert.ok(lista.indexOf(lista.find(n=>n.className==='msg user'))<lista.indexOf(respuesta),'antes de la respuesta');
+  assert.equal(propio.parent,null,'el eco se reemplaza por el del servidor, en el mismo lugar');
 });
 test('texto repetido conserva globos separados y sólo el ID confirmado recibe visto',async()=>{
   const h=harness(async()=>beta([message('9007199254740993',{leido:true}),message('9007199254740994',{leido:false,visto_confirmado:true})]));
@@ -76,14 +163,12 @@ test('legado sin mapping tiene identidad propia y jamás fabrica visto',async()=
 });
 test('bot mantiene autoría y una edición reemplaza un globo en vez de notificar otro',async()=>{
   let text='inicial';const h=harness(async()=>beta([message(1,{tipo_emisor:'OPERADOR',auto:true,mensaje:text})]));
-  await h.ctx.pollPortalThread();assert.match(h.messages()[0].innerHTML,/Bot automático/);
+  await h.ctx.pollPortalThread();assert.match(h.messages()[0].innerHTML,/Asistente automático/);
   text='corregido';await h.ctx.pollPortalThread();assert.equal(h.messages().length,1);assert.match(h.messages()[0].innerHTML,/corregido/);assert.equal(h.ctx.unread,0);
 });
-test('timeout y token inválido no abren otro lector ni ocultan el fallo',async()=>{
-  for(const error of [{code:'TIMEOUT'},{code:'42501',message:'BETA_CHAT_NOT_AUTHORIZED'}]){
-    const h=harness(async()=>({error}));await h.ctx.pollPortalThread();
-    assert.equal(h.calls.length,1);assert.equal(h.ctx.failures,1);assert.equal(h.ctx.portalChatEstado().estado,'error');
-  }
+test('un timeout no abre otro lector ni oculta el fallo',async()=>{
+  const h=harness(async()=>({error:{code:'TIMEOUT'}}));await h.ctx.pollPortalThread();
+  assert.equal(h.calls.length,1);assert.equal(h.ctx.failures,1);assert.equal(h.ctx.portalChatEstado().estado,'error');
 });
 test('función exacta ausente selecciona legacy; no vuelve a negociar cada tick',async()=>{
   const h=harness(async name=>name==='landing_beta_chat_leer_v1'?{error:{code:'PGRST202',message:name+' missing'}}:name==='landing_leer_chat_v2'?{data:[]}:{data:{chat_thread:[]}});

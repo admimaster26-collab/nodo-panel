@@ -18,6 +18,13 @@ const OP_HANDSHAKE = 0, OP_FRAME = 1, OP_CLOSE = 2, OP_PING = 3, OP_PONG = 4;
 // Discord acepta un update cada ~15 s; más seguido lo descarta igual.
 const MIN_ENTRE_UPDATES_MS = 15000;
 const REINTENTO_MS = 60000;
+// Discord contesta cada SET_ACTIVITY con el mismo nonce. Si no contesta, la conexión quedó muerta
+// aunque el pipe siga abierto, y Discord sigue mostrando lo último que aceptó: el "13 solicitudes
+// pendientes · hace 15 min" que no cambiaba más (Juan, 2/11). Se corta y se vuelve a conectar.
+const ESPERA_RESPUESTA_MS = 20000;
+// El panel manda su estado cada minuto. Si deja de hacerlo (se colgó, se cerró la ventana), se
+// borra la presencia: mejor nada que un número viejo.
+const SILENCIO_PANEL_MS = 5 * 60000;
 
 function rutasPosibles() {
   const rutas = [];
@@ -44,12 +51,37 @@ function createDiscordPresence({ appId, version = '', log = console, conectar = 
   const id = String(appId || '').trim();
   let socket = null, listo = false, conectando = false;
   let ultimoEnvio = 0, pendiente = null, timerReintento = null, timerEnvio = null;
+  // ultimo: lo último que mandó el panel, para volver a publicarlo al reconectar.
+  let ultimo = null, nonceEsperado = null, esperaLimpieza = false, timerRespuesta = null, timerSilencio = null;
   const arranque = ahora();
   let apagado = false;
 
   function cerrar() {
     listo = false; conectando = false;
+    nonceEsperado = null;
+    if (timerRespuesta) { clearTimer(timerRespuesta); timerRespuesta = null; }
     if (socket) { try { socket.destroy(); } catch (_) {} socket = null; }
+  }
+
+  function escribir(datos, esLimpieza) {
+    const nonce = String(ahora()) + '-' + Math.random().toString(16).slice(2);
+    socket.write(marco(OP_FRAME, Object.assign({ nonce }, datos)));
+    nonceEsperado = nonce;
+    esperaLimpieza = !!esLimpieza;
+    if (timerRespuesta) clearTimer(timerRespuesta);
+    timerRespuesta = setTimer(() => {
+      timerRespuesta = null;
+      if (nonceEsperado !== nonce) return;
+      try { log.warn('[discord] Discord no contestó: se vuelve a conectar'); } catch (_) {}
+      cerrar();
+      reintentarMasTarde();
+    }, ESPERA_RESPUESTA_MS);
+  }
+
+  // Sin actividad: Discord deja de mostrar a NODO.
+  function limpiar() {
+    if (!listo || !socket) return;
+    try { escribir({ cmd: 'SET_ACTIVITY', args: { pid: process.pid } }, true); } catch (_) { cerrar(); reintentarMasTarde(); }
   }
 
   function reintentarMasTarde() {
@@ -102,7 +134,20 @@ function createDiscordPresence({ appId, version = '', log = console, conectar = 
         if (msg && msg.cmd === 'DISPATCH' && msg.evt === 'READY') {
           listo = true;
           try { log.log('[discord] NODO figura en Discord'); } catch (_) {}
-          if (pendiente) enviar(pendiente);
+          const p = pendiente || ultimo;
+          if (p) enviar(p);
+          continue;
+        }
+        // La respuesta a lo último que se mandó: la conexión está viva.
+        if (msg && msg.nonce && msg.nonce === nonceEsperado) {
+          const eraLimpieza = esperaLimpieza;
+          nonceEsperado = null;
+          if (timerRespuesta) { clearTimer(timerRespuesta); timerRespuesta = null; }
+          // Si Discord lo rechazó, seguiría mostrando el estado anterior: se borra.
+          if (msg.evt === 'ERROR') {
+            try { log.warn('[discord] Discord rechazó la actualización:', msg.data && msg.data.message); } catch (_) {}
+            if (!eraLimpieza) limpiar();
+          }
         }
       }
     } catch (_) { cerrar(); reintentarMasTarde(); }
@@ -111,9 +156,8 @@ function createDiscordPresence({ appId, version = '', log = console, conectar = 
   function enviar(p) {
     if (!listo || !socket) return false;
     try {
-      socket.write(marco(OP_FRAME, {
+      escribir({
         cmd: 'SET_ACTIVITY',
-        nonce: String(ahora()) + '-' + Math.random().toString(16).slice(2),
         args: {
           pid: process.pid,
           activity: {
@@ -124,7 +168,7 @@ function createDiscordPresence({ appId, version = '', log = console, conectar = 
             instance: false
           }
         }
-      }));
+      });
       ultimoEnvio = ahora();
       pendiente = null;
       return true;
@@ -136,6 +180,14 @@ function createDiscordPresence({ appId, version = '', log = console, conectar = 
   function actualizar(p) {
     if (apagado || !id || !p) return;
     pendiente = p;
+    ultimo = p;
+    if (timerSilencio) clearTimer(timerSilencio);
+    timerSilencio = setTimer(() => {
+      timerSilencio = null;
+      ultimo = null; pendiente = null;
+      try { log.warn('[discord] el panel no manda su estado hace 5 min: se borra la presencia'); } catch (_) {}
+      limpiar();
+    }, SILENCIO_PANEL_MS);
     conectar_();
     if (!listo) return;
     const falta = MIN_ENTRE_UPDATES_MS - (ahora() - ultimoEnvio);
@@ -148,6 +200,7 @@ function createDiscordPresence({ appId, version = '', log = console, conectar = 
     apagado = true;
     if (timerReintento) { clearTimer(timerReintento); timerReintento = null; }
     if (timerEnvio) { clearTimer(timerEnvio); timerEnvio = null; }
+    if (timerSilencio) { clearTimer(timerSilencio); timerSilencio = null; }
     cerrar();
   }
 

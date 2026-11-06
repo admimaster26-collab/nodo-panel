@@ -32,7 +32,9 @@ function _movParseNotas(notas){
   const grab = function(re){ const m = s.match(re); return m ? m[1].trim() : ''; };
   return {
     titular: grab(/Titular:\s*([^·|]+)/i),
-    destino: grab(/Destino:\s*([^·|]+)/i),
+    // Desde el 10/09 portalNotasBase escribe "Alias:" en vez de "Destino:". Sin leer los dos, el
+    // alias existía en la nota pero dejó de verse en el perfil y de llegar a la ficha del jugador.
+    destino: grab(/Destino:\s*([^·|]+)/i) || grab(/Alias:\s*([^·|]+)/i),
     cbu:     grab(/CBU\/?\s*C?V?U?:\s*([^·|]+)/i),
     obs:     grab(/Obs:\s*([^·|]+)/i)
   };

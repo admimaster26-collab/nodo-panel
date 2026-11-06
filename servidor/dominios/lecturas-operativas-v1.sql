@@ -129,10 +129,10 @@ begin
       h.id, h.created_at, h.usuario, h.tipo, h.monto, h.origen, h.estado, h.notas, h.pc_codigo,
       h.worker_job_id, h.billetera_id, h.billetera_nombre, h.solicitud_id, h.mp_movimiento_id,
       h.monto_declarado, h.monto_aprobado, h.validacion_tipo, h.validacion_estado, h.saldo_pre, h.saldo_post,
-      h.operador, h.chunior_movimiento_id, h.reversion_de
-    from public.historial_ops h
-    where upper(btrim(h.pc_codigo)) = any(v_pcs)
-      and (v_vista = 'TODO' or upper(btrim(coalesce(h.tipo,''))) not in ('SOPORTE','CHAT'))
+      h.operador, h.chunior_movimiento_id, h.reversion_de, e.vigente, e.requiere_revision
+    from operaciones.historial_evaluado_v1(v_pcs) e
+    cross join lateral (select (e.fila).*) h
+    where (v_vista = 'TODO' or upper(btrim(coalesce(h.tipo,''))) not in ('SOPORTE','CHAT'))
       and (v_tipo is null or upper(btrim(coalesce(h.tipo,''))) = v_tipo)
       and (v_estado is null or (
         case
@@ -168,7 +168,7 @@ begin
           else true
         end
       ))
-      and (not v_solo_sin_chu or (operaciones.estado_confirmado_v1(h.estado) and coalesce(btrim(h.chunior_movimiento_id),'') = ''))
+      and (not v_solo_sin_chu or (e.vigente and coalesce(btrim(h.chunior_movimiento_id),'') = ''))
       and (v_q is null or (
         strpos(lower(coalesce(h.usuario,'')), v_q) > 0
         or strpos(lower(coalesce(h.operador,'')), v_q) > 0
@@ -193,12 +193,14 @@ begin
   select
     jsonb_build_object(
       'total_rows', (select count(*) from filtered),
-      'cargas', (select count(*) from filtered where upper(coalesce(tipo,''))='CARGA' and operaciones.estado_confirmado_v1(estado)),
-      'retiros', (select count(*) from filtered where upper(coalesce(tipo,''))='RETIRO' and operaciones.estado_confirmado_v1(estado)),
-      'monto_cargas', coalesce((select sum(abs(monto)) from filtered where upper(coalesce(tipo,''))='CARGA' and operaciones.estado_confirmado_v1(estado)), 0),
-      'monto_retiros', coalesce((select sum(abs(monto)) from filtered where upper(coalesce(tipo,''))='RETIRO' and operaciones.estado_confirmado_v1(estado)), 0),
-      'neto', coalesce((select sum(abs(monto)) from filtered where upper(coalesce(tipo,''))='CARGA' and operaciones.estado_confirmado_v1(estado)), 0)
-            - coalesce((select sum(abs(monto)) from filtered where upper(coalesce(tipo,''))='RETIRO' and operaciones.estado_confirmado_v1(estado)), 0),
+      'cargas', (select count(*) from filtered where upper(coalesce(tipo,''))='CARGA' and vigente),
+      'retiros', (select count(*) from filtered where upper(coalesce(tipo,''))='RETIRO' and vigente),
+      'monto_cargas', coalesce((select sum(abs(monto)) from filtered where upper(coalesce(tipo,''))='CARGA' and vigente), 0),
+      'monto_retiros', coalesce((select sum(abs(monto)) from filtered where upper(coalesce(tipo,''))='RETIRO' and vigente), 0),
+      'neto', coalesce((select sum(abs(monto)) from filtered where upper(coalesce(tipo,''))='CARGA' and vigente), 0)
+            - coalesce((select sum(abs(monto)) from filtered where upper(coalesce(tipo,''))='RETIRO' and vigente), 0),
+      'requiere_revision', coalesce((select bool_or(requiere_revision) from filtered), false),
+      'reversiones', (select count(*) from filtered where reversion_de is not null),
       'errores', (select count(*) from filtered where upper(btrim(coalesce(estado,''))) in ('ERROR','RECHAZADA','CANCELADA','CANCELADO'))
     ),
     coalesce((select jsonb_agg(distinct btrim(billetera_nombre)) filter (where coalesce(btrim(billetera_nombre),'') <> '') from filtered), '[]'::jsonb),
@@ -380,6 +382,7 @@ declare
   v_cid bigint;
   v_cat timestamptz;
   v_total bigint;
+  v_revision boolean;
   v_rows jsonb;
   v_more boolean;
   v_next jsonb;
@@ -406,15 +409,16 @@ begin
     end;
   end if;
 
-  with valid_ops as materialized (
+  with evaluadas as materialized (
+    select * from operaciones.historial_evaluado_v1(v_pcs)
+  ), valid_ops as materialized (
     select
       h.id, h.usuario, h.tipo, h.monto, h.billetera_nombre, h.origen, h.estado,
       h.notas, h.created_at, h.operador, h.chunior_movimiento_id, h.pc_codigo
-    from public.historial_ops h
-    where upper(btrim(h.pc_codigo)) = any(v_pcs)
-      and upper(btrim(coalesce(h.tipo,''))) in ('CARGA','RETIRO')
+    from evaluadas e cross join lateral (select (e.fila).*) h
+    where upper(btrim(coalesce(h.tipo,''))) in ('CARGA','RETIRO')
       and upper(btrim(coalesce(h.origen,''))) <> 'PROMO_BONO'
-      and operaciones.estado_confirmado_v1(h.estado)
+      and e.vigente
       and h.created_at is not null
       and abs(coalesce(h.monto,0)) > 0
   ),
@@ -430,6 +434,7 @@ begin
   )
   select
     (select count(*) from valid_ops),
+    coalesce((select bool_or(requiere_revision) from evaluadas),false),
     coalesce((
       select jsonb_agg(
         to_jsonb(p) || jsonb_build_object('id', p.id::text)
@@ -438,13 +443,14 @@ begin
     ), '[]'::jsonb),
     (select count(*) > p_limit from selected),
     (select jsonb_build_object('created_at', p.created_at, 'id', p.id::text) from page p order by p.created_at asc, p.id asc limit 1)
-  into v_total, v_rows, v_more, v_next;
+  into v_total, v_revision, v_rows, v_more, v_next;
 
   return jsonb_build_object(
     'ok', true,
     'contract', 'nodo.beta.v1',
     'scope', jsonb_build_object('pc_codigo', v_pc, 'pc_codigos', v_pcs),
     'total', v_total,
+    'requiere_revision', v_revision,
     'rows', v_rows,
     'has_more', v_more,
     'complete', not v_more,

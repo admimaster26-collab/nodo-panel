@@ -11,10 +11,16 @@
   }
   // Contrato legacy: una respuesta OPERADOR también corta los pendientes locales.
   // No acredita un recibo remoto de visto. La beta puede entregar el total ya resuelto.
+  // Una respuesta automática ("Recibimos tus datos…") no es un operador que leyó: sale con
+  // origen OPERADOR y auto:true, y antes apagaba el aviso de una consulta que nadie había visto (6/11).
+  function automatico(message) {
+    const a = message?.auto ?? message?.AUTO ?? message?.metadata?.auto;
+    return a === true || a === 'true';
+  }
   function readCutoff(ticket, marks = {}) {
     let cutoff = date(marks?.[chatKey(ticket)]);
     for(const message of ticket?.thread || []) {
-      if(upper(message.origen) === 'OPERADOR') cutoff = Math.max(cutoff, date(message.fecha));
+      if(upper(message.origen) === 'OPERADOR' && !automatico(message)) cutoff = Math.max(cutoff, date(message.fecha));
     }
     return cutoff;
   }

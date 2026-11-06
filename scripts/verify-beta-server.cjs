@@ -262,6 +262,30 @@ async function verify() {
       await db.exec('update public.chat_sesiones set solicitud_id=701 where id=10');
     });
 
+    await check('legacy: la copia en el hilo de un mensaje del chat no viaja dos veces (D-133)', async () => {
+      await db.exec(`insert into public.chat_mensajes(id,chat_id,conversacion_id,tipo_emisor,emisor,mensaje,created_at) values
+        (9001,'alpha',10,'USUARIO','DEMO','quiero ayuda','2026-11-01T19:55:25.505Z'),
+        (9002,'alpha',10,'OPERADOR','NODO','recibimos tus datos','2026-11-01T19:55:25.530Z')`);
+      const thread = [
+        { origen: 'USUARIO', mensaje: 'quiero ayuda', fecha: '2026-11-01T19:55:25Z' },
+        { origen: 'OPERADOR', operador: 'NODO', auto: true, mensaje: 'recibimos tus datos', fecha: '2026-11-01T19:55:25.530Z' },
+        { origen: 'USUARIO', mensaje: 'quiero ayuda', fecha: '2026-11-01T20:10:00Z' },
+        { origen: 'OPERADOR', mensaje: 'quiero ayuda', fecha: '2026-11-01T19:55:25Z' },
+        { origen: 'OPERADOR', mensaje: 'ya validamos tu cuenta', fecha: '2026-11-01T19:55:25Z' },
+        { origen: 'OPERADOR', mensaje: 'sin fecha' },
+        { origen: 'OPERADOR', mensaje: 'fecha rota', fecha: 'cualquier cosa' }
+      ];
+      const expected = ['quiero ayuda', 'quiero ayuda', 'ya validamos tu cuenta', 'sin fecha', 'fecha rota'];
+      await query("insert into public.landing_solicitudes(id,tipo,pc_codigo,usuario,metadata) values (703,'SOPORTE','P1','DEMO',$1::jsonb)", [JSON.stringify({ chat_thread: thread })]);
+      await db.exec('update public.chat_sesiones set solicitud_id=703 where id=10');
+      const page = await node('chat_mensajes', ['alpha']);
+      assert.deepEqual(page.legacy_thread.map(m => m.mensaje), expected);
+      assert.equal(page.rows.filter(m => m.id === '9001' || m.id === '9002').length, 2, 'el original sigue en rows');
+      await active();
+      assert.deepEqual((await portal()).legacy_thread.map(m => m.mensaje), expected);
+      await db.exec('update public.chat_sesiones set solicitud_id=701 where id=10; delete from public.chat_mensajes where id in (9001,9002);');
+    });
+
     await check('ACK: conjunto exacto con huecos, repetidos idempotentes y rechazo atomico crosschat', async () => {
       const ack = await node('chat_leido', ['alpha', ['100', '104', '104']]);
       assert.deepEqual(ack.acknowledged_ids, ['100', '104']); assert.equal(ack.inserted, 2);

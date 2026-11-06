@@ -20,7 +20,10 @@ function registerPanelIpc({ ipcMain, env = process.env, fetch = globalThis.fetch
     ['nodo_beta_persistencia_leer_v1', new Set(['p_pc_codigo', 'p_usuario', 'p_referencia_id', 'p_tipo', 'p_limit', 'p_cursor'])],
     ['nodo_beta_historial_v1', new Set(['p_pc_codigo', 'p_filtros', 'p_limit', 'p_cursor'])],
     ['nodo_beta_bandeja_v1', new Set(['p_pc_codigo', 'p_filtros', 'p_limit', 'p_cursor'])],
-    ['nodo_beta_nexo_export_v1', new Set(['p_pc_codigo', 'p_limit', 'p_cursor'])]
+    ['nodo_beta_nexo_export_v1', new Set(['p_pc_codigo', 'p_limit', 'p_cursor'])],
+    ['nodo_beta_retiro_validar_v1', new Set(['p_pc_codigo', 'p_solicitud_id', 'p_dni_banco', 'p_operador'])],
+    ['nodo_beta_retiro_rechazar_v1', new Set(['p_pc_codigo', 'p_solicitud_id', 'p_operador'])],
+    ['nodo_beta_retiro_pagar_v1', new Set(['p_pc_codigo', 'p_solicitud_id', 'p_operador'])]
   ]);
   const betaError = (message, status) => ({ data: null, error: { code: message, message, ...(status ? { status } : {}) } });
   function sanitizeBetaData(value, currentConfig = resolveBetaConfig()) {

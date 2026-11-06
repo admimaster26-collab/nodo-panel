@@ -102,7 +102,8 @@ window._updaterAnclar=_updaterAnclar;
 try{
   addEventListener("resize", _updaterAnclar);
   setTimeout(_updaterAnclar, 1200);
-  setInterval(_updaterAnclar, 5000);   // el panel de chat se minimiza/restaura sin avisar
+  // El panel de chat se minimiza/restaura sin avisar. Mide la pantalla: con la ventana abajo, no.
+  setInterval(function(){ if(!document.hidden) _updaterAnclar(); }, 5000);
 }catch(_e){}
 function nodoUpdaterMinimizar(min){
   try{

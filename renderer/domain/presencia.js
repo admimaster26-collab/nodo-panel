@@ -56,7 +56,11 @@
       pendientes++;
     }
 
-    const details = pendientes === 0 ? 'Sin solicitudes pendientes'
+    // El número de la lista de Inicio manda: Discord no puede decir 8 cuando la pantalla dice 0.
+    if(Number.isInteger(o.pendientes) && o.pendientes >= 0) pendientes = o.pendientes;
+
+    const details = o.sinDatos ? 'Sin datos: no se pudo consultar'
+      : pendientes === 0 ? 'Sin solicitudes pendientes'
       : pendientes === 1 ? '1 solicitud pendiente'
       : pendientes + ' solicitudes pendientes';
 

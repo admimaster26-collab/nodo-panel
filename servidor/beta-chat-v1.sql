@@ -220,7 +220,12 @@ returns jsonb language sql stable security invoker set search_path='' as $$
      and coalesce(e.m->>'imagen_url',e.m->>'imagen','')=''
      and btrim(coalesce(e.m->>'mensaje','')) ~* '^(consulta desde portal( v16)?|\[conversaci[oó]n iniciada por el operador[^]]*\])$')
    and not exists(select 1 from comunicaciones.mensajes(c.id) x
-     where coalesce(e.m->>'id',e.m->>'mensaje_id')=x.id::text);
+     where coalesce(e.m->>'id',e.m->>'mensaje_id')=x.id::text
+        -- D-133: las copias del hilo no guardan el número del mensaje. Mismo lado, mismo texto y
+        -- mismo segundo: es la copia, y ya viaja en rows.
+        or ((upper(coalesce(e.m->>'origen',''))='USUARIO')=(upper(coalesce(x.tipo_emisor,''))='USUARIO')
+          and coalesce(x.mensaje,'')=coalesce(e.m->>'mensaje','')
+          and to_char(x.created_at at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS')=left(e.m->>'fecha',19)));
 $$;
 
 create or replace function comunicaciones.pagina_mensajes(p_sesion_id bigint,p_limit integer,p_before_id bigint,p_portal boolean)

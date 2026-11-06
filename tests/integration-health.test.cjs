@@ -85,6 +85,26 @@ test('salud: respuesta del servidor, corte de red y contrato fallido son evidenc
   assert.equal(api.errorCode({code:'57014',message:'statement timeout'}),'SERVER_TIMEOUT');
 });
 
+test('salud: una medición RPC explícita excluye el tiempo de espera humano',t=>{
+  const {api}=harness();let now=Date.parse('2026-11-06T12:00:00Z');
+  t.mock.method(Date,'now',()=>now);
+  const request=api.begin('RETIROS');
+  now+=60000;request.reply(null,84);request.record('DATA','DEGRADED','RETIRO_RPC_LENTO',3001);
+  const rows=api.snapshot().rows;
+  assert.equal(rows.find(row=>row.stage==='CONNECTED').duration_ms,84);
+  assert.equal(rows.find(row=>row.stage==='DATA').duration_ms,3001);
+  assert.equal(api.resumen().partes.find(part=>part.nombre==='Lectura de fichas').detalle,'El servidor tardó más de 3 segundos');
+});
+
+test('salud: ALIVE y CONNECTED solos no acreditan que la rama procesó datos',()=>{
+  const {api}=harness();const retiro=api.begin('RETIROS');retiro.reply(null,30);
+  assert.equal(api.resumen().partes.find(part=>part.nombre==='Lectura de fichas').estado,'sin_actividad');
+  retiro.record('DATA','OK','RETIRO_24H_CLEAR',24);
+  assert.equal(api.resumen().partes.find(part=>part.nombre==='Lectura de fichas').estado,'anda');
+  const conexion=api.begin('CONEXION');conexion.reply(null,20);
+  assert.equal(api.resumen().partes.find(part=>part.nombre==='Conexión').estado,'anda');
+});
+
 test('salud: ramas sin observar son visibles sin inventar muestras ni tráfico',()=>{
   const {api,root,calls}=harness();
   const initial=api.snapshot();
@@ -170,6 +190,25 @@ test('salud: un código desconocido nunca llega a la pantalla',()=>{
   const {api}=harness();
   api.record('BANDEJA','DATA','ERROR',{code:'RPC_FAILED'});
   assert.equal(api.resumen().partes.find(p=>p.nombre==='Solicitudes').detalle,'No respondió bien');
+});
+test('salud: los fallos del instrumento de retiro tienen explicación operativa, sin filtrar códigos',()=>{
+  const {api}=harness();
+  const esperado={
+    RETIRO_RPC_NO_CONFIRMADO:'El servidor no confirmó el estado de la cuenta',
+    RETIRO_RESPUESTA_INVALIDA:'El servidor devolvió una respuesta de retiro inválida',
+    RETIRO_ESTADO_NO_RECONOCIDO:'El servidor devolvió un estado de retiro desconocido',
+    RETIRO_DNI_FORMATO_INVALIDO:'El servidor no aceptó el formato del DNI/CUIL',
+    RETIRO_RECHAZO_NO_CONFIRMADO:'El servidor no confirmó el rechazo',
+    RETIRO_VALIDACION_MODAL_FALLO:'No se pudo mostrar la validación de titularidad',
+    RETIRO_VALIDADOR_NO_CARGADO:'Falta cargar la validación beta del retiro',
+    RETIRO_PAGO_RESULTADO_AMBIGUO:'Agentes no confirmó si el retiro se ejecutó',
+    RETIRO_SELLO_NO_CONFIRMADO:'El pago se hizo, pero no se guardó su hora en el servidor'
+  };
+  for(const [code,mensaje] of Object.entries(esperado))assert.equal(api.motivo(code),mensaje,code);
+  api.record('RETIROS','DATA','ERROR',{code:'RETIRO_RPC_NO_CONFIRMADO'});
+  const parte=api.resumen().partes.find(p=>p.nombre==='Lectura de fichas');
+  assert.equal(parte.detalle,esperado.RETIRO_RPC_NO_CONFIRMADO);
+  assert.ok(!JSON.stringify(parte).includes('RETIRO_RPC_NO_CONFIRMADO'));
 });
 test('salud: toda rama del panel la acepta el servidor (si no, se pierde el lote entero)',()=>{
   // El 1/11 el panel sumó PERSISTENCIA sin tocar el servidor: una sola muestra rechazada tiraba las

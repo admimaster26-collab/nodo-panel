@@ -40,6 +40,16 @@ function money(v){ return NodoDomain.formatos.money(v); }
 function normalizar(v){ return NodoDomain.formatos.normalizar(v); }
 function setBox(id,html){const el=document.getElementById(id);if(el)el.innerHTML=html}
 function val(id){return document.getElementById(id)?.value||""}
+// ¿Este pedazo de pantalla se está viendo? Lo preguntan los relojes que reparan el DOM cada pocos
+// segundos: corrían igual en el login, con la ventana minimizada o con la sección cerrada. Mirar
+// la clase "hidden" no alcanza: en escritorio el chat la tiene y se ve igual (base.css).
+function nodoSeVe(el){
+  try{
+    if(!el || document.hidden) return false;
+    if(!document.body.classList.contains("app-lista")) return false;   // todavía en el login
+    return typeof el.checkVisibility === "function" ? el.checkVisibility() : el.getClientRects().length > 0;
+  }catch(_e){ return true; }   // ante la duda se repara, como antes
+}
 // Avisos apilados con fade. El tope de 4 evita que una tanda de operaciones tape media pantalla:
 // al llegar el quinto, el más viejo se va con su animación en vez de acumularse.
 const _TOAST_MAX = 4;

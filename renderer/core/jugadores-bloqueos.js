@@ -153,11 +153,11 @@ window.pjDesbloquearTitular = function(usuario, titular){
     if(typeof abrirPerfilJugador==='function') abrirPerfilJugador(usuario);
   }catch(e){ toast('No se pudo desbloquear: '+(e.message||''), 'red'); }
 };
-window.jugadorRegistrarDato = function(usuario, dato){
+// Suma un dato a la ficha de un jugador dentro de `map`, sin leer ni escribir el almacén.
+function _jugAplicarDato(map, usuario, dato){
   const u = String(usuario||'').toLowerCase().trim();
   if(!u || !dato) return;
-  try{
-    const map = _jugStoreAll();
+  {
     const j = map[u] || { usuario:u, telefonos:{}, cbus:{}, titulares:{}, bonos:[], creado:new Date().toISOString() };
     const fecha = dato.fecha || new Date().toISOString();
     if(dato.telefono){
@@ -197,6 +197,25 @@ window.jugadorRegistrarDato = function(usuario, dato){
     }
     j.ultimaAct = fecha;
     map[u] = j;
+  }
+}
+window.jugadorRegistrarDato = function(usuario, dato){
+  if(!usuario || !dato) return;
+  try{
+    const map = _jugStoreAll();
+    _jugAplicarDato(map, usuario, dato);
+    _jugStoreSave(map);
+  }catch(_e){}
+};
+// Una tanda entera con una sola lectura y una sola escritura del almacén. Uno por uno, cada dato
+// leía y reescribía el almacén completo: al arrancar se siembran cientos de filas y en la PC de
+// Sánchez la pantalla quedaba trabada 36 s después de entrar a Chunior, hasta que Electron la
+// recargaba y vuelta a empezar (6/11). `lista` es [[usuario, dato], ...].
+window.jugadorRegistrarDatos = function(lista){
+  if(!Array.isArray(lista) || !lista.length) return;
+  try{
+    const map = _jugStoreAll();
+    lista.forEach(function(par){ try{ _jugAplicarDato(map, par && par[0], par && par[1]); }catch(_e){} });
     _jugStoreSave(map);
   }catch(_e){}
 };
@@ -231,12 +250,14 @@ window.jugadorCbuCheck = function(usuario, cbu, titular){
 try{
   if(!localStorage.getItem(JUG_STORE_KEY)){
     const all = _movStoreAll();
+    const tanda = [];
     Object.keys(all).forEach(function(k){
       const m = all[k]||{};
       const esRet = String(m.tipo||'').toUpperCase()==='RETIRO';
       if(m.usuario && ((esRet && (m.cbu||m.destino)) || m.titular))
-        jugadorRegistrarDato(m.usuario, { cbu: esRet ? (m.cbu||m.destino) : '', titular:m.titular, fecha:m._fecha });
+        tanda.push([m.usuario, { cbu: esRet ? (m.cbu||m.destino) : '', titular:m.titular, fecha:m._fecha }]);
     });
+    jugadorRegistrarDatos(tanda);
   }
 }catch(_e){}
 

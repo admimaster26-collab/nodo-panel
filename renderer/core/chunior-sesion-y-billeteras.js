@@ -226,22 +226,29 @@ async function _chuniorConfirmarPuesto(value, text){
       }
     }catch(_e){}
 
-    // El historial pudo haberse cargado antes de resolver el puesto (pcOperativa vacío) →
-    // recargarlo ahora que la oficina está resuelta, así aparecen las operaciones manuales.
-    try{ if(typeof cargarHistorial==="function") setTimeout(function(){ cargarHistorial(); }, 500); }catch(_e){}
+    // En el primer ingreso, historial, titulares bloqueados y billeteras de Chunior los trae el
+    // arranque por etapas, de a uno y después de dibujar el Inicio (login-y-realtime.js). Antes
+    // salían acá juntos —el historial dos veces— con las solicitudes todavía en camino.
+    const _primerIngreso = !_nodoListo;
+    if(!_primerIngreso){
+      // El historial pudo haberse cargado antes de resolver el puesto (pcOperativa vacío) →
+      // recargarlo ahora que la oficina está resuelta, así aparecen las operaciones manuales.
+      try{ if(typeof cargarHistorial==="function") setTimeout(function(){ cargarHistorial(); }, 500); }catch(_e){}
 
-    // Los titulares bloqueados los pudo haber marcado OTRA PC: hasta ahora cada máquina sólo
-    // conocía los suyos. Se traen de la base ahora que la oficina está resuelta.
-    try{ if(typeof sincronizarTitularesBloqueados==="function") setTimeout(function(){ sincronizarTitularesBloqueados(); }, 800); }catch(_e){}
+      // Los titulares bloqueados los pudo haber marcado OTRA PC: hasta ahora cada máquina sólo
+      // conocía los suyos. Se traen de la base ahora que la oficina está resuelta.
+      try{ if(typeof sincronizarTitularesBloqueados==="function") setTimeout(function(){ sincronizarTitularesBloqueados(); }, 800); }catch(_e){}
+    }
 
     // 5. Si NODO todavía no se finalizó (primer login), hacerlo ahora
-    if(!_nodoListo){
+    if(_primerIngreso){
       finalizarLogin(true);
     }
 
     // 6. Sincronizar billeteras
     //    - Oficina nueva → sync silencioso pero completo (sube todas las que falten)
-    //    - Oficina existente → sync silencioso normal (avisa si hay nuevas en Chunior)
+    //    - Oficina existente → sync silencioso normal (avisa si hay nuevas en Chunior); en el
+    //      primer ingreso lo hace el arranque por etapas
     if(oficina.esNueva){
       toast('🏢 Oficina nueva detectada: '+text+' · Sincronizando billeteras...', 'blue');
       setTimeout(function(){
@@ -249,7 +256,7 @@ async function _chuniorConfirmarPuesto(value, text){
           console.warn('sync inicial oficina nueva:', e);
         });
       }, 2500);
-    } else {
+    } else if(!_primerIngreso){
       setTimeout(function(){
         sincronizarBilleterasChunior(true).catch(function(){});
       }, 2500);
@@ -422,6 +429,7 @@ let _bilPasivoFirma = '';
 async function _leerSaldosChuniorPasivo(){
   if(!window.chunior || !window.chunior.exec) return;
   if(!_nodoListo) return;
+  if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('billeterasChunior')) return; // espera su paso del arranque
   if(window._cotejoDeclarando) return;                                              // declaración ciega en curso
   if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0) return;        // no pisar una operación
   if(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes>0)) return;

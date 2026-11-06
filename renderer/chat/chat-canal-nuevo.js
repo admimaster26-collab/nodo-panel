@@ -157,7 +157,7 @@
       const tail = !options.beforeId && cached?._expanded ? cached : page;
       _mensajes.set(S(chatId), {...page,rows,_expanded:expanded,
         has_more:tail.has_more,next_before_id:tail.next_before_id,
-        legacy_thread:options.beforeId ? (cached?.legacy_thread || page.legacy_thread || []) : (page.legacy_thread || [])});
+        legacy_thread:NodoChatMessage.sinCopias(options.beforeId ? (cached?.legacy_thread || page.legacy_thread || []) : (page.legacy_thread || []),rows)});
       return rows;
     }
     try{

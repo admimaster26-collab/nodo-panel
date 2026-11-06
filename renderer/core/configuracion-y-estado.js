@@ -58,6 +58,9 @@ function _instalacionId(){
   }catch(_e){ return ''; }   // sin localStorage el servidor cae solo al modo viejo (por operador)
 }
 async function _latidoPanel(){
+  // Espera su paso del arranque por etapas. En el login window.pcOperativa ya trae la oficina de la
+  // sesión anterior (la deja validacion-pc.js), y el latido salía a su nombre y sin operador.
+  if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('latido')) return;
   try{
     const pc = (typeof pcOperativa!=='undefined'?pcOperativa:'') || window.pcOperativa || '';
     if(!pc) return; // todavía sin oficina resuelta
@@ -114,6 +117,7 @@ function _pintarAvisoLineas(d){
 }
 
 async function _revisarLineas(){
+  if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('lineas')) return;   // ídem el latido
   try{
     const pc = (typeof pcOperativa!=='undefined'?pcOperativa:'') || window.pcOperativa || '';
     if(!pc) return;  // todavía sin oficina resuelta

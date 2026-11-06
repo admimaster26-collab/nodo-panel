@@ -15,7 +15,7 @@ function discordFalso({ aceptaEn = 0, nunca = false } = {}) {
     sockets.push(s);
     const i = intentos.length - 1;
     queueMicrotask(() => {
-      if (nunca || i !== aceptaEn) s.emit('error', new Error('ENOENT'));
+      if (nunca || (aceptaEn !== 'todos' && i !== aceptaEn)) s.emit('error', new Error('ENOENT'));
       else s.emit('connect');
     });
     return s;
@@ -146,4 +146,119 @@ test('el Application ID es una constante, no una variable de entorno', () => {
   assert.ok(!/process\.env\.DISCORD_APP_ID/.test(src), 'no va por el entorno');
   const env = fs.readFileSync(path.join(raiz, '.env.example'), 'utf8');
   assert.ok(!/DISCORD/.test(env), 'ni se documenta en el .env, que no se edita');
+});
+
+// ── Que no quede un número congelado ───────────────────────────────────────────────────────────
+// Juan, 2/11: el cartel de OFIALV decía "13 solicitudes pendientes · Última carga hace 15 min" a las
+// 11:51 y lo mismo dos minutos y medio después, con la pantalla de NODO vacía. Discord se quedaba con
+// lo último que había aceptado y NODO no se enteraba, porque nunca leía las respuestas.
+function reloj() {
+  const timers = [];
+  let t = 1000;
+  return {
+    timers,
+    avanzar(ms) { t += ms; },
+    opciones: {
+      ahora: () => t,
+      setTimer: (fn, ms) => { const x = { fn, ms, vivo: true }; timers.push(x); return x; },
+      clearTimer: (x) => { if (x) x.vivo = false; },
+      log: { log() {}, warn() {} }
+    },
+    disparar(ms) { const x = timers.find(y => y.vivo && y.ms === ms); assert.ok(x, 'falta un timer de ' + ms + ' ms'); x.vivo = false; x.fn(); }
+  };
+}
+const actividades = (d) => d.escrito.filter(e => e.op === 1 && e.datos.cmd === 'SET_ACTIVITY');
+const contestar = (s, envio, extra) => s.emit('data', marco(1, Object.assign({ cmd: 'SET_ACTIVITY', evt: null, nonce: envio.datos.nonce, data: {} }, extra || {})));
+
+test('si Discord no contesta, corta, vuelve a conectar y publica lo último', async () => {
+  const d = discordFalso({ aceptaEn: 'todos' });
+  const r = reloj();
+  const p = createDiscordPresence(Object.assign({ appId: '123', conectar: d.conectar }, r.opciones));
+  p.actualizar({ details: '8 solicitudes pendientes', state: 'Última carga hace 6 min' });
+  await esperar();
+  listo(d.sockets[0]);
+  await esperar();
+  assert.equal(actividades(d).length, 1);
+
+  r.disparar(20000);                                  // pasaron 20 s sin respuesta
+  assert.equal(d.sockets[0].destruido, true, 'la conexión muerta se corta: Discord borra lo viejo');
+  assert.equal(p.conectado, false);
+
+  r.disparar(60000);                                  // reintento
+  await esperar();
+  listo(d.sockets[1]);
+  await esperar();
+  const envios = actividades(d);
+  assert.equal(envios.length, 2, 'al reconectar publica de nuevo');
+  assert.equal(envios[1].datos.args.activity.details, '8 solicitudes pendientes');
+  p.apagar();
+});
+
+test('si Discord contesta, la conexión sigue', async () => {
+  const d = discordFalso({ aceptaEn: 0 });
+  const r = reloj();
+  const p = createDiscordPresence(Object.assign({ appId: '123', conectar: d.conectar }, r.opciones));
+  p.actualizar({ details: 'Sin solicitudes pendientes', state: 'x' });
+  await esperar();
+  listo(d.sockets[0]);
+  await esperar();
+  contestar(d.sockets[0], actividades(d)[0]);
+  await esperar();
+  assert.equal(r.timers.filter(x => x.vivo && x.ms === 20000).length, 0, 'la respuesta cancela la espera');
+  assert.equal(p.conectado, true);
+  assert.notEqual(d.sockets[0].destruido, true);
+  p.apagar();
+});
+
+test('si Discord rechaza una actualización, se borra la presencia en vez de dejar la anterior', async () => {
+  const d = discordFalso({ aceptaEn: 0 });
+  const r = reloj();
+  const p = createDiscordPresence(Object.assign({ appId: '123', conectar: d.conectar }, r.opciones));
+  p.actualizar({ details: '3 solicitudes pendientes', state: 'x' });
+  await esperar();
+  listo(d.sockets[0]);
+  await esperar();
+  contestar(d.sockets[0], actividades(d)[0], { evt: 'ERROR', data: { code: 4000, message: 'malo' } });
+  await esperar();
+  const envios = actividades(d);
+  assert.equal(envios.length, 2);
+  assert.equal(envios[1].datos.args.activity, undefined, 'sin actividad: Discord deja de mostrar a NODO');
+  contestar(d.sockets[0], envios[1], { evt: 'ERROR', data: { code: 4000, message: 'malo' } });
+  await esperar();
+  assert.equal(actividades(d).length, 2, 'si también rechaza el borrado, no entra en un bucle');
+  p.apagar();
+});
+
+test('si el panel deja de mandar su estado 5 minutos, se borra la presencia', async () => {
+  const d = discordFalso({ aceptaEn: 0 });
+  const r = reloj();
+  const p = createDiscordPresence(Object.assign({ appId: '123', conectar: d.conectar }, r.opciones));
+  p.actualizar({ details: '13 solicitudes pendientes', state: 'Última carga hace 15 min' });
+  await esperar();
+  listo(d.sockets[0]);
+  await esperar();
+  contestar(d.sockets[0], actividades(d)[0]);
+
+  r.disparar(5 * 60000);
+  const envios = actividades(d);
+  assert.equal(envios.length, 2);
+  assert.equal(envios[1].datos.args.activity, undefined, 'mejor nada que un número viejo');
+
+  // Cuando el panel vuelve a hablar, se publica de nuevo.
+  contestar(d.sockets[0], envios[1]);
+  r.avanzar(20000);
+  p.actualizar({ details: 'Sin solicitudes pendientes', state: 'Última carga hace 1 min' });
+  assert.equal(actividades(d)[2].datos.args.activity.details, 'Sin solicitudes pendientes');
+  p.apagar();
+});
+
+test('cada actualización del panel corre el plazo de silencio', async () => {
+  const d = discordFalso({ aceptaEn: 0 });
+  const r = reloj();
+  const p = createDiscordPresence(Object.assign({ appId: '123', conectar: d.conectar }, r.opciones));
+  p.actualizar({ details: 'a', state: 'x' });
+  p.actualizar({ details: 'b', state: 'x' });
+  assert.equal(r.timers.filter(x => x.vivo && x.ms === 5 * 60000).length, 1, 'un solo plazo, el último');
+  p.apagar();
+  assert.equal(r.timers.filter(x => x.vivo).length, 0, 'apagar no deja nada corriendo');
 });

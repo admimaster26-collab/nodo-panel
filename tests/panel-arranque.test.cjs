@@ -439,6 +439,8 @@ function panelConSonda(extra) {
   sb.toast = () => {};
   sb.ctrlElectron = { openAgentWindow: async () => {}, navigateAgent: async () => {} };
   sb.refrescarTodo = async () => {};
+  // La sonda cuida la sesión de un puesto ya elegido: sin puesto no corre (Juan, 6/11).
+  vm.runInContext('_nodoListo = true; pcOperativa = "P1";', sb);
   Object.assign(sb, extra || {});
   return sb;
 }
@@ -1788,12 +1790,22 @@ test('parcial · el pago viaja con desde qué billetera salió, y con la base vi
   sb.panelAPI = { rpc: async (fn, p) => {
     llamadas.push(p);
     if ('p_desde' in p) return { error: { code: 'PGRST202', message: 'Could not find the function' } };
-    return { data: { ok: true }, error: null };
+    return { data: { ok: true, pagado: 5000 }, error: null };
   } };
   const r = await sb.notificarRetiroParcialPortal(900001, 5000, 5000, 30019, 35019, 30000, 'Titular Demo');
   assert.equal(r.ok, true, 'el pago se registra igual');
   assert.equal(llamadas[0].p_desde, 'Titular Demo');
   assert.ok(!('p_desde' in llamadas[1]));
+});
+
+test('parcial · respuesta sin acumulado confirmado queda incierta y no marca efecto exitoso', async () => {
+  const sb = arrancarPanel();
+  const llamadas = [];
+  sb.panelAPI = { rpc: async (fn, p) => { llamadas.push({ fn, p }); return { data: null, error: null }; } };
+  const r = await sb.notificarRetiroParcialPortal(900002, 5000, 5000, 30019, 35019, 30000, 'Titular Demo');
+  assert.equal(r.ok, false);
+  assert.equal(r.uncertain, true);
+  assert.equal(llamadas.length, 1, 'una respuesta ambigua no prueba otra firma ni escribe por segunda ruta');
 });
 
 test('retiro · pagar el resto o de más avisa pero no frena; el modal se cierra recién al mover plata', () => {
@@ -1803,7 +1815,9 @@ test('retiro · pagar el resto o de más avisa pero no frena; el modal se cierra
   const i = b.indexOf('api._rv2Aprobar = async function');
   const cuerpo = b.slice(i, b.indexOf('\n};', i));
   const lock = cuerpo.indexOf("_drexGlobalLock('rv2-retiro')"), busca = cuerpo.indexOf("callDrex('buscarUsuario'");
-  const cierra = cuerpo.indexOf('deps.cerrarRetiroV2();'), retira = cuerpo.indexOf("callDrex('retirarSaldo'");
+  // Una solicitud beta rechazada puede cerrar temprano el modal. Para verificar el cierre
+  // del pago exitoso, buscar el cierre que ocurre después de la consulta a Agentes.
+  const cierra = cuerpo.indexOf('deps.cerrarRetiroV2();', busca), retira = cuerpo.indexOf("callDrex('retirarSaldo'");
   assert.ok(lock > 0 && busca > lock && cierra > busca && retira > cierra,
     'candado → búsqueda → recién ahí se cierra el modal → retiro');
   assert.match(cuerpo, /if\(st\._pagando\) return;/, 'un segundo clic no paga dos veces');
@@ -2071,21 +2085,21 @@ test('aviso al jugador · usa su conversación del portal, no la tabla vieja', a
 
   const r = await sb.avisarJugadorEnChat('pruebaxx', '💸 Te transferimos $ 5.000');
   assert.equal(r.ok, true);
-  assert.equal(porHilo.u, 'pruebaxx');
-  assert.equal(abrioChat, 0, 'un pago de retiro no abre un chat nuevo: para eso está el push');
-
-  // La clave sí abre conversación: el portal le promete la respuesta por ahí.
+  assert.equal(porHilo, null, 'va por el que abre conversación si hace falta, que ya prueba la existente');
+  assert.equal(abrioChat, 1, 'Juan, 2/11: el aviso automático también llega sin conversación abierta');
   await sb._avisarClaveAlJugador('pruebaxx', '✅ Tu clave fue actualizada correctamente.');
-  assert.equal(abrioChat, 1);
+  assert.equal(abrioChat, 2);
 });
 
-test('aviso al jugador · sin conversación abierta no inventa nada', async () => {
-  const sb = arrancarPanel();
+test('aviso al jugador · sin conversación abierta se le abre, y nada va a la tabla que no se lee', async () => {
+  const rpcs = [];
+  const sb = arrancarPanel({ rpc: async (fn, args) => { rpcs.push({ fn, args }); return { data: fn === 'panel_chat_iniciar' ? { ok: true, usuario: args.p_usuario } : null, error: null }; } });
   let legacy = 0;
   sb.nodoEnviarMensajePortal = async () => ({ ok: false, error: 'sin-ticket' });
   sb.notificarUsuarioEnChat = async () => { legacy++; return null; };
-  const r = await sb.avisarJugadorEnChat('pruebaxx', 'hola');
-  assert.equal(r.error, 'sin-ticket');
+  const r = await sb.avisarJugadorEnChat('pruebaxx', 'hola', { crearSiNoHay: false });
+  assert.equal(r.ok, true);
+  assert.deepEqual(rpcs.filter(c => c.fn === 'panel_chat_iniciar').map(c => [c.args.p_usuario, c.args.p_mensaje]), [['pruebaxx', 'hola']]);
   assert.equal(legacy, 0, 'escribir en la tabla que el portal no lee no sirve para nada');
 });
 
@@ -3383,13 +3397,11 @@ test('el aviso va primero al hilo que el portal lee', async () => {
     'no se escribe tambien en el chat viejo: quedaria duplicado');
 });
 
-test('si el jugador no tiene conversacion abierta, cae al camino viejo', async () => {
-  // No se le abre un hilo nuevo a proposito: un aviso automatico por cada carga llenaria la
-  // bandeja de conversaciones que nadie pidio (D-92).
+test('si el jugador no tiene conversacion abierta, se le abre una (Juan, 2/11)', async () => {
   const { sb, alPortal, rpcs } = panelConAviso({ ok: false, error: 'sin-ticket' });
   await sb.notificarUsuarioEnChat('milo30kc', 'Tu carga ya esta acreditada.');
-  assert.equal(alPortal.length, 1, 'igual se intenta');
-  assert.ok(rpcs.length > 0, 'y despues sigue por donde iba antes, no se pierde');
+  assert.equal(alPortal.length, 1, 'primero prueba la conversacion que ya tenga');
+  assert.equal(rpcs[0], 'panel_chat_iniciar', 'y si no hay, la abre donde el portal lee');
 });
 
 test('avisarJugadorEnChat no intenta el portal dos veces', async () => {

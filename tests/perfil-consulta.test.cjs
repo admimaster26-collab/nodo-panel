@@ -349,10 +349,16 @@ test('observaciones de identidad (perfil.identity.v1), recarga en caliente y per
       getContext:async()=>({beta:{enabled:true,offices:['P1'],build:'2.1.5-test'}}),
       rpc:async(fn,args)=>{
         syncCalls.push({fn,args});
-        if(fn===CAP)return {data:{ok:true,enabled:true,contract:CONTRACT,scope:{pc_codigo:'P1'},capabilities:['persistence.local.v1']}};
+        if(fn===CAP)return {data:{ok:true,contract:CONTRACT,scope:{pc_codigo:'P1'},capabilities:['persistence.local.v1']}};
         if(fn==='nodo_beta_persistencia_sync_v1'){
           return {data:{
             ok:true,contract:CONTRACT,scope:{pc_codigo:'P1',instalacion:'pc-p1-unit',version:'2.1.5-test'},
+            protocol:'persistence.cas.v1',conflicts:[],
+            receipts:Object.entries(args.p_lote).flatMap(([family,items])=>items.map(item=>{
+              const id=family==='jugadores'?item.source_id:family==='movimientos'?item.movimiento_key:family==='cotejos'?item.cotejo_key:item.item_id;
+              return {family,id,key:family==='jugadores'?[id,item.campo]:family==='colas'?['pc-p1-unit',item.cola_tipo,id]:[id],
+                accepted:true,revision:'1',mutation_id:item._sync.mutation_id};
+            })),
             acknowledged:{
               jugadores:args.p_lote.jugadores.map(x=>x.source_id),
               movimientos:args.p_lote.movimientos.map(x=>x.movimiento_key),
@@ -371,4 +377,26 @@ test('observaciones de identidad (perfil.identity.v1), recarga en caliente y per
   assert.equal(res1.acceptedTotal,4);
   const res2=await pClient.sync();
   assert.equal(res2.empty,true,'después del ACK del servidor no vuelve a enviar el mismo lote');
+});
+
+// milo30kc, 6/11: tres titulares y un retiro a la cuenta de otra persona a la vista, y la ficha
+// mostraba un solo titular "·reg" y "Sin destinos registrados". Las tarjetas leían sólo la base
+// local de la PC, que no tenía esas operaciones.
+test('titulares y destinos salen de las operaciones aunque esta PC no tenga datos locales',async()=>{
+  const rows=[
+    row('30',{tipo:'CARGA',estado:'OK',notas:'#1 · Titular: Daniel Demo'}),
+    row('29',{tipo:'CARGA',estado:'OK',notas:'#2 · Titular: Daniel Demo'}),
+    row('28',{tipo:'CARGA',estado:'OK',notas:'#3 · Titular: Abila Demo'}),
+    row('27',{tipo:'RETIRO',estado:'OK',notas:'#4 · Titular: Rosa Demo · Alias: rosa.demo.mp'})];
+  const h=rendererHarness({[DETAIL]:args=>page(args,rows)});
+  h.root._movParseNotas=n=>({titular:((String(n).match(/Titular:\s*([^·|]+)/)||[])[1]||'').trim(),
+    destino:((String(n).match(/Alias:\s*([^·|]+)/)||[])[1]||'').trim(),cbu:'',obs:''});
+  h.root.abrirPerfilJugador('demo');await h.root.pjPerfilConsultar(false,false);
+  const html=h.html();
+  assert.match(html,/Daniel Demo <span[^>]*>×2 cargas</);
+  assert.match(html,/Abila Demo <span[^>]*>×1 carga</);
+  assert.match(html,/Rosa Demo <span[^>]*>×1 retiro</);
+  assert.match(html,/rosa\.demo\.mp/);
+  assert.match(html,/titular distinto/,'quien sólo cobra y nunca cargó se marca');
+  assert.doesNotMatch(html,/Sin destinos registrados/);
 });

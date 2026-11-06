@@ -9,8 +9,14 @@
   function create(deps){
 const api = {};
 async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, restante, montoTotal, saldoPost, desde){
-  deps.window.NodoSalud?.begin('RETIROS')?.record('EFFECT','OK','RETIRO_PARCIAL_NOTIFY');
-  if(!deps.window.panelAPI || !deps.window.panelAPI.rpc || !solicitudId) return { ok:false, detail:'sin panelAPI/id' };
+  // El semáforo marcaba OK antes de llamar a la base: un parcial sin registrar se veía en verde.
+  const _salud = deps.window.NodoSalud?.begin('RETIROS');
+  const _marca = function(estado, codigo, duracion){ try{ _salud?.record('EFFECT', estado, codigo, duracion); }catch(_e){} };
+  const _dato = function(estado,codigo,duracion){
+    const lento=estado==='OK'&&duracion>3000;
+    try{ _salud?.record('DATA',lento?'DEGRADED':estado,lento?'RETIRO_RPC_LENTO':codigo,duracion); }catch(_e){}
+  };
+  if(!deps.window.panelAPI || !deps.window.panelAPI.rpc || !solicitudId){ _marca('ERROR','RETIRO_PARCIAL_SIN_CLIENTE',0); return { ok:false, detail:'sin panelAPI/id' }; }
   const op = (deps.window.operador && (deps.window.operador.usuario||deps.window.operador.nombre)) || 'panel';
   const sid = Number(solicitudId);
   const formas = [
@@ -32,27 +38,48 @@ async function notificarRetiroParcialPortal(solicitudId, montoPago, pagadoAcum, 
   // La firma real va siempre primero. Un error de transporte puede llegar después
   // de confirmar el pago en la base: jamás se prueba otra firma en ese caso.
   for(const f of formas){
-    let r;
+    let r;const _inicio=Date.now();
     try{
       r = await deps.window.panelAPI.rpc('landing_retiro_registrar_parcial', f.p);
     }catch(e){
       const detail = String(e.message || e);
       console.warn('[retiro-parcial-portal] resultado incierto; no se reintenta:', detail);
+      const duracion=Math.max(0,Date.now()-_inicio);
+      try{ _salud?.reply(e,duracion); }catch(_e){}
+      _marca('DEGRADED','RETIRO_PARCIAL_INCIERTO',duracion);
       return { ok:false, uncertain:true, detail };
     }
-    if(!r) return { ok:false, uncertain:true, detail:'sin respuesta al registrar el parcial' };
+    const _duracion=Math.max(0,Date.now()-_inicio);
+    if(!r){
+      try{ _salud?.reply({code:'NETWORK'},_duracion); }catch(_e){}
+      _marca('DEGRADED','RETIRO_PARCIAL_INCIERTO',_duracion);
+      return { ok:false, uncertain:true, detail:'sin respuesta al registrar el parcial' };
+    }
+    try{ _salud?.reply(r.error||null,_duracion); }catch(_e){}
     if(!r.error){
+      let _datoRpc=Array.isArray(r.data)?r.data[0]:r.data;
+      if(typeof _datoRpc==='string'){try{_datoRpc=JSON.parse(_datoRpc);}catch(_e){_datoRpc=null;}}
+      const _pagadoRpc=Number(_datoRpc&&_datoRpc.pagado);
+      if(!_datoRpc||typeof _datoRpc!=='object'||_datoRpc.ok!==true||!Number.isFinite(_pagadoRpc)
+          ||_pagadoRpc<Number(pagadoAcum)-0.5){
+        _dato('DEGRADED','RETIRO_PARCIAL_RESPUESTA_INVALIDA',_duracion);
+        _marca('DEGRADED','RETIRO_PARCIAL_INCIERTO',_duracion);
+        return { ok:false, uncertain:true, detail:'el servidor no confirmó el acumulado del retiro' };
+      }
       // Guardar una preferencia local no forma parte de la transacción. Si falla,
       // el pago sigue confirmado y no debe enviarse otra vez.
       try{ deps.localStorage.setItem('nodo_rpc_parcial_shape', f.k); }catch(_e){}
       // Se devuelve lo que contestó la base: con eso el que llama comprueba que el pago ENTRÓ.
+      _dato('OK','RETIRO_PARCIAL_RESPUESTA_CONFIRMADA',_duracion);
+      _marca('OK','RETIRO_PARCIAL_CONFIRMADO',_duracion);
       return { ok:true, detail:'forma '+f.k, data:(r && r.data) || null };
     }
     const msg = String(r.error.message||'');
     const esFirma = /PGRST202|Could not find the function|function .* does not exist/i.test(
       String(r.error.code||'')+' '+msg+' '+String(r.error.details||''));
-    if(!esFirma) return { ok:false, detail:msg };
+    if(!esFirma){ _marca('ERROR','RETIRO_PARCIAL_RECHAZADO',_duracion); return { ok:false, detail:msg }; }
   }
+  _marca('ERROR','RETIRO_PARCIAL_SIN_FIRMA',0);
   return { ok:false, detail:'ninguna firma coincidió — mirá el hint en consola y avisá para ajustarla' };
 }
 api.notificarRetiroParcialPortal = notificarRetiroParcialPortal;
@@ -139,6 +166,34 @@ api._rv2Aprobar = async function(){
   const confirmarCada = !!(deps.document.getElementById('rv2ConfCada') && deps.document.getElementById('rv2ConfCada').checked);
   // Un pago a la vez: el modal queda abierto mientras se busca al usuario y un segundo clic pagaba dos veces.
   if(st._pagando) return;
+
+  // Sólo la solicitud beta marcada por el servidor usa el nuevo control. Las solicitudes
+  // antiguas/manuales siguen su recorrido; una beta sin consumidor no llega a retirar fichas.
+  let _retiroInstrumento = null;
+  try{
+    const _meta = st.metadata || (st.solicitud && (st.solicitud.METADATA || st.solicitud.metadata)) || {};
+    _retiroInstrumento = typeof _meta === 'string' ? JSON.parse(_meta).retiro_instrumento_v1 : _meta.retiro_instrumento_v1;
+  }catch(_e){ _retiroInstrumento = null; }
+  if(st.id && _retiroInstrumento && _retiroInstrumento.instrumento_id){
+    if(typeof deps.window.nodoRetiroCuentaValidada !== 'function'){
+      try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_VALIDADOR_NO_CARGADO'); }catch(_e){}
+      deps.toast('No se cargó la validación de cuenta de este retiro. No se movió saldo.','red');
+      return;
+    }
+    st._pagando = true;
+    let _cuenta = null;
+    try{
+      _cuenta = await deps.window.nodoRetiroCuentaValidada(st.id, {
+        usuario:st.usuario, monto:total, destino:st.destino || st.cbu, titular:st.titular,
+        solicitud:st.solicitud || {metadata:st.metadata}
+      });
+    }finally{ st._pagando = false; }
+    if(!_cuenta || !_cuenta.seguir){
+      if(_cuenta && _cuenta.cerrar){ try{ deps.cerrarRetiroV2(); }catch(_e){} }
+      return;
+    }
+    if(deps.withdrawalState.current !== st) return;
+  }
 
   // 1) ANTES de cerrar el modal: candado, sesión y búsqueda. Si algo de esto falla no se movió
   //    plata y el modal queda como estaba para reintentar. Antes se cerraba primero, y cualquier
@@ -427,13 +482,19 @@ const _rv2FinalizarInterno = async function(stCapturado){
   // los demás quedan en las notas (la columna guarda uno solo).
   const _chuMovs = (st.chuMovs||[]).filter(Boolean);
   const _notaChu = _chuMovs.length>1 ? (' · Chunior: '+_chuMovs.join(' + ')) : '';
+  const _notaHistorial = 'Retiro'+(completo?'':' PARCIAL')+' · pagado '+deps.money(total)+' desde: '+listaBil+(completo?'':(' · restan '+deps.money(restante)))
+    +(String(st.titular||'').trim()?(' · Titular: '+String(st.titular).trim()):'')
+    +(String(st.destino||st.cbu||'').trim()?(' · Alias: '+String(st.destino||st.cbu).trim()):'')
+    +(st.obs?(' · Obs: '+st.obs):'')+_notaChu;
   let filaHist = null;
   try{
     filaHist = await deps.registrarEnHistorial({
       usuario:st.usuario, tipo:'RETIRO', monto:total,
       billetera_id: st.pagar[0]?st.pagar[0].id:null, billetera_nombre: listaBil,
       origen:'LANDING', estado:'OK',
-      notas:'Retiro'+(completo?'':' PARCIAL')+' · pagado '+deps.money(total)+' desde: '+listaBil+(completo?'':(' · restan '+deps.money(restante)))+(st.obs?(' · Obs: '+st.obs):'')+_notaChu,
+      // Titular y Alias, como en portalNotasBase: sin ellos el parcial quedaba en el historial con
+      // "👤 —" y su destino no llegaba a la ficha del jugador (detector de datos, 6/11).
+      notas:_notaHistorial,
       // saldo_pre: las fichas que tenía ANTES de retirar (st.saldoReal, leído al abrir el modal).
       // Sin esto la columna "Saldo pre" del historial salía vacía en todos los parciales.
       saldo_pre: (st.saldoReal!=null ? st.saldoReal : null),
@@ -487,7 +548,7 @@ const _rv2FinalizarInterno = async function(stCapturado){
     .filter(function(v, i, a){ return v && a.indexOf(v) === i; }).join(' + ');
   if(!completo || _hayProgreso){
     try{ _rp = await notificarRetiroParcialPortal(st.id, total, pagadoAcum, restante, montoTotal, st.saldoPost, _desde); }
-    catch(e){ _rp = { ok:false, detail:(e&&e.message)||String(e) }; }
+    catch(e){ _rp = { ok:false, uncertain:true, detail:(e&&e.message)||String(e) }; }
     // ¿El progreso AVANZÓ de verdad? La base devuelve cuánto quedó pagado. Si contesta bien pero el
     // acumulado no se movió, el pago no entró y el retiro queda colgado en la caja pidiendo un monto
     // que ya se pagó (D-100). Se trata como fallo para que entre el respaldo de abajo.
@@ -508,19 +569,52 @@ const _rv2FinalizarInterno = async function(stCapturado){
   const _motivoAjuste = _ajustado
     ? (String(st.motivoAjuste||'').trim() || ('Pediste '+deps.money(_decOrig)+' y el retiro quedó en '+deps.money(montoTotal)+'.'))
     : '';
+  // Hora exacta, con segundos (Juan: "en el aprobado agregá el horario de aprobación, creeme,
+  // importa"). Ante un "me transferiste hace media hora" es la constancia.
+  const _ahora = new Date();
+  let _metaInstrumento = st.metadata || (st.solicitud && (st.solicitud.METADATA || st.solicitud.metadata)) || {};
+  try{ if(typeof _metaInstrumento==='string') _metaInstrumento=JSON.parse(_metaInstrumento); }catch(_e){ _metaInstrumento={}; }
+  const _esRetiroInstrumento = !!(_metaInstrumento.retiro_instrumento_v1 && _metaInstrumento.retiro_instrumento_v1.instrumento_id);
+  let _selloRetiro = null;
+  // El sello final se escribe cuando ya se completaron las transferencias. Si el movimiento ya
+  // ocurrió y el RPC falla, se conserva el cierre para no duplicar dinero y se deja la auditoría
+  // remota marcada como pendiente.
+  if(completo && _esRetiroInstrumento){
+    if(typeof deps.window.nodoSellarRetiroAprobado === 'function'){
+      try{
+        _selloRetiro = await deps.window.nodoSellarRetiroAprobado(st.id,{
+          solicitud:st.solicitud || {metadata:_metaInstrumento},usuario:st.usuario,monto:pagadoAcum
+        });
+      }catch(_e){ _selloRetiro={ok:false}; }
+    }else _selloRetiro={ok:false};
+    if(!_selloRetiro || !_selloRetiro.ok){
+      try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
+      try{ deps.toast('El retiro ya se transfirió, pero faltó guardar la hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red'); }catch(_e){}
+    }
+  }
+  const _hora = _selloRetiro && _selloRetiro.ok
+    ? _selloRetiro.horaExacta
+    : (typeof deps.window.nodoHoraExacta === 'function' ? deps.window.nodoHoraExacta(_ahora) : _ahora.toLocaleTimeString('es-AR'));
+  const _horaAt = _selloRetiro && _selloRetiro.ok && _selloRetiro.aprobadoAt ? _selloRetiro.aprobadoAt : _ahora.toISOString();
   try{
     const _extra = {
+      aprobado_at: _horaAt, aprobado_hora: _hora,
       etapa: completo?'RETIRO_V2_COMPLETO':'RETIRO_V2_PARCIAL',
       parcial:!completo, monto_pagado:pagadoAcum, monto_restante:restante, monto_total:montoTotal,
       operador:(deps.window.operador&&(deps.window.operador.usuario||deps.window.operador.nombre))||'panel'
     };
+    if(completo && _esRetiroInstrumento){
+      _extra.retiro_aprobado_hora_exacta = _hora;
+      _extra.retiro_aprobado_servidor = !!(_selloRetiro && _selloRetiro.ok);
+      _extra.observacion = 'Retiro transferido a las '+_hora+' hs.';
+    }
     if(_ajustado){
       _extra.monto_corregido = montoTotal;
       _extra.monto_declarado_original = _decOrig;
       _extra.motivo_ajuste = _motivoAjuste;
     }
     // Respaldo SOLO si la RPC falló: si no, duplicaríamos el progreso.
-    if((!completo || _hayProgreso) && (!_rp || !_rp.ok)){
+    if((!completo || _hayProgreso) && (!_rp || (!_rp.ok && !_rp.uncertain))){
       // CONSERVANDO los pagos ya anotados: el respaldo los pisaba y se perdía el detalle de lo cobrado.
       let _rpPrev = {};
       try{
@@ -534,6 +628,13 @@ const _rv2FinalizarInterno = async function(stCapturado){
         operador: (deps.window.operador&&(deps.window.operador.usuario||deps.window.operador.nombre))||'panel',
         desde: _desde || null, respaldo_panel: true });
       _extra.retiro_parcial = Object.assign({}, _rpPrev, { pagado:pagadoAcum, total:montoTotal, restante:restante, pagos:_pagosPrev });
+    }
+    if(completo && filaHist && filaHist.id){
+      try{
+        await deps.supabaseClient.from('historial_ops').update({
+          notas:_notaHistorial+' · Transferido a las '+_hora+' hs.'+(_selloRetiro&&_selloRetiro.ok?'':' · sello servidor pendiente')
+        }).eq('id',filaHist.id);
+      }catch(_e){}
     }
     // Va DESPUÉS de la RPC a propósito: deja el estado correcto aunque la RPC lo haya marcado completo.
     const _ru = await deps.window.actualizarSolicitudPortal(String(st.id), _estadoFinal, _extra);
@@ -552,15 +653,14 @@ const _rv2FinalizarInterno = async function(stCapturado){
   }
   try{
     const msg = completo
-      ? '✅ Completamos tu retiro. Te transferimos '+deps.money(total)+'. ¡Listo!'
-      : '💸 Te transferimos '+deps.money(total)+' de tu retiro · restan '+deps.money(restante)+'. El resto en cuanto se libere otra billetera.';
+      ? '✅ Completamos tu retiro. Te transferimos '+deps.money(total)+' a las '+_hora+' hs. ¡Listo!'
+      : '💸 Te transferimos '+deps.money(total)+' de tu retiro a las '+_hora+' hs · restan '+deps.money(restante)+'. El resto en cuanto se libere otra billetera.';
     // La solicitud ya está en su estado final (PAGADA/EN_PROCESO) → se lo pasamos explícito.
     // El motivo va UNA vez: si ya se le dijo este mismo motivo, no se repite en cada cuota.
     const _avisarAjuste = _ajustado && _motivoAjuste && _motivoAjuste !== String(st._motivoAvisado||'');
     const _pre = _avisarAjuste ? ('📝 Ajustamos tu retiro a '+deps.money(montoTotal)+'. '+_motivoAjuste+'\n') : '';
     // Al chat VIVO del portal (D-99): antes iba a la generación de chat que el portal ya no lee, o
-    // sea a ningún lado. Si no tiene conversación abierta no se le abre una por cada pago: para ese
-    // caso ya sale el push de acá abajo.
+    // sea a ningún lado. Si no tiene conversación abierta se le abre una (Juan, 2/11).
     const _txtAviso = _pre+(st.obs?st.obs+'\n':'')+msg;
     if(typeof deps.window.avisarJugadorEnChat === 'function') await deps.window.avisarJugadorEnChat(st.usuario, _txtAviso);
     else await deps.notificarUsuarioEnChat(st.usuario, _txtAviso, st.id, _estadoFinal);

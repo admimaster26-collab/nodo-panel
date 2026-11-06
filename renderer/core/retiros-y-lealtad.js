@@ -20,8 +20,10 @@ async function verificarRetiro24h(usuario) {
   // 1. Retiros del PORTAL. Antes esto miraba la tabla `solicitudes`, muerta desde el 30 de mayo:
   //    la fuente 1 del chequeo de 24 h no devolvía nunca nada. La regla igual funcionaba por la
   //    fuente 2 (historial_ops), pero un retiro del portal sin fila en el historial se colaba.
+  // Si una fuente no contesta, "no encontré nada" no es "no hay": el semáforo lo tiene que decir.
+  let _fuenteFallo = false;
   try {
-    const { data: dataSol } = await supabaseClient
+    const { data: dataSol, error: _eSol } = await supabaseClient
       .from("landing_solicitudes")
       .select("id, created_at, monto")
       .ilike("usuario", _uPat)
@@ -30,13 +32,14 @@ async function verificarRetiro24h(usuario) {
       .gte("created_at", new Date(hace24h).toISOString())
       .order("created_at", { ascending: false })
       .limit(1);
-    if(dataSol && dataSol.length)
+    if(_eSol || !Array.isArray(dataSol)) _fuenteFallo = true;
+    if(Array.isArray(dataSol) && dataSol.length)
       candidatos.push({ created_at: dataSol[0].created_at, monto: dataSol[0].monto, billetera_nombre: null, origen: "SOLICITUD" });
-  } catch(_){}
+  } catch(_){ _fuenteFallo = true; }
 
   // 2. Buscar en historial_ops (retiros del form manual, chat rápido)
   try {
-    const { data: dataH } = await supabaseClient
+    const { data: dataH, error: _eH } = await supabaseClient
       .from("historial_ops")
       .select("id, created_at, monto, billetera_nombre, notas")
       .ilike("usuario", _uPat)
@@ -48,9 +51,10 @@ async function verificarRetiro24h(usuario) {
     // Excluir PARCIALES (tramos de un retiro grande) y los marcados [BL_EXCLUIDO]: no son un
     // retiro separado → tomamos el retiro REAL más reciente (no parcial, no excluido).
     const dhReal = (dataH||[]).find(function(r){ return !_blEsParcial(r) && !/\[BL_EXCLUIDO\]/.test(String(r.notas||'')); });
+    if(_eH || !Array.isArray(dataH)) _fuenteFallo = true;
     if(dhReal)
       candidatos.push({ created_at: dhReal.created_at, monto: dhReal.monto, billetera_nombre: dhReal.billetera_nombre || null, origen: "HISTORIAL" });
-  } catch(_){}
+  } catch(_){ _fuenteFallo = true; }
 
   // 3. Buscar en CSV importado (últimas 24h)
   if(retiros24hCSV && retiros24hCSV.length){
@@ -62,7 +66,9 @@ async function verificarRetiro24h(usuario) {
     }
   }
 
-  health?.record('DATA', 'OK', candidatos.length ? 'RETIRO_24H_MATCH' : 'RETIRO_24H_CLEAR');
+  if(candidatos.length) health?.record('DATA', _fuenteFallo?'DEGRADED':'OK',
+    _fuenteFallo?'RETIRO_24H_MATCH_PARCIAL':'RETIRO_24H_MATCH');
+  else health?.record('DATA', _fuenteFallo ? 'DEGRADED' : 'OK', _fuenteFallo ? 'RETIRO_24H_SIN_COMPROBAR' : 'RETIRO_24H_CLEAR');
   if(!candidatos.length) return { bloqueado: false };
 
   // Tomar el retiro más reciente de cualquier fuente

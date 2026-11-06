@@ -191,11 +191,90 @@ function finalizarLogin(guardar=true){
     <span class="badge badge-ok">Oficina: ${pcOperativa}</span>
   `);
   _nodoListo = true;
-  refrescarTodo(false);
+  void _arrancarPorEtapas();
   iniciarRealtimeSolicitudes();
   iniciarBroadcastSolicitudes();
   iniciarBroadcastChat();
   _panelRealtime().startPolling();
+}
+
+// ── Arranque por etapas ─────────────────────────────────────────────────────────────────────
+// Juan, 6/11: "lo que necesitamos rápido es la pantalla principal, que lleguen las solicitudes y
+// los mensajes; el resto de la aplicación, si debe esperar, puede esperar". Al elegir el puesto se
+// largaba todo junto —y una parte ya corría desde antes del login, contra la oficina de la sesión
+// anterior o contra P1—: en una PC lenta la pantalla quedaba trabada más de medio minuto.
+//   · Sin oficina: no se pide nada de ninguna oficina.
+//   · Etapa 1: solicitudes y chats de esta oficina, juntos, y se dibuja el Inicio.
+//   · Etapa 2: lo demás, de a uno y con aire entre medio. Los relojes de esas partes esperan su
+//     paso (nodoArranqueHabilitado); lo que el operador necesite antes, lo pide y lo espera.
+const _ARRANQUE_AIRE_MS = 500;     // pausa entre un paso y el siguiente
+const _ARRANQUE_TOPE_MS = 15000;   // un paso que no contesta no frena a los que vienen atrás
+const _arranquePasos = new Set();  // pasos de la etapa 2 que ya arrancaron
+function nodoOficinaLista(){ try{ return !!(_nodoListo && pcOperativa); }catch(_e){ return false; } }
+function nodoArranqueHabilitado(paso){ try{ return nodoOficinaLista() && _arranquePasos.has(paso); }catch(_e){ return false; } }
+
+// La primera carga de billeteras con la oficina ya elegida. Si el operador las necesita antes de
+// que el arranque llegue a ese paso (abrir un pago parcial, por ejemplo), las pide acá y espera
+// esa misma carga. Devuelve null cuando no hay nada que esperar.
+let _billeterasPrimera = null, _billeterasListas = false;
+function nodoAsegurarBilleteras(){
+  if(_billeterasListas || !nodoOficinaLista()) return null;
+  if(!_billeterasPrimera){
+    _billeterasPrimera = Promise.resolve().then(() => cargarBilleteras(false)).then(r => {
+      _billeterasListas = true;
+      // Una oficina sin billeteras se quedaba con el "Cargando…" del Inicio.
+      try{ if(!(billeteras || []).length) renderBillerasInicio(); }catch(_e){}
+      return r;
+    }, e => { _billeterasPrimera = null; console.warn('[arranque] billeteras', e); });
+  }
+  return _billeterasPrimera;
+}
+function nodoBilleterasCargando(){ try{ return !_billeterasListas && nodoOficinaLista(); }catch(_e){ return false; } }
+
+// Un solo dueño por dato: lo que se repite lo pide NodoRealtime (su reloj y sus canales). El
+// puente del portal tenía otro reloj para solicitudes, chats y la conversación abierta, así que
+// cada cosa se pedía dos veces. La primera vuelta del arranque usa estas mismas lecturas.
+const _lecturasPanel = {
+  requests: () => typeof cargarSolicitudesPortal === 'function' ? cargarSolicitudesPortal(true) : cargarSolicitudes(true),
+  // La primera carga la hace la etapa 2; hasta entonces este reloj no pide nada.
+  wallets: () => { if(nodoArranqueHabilitado('billeteras')) return cargarBilleteras(false); },
+  chats: () => {
+    // Durante el cambio de caminos, el reloj de la lista también trae las conversaciones del
+    // canal nuevo. Sin await ni encadenado: si ese lado no contesta, la lista de siempre se
+    // dibuja igual (Juan, 2/10).
+    try{ if(window._chatCanalNuevo) window._chatCanalNuevo.cargar(); }catch(_e){}
+    // cargarChats ya sólo repinta (chat-hilos.js): la que pide la lista al servidor es ésta.
+    return typeof window.nodoCargarChatsPortal === 'function' ? window.nodoCargarChatsPortal(true) : cargarChats(true);
+  },
+  // Lo mismo con la conversación abierta: cargarChatActual repinta, _v154pCargarChat la pide.
+  conversation: () => typeof window._v154pCargarChat === 'function' ? window._v154pCargarChat(true) : cargarChatActual(true)
+};
+
+const _pausaArranque = ms => new Promise(resolve => setTimeout(resolve, ms));
+const _ARRANQUE_SEGUNDA_ETAPA = [
+  ['billeteras',        () => nodoAsegurarBilleteras()],
+  // Los titulares bloqueados los pudo haber marcado OTRA PC: se traen de la base.
+  ['titulares',         () => typeof sincronizarTitularesBloqueados === 'function' && sincronizarTitularesBloqueados()],
+  ['historial',         () => cargarHistorial()],                 // una sola vez: antes se pedía dos
+  ['billeterasChunior', () => sincronizarBilleterasChunior(true)],
+  ['latido',            () => _latidoPanel()],
+  ['lineas',            () => _revisarLineas()],
+  ['verificaciones',    () => {}],                                // sólo habilita sus relojes
+  ['agentes',           () => { if(enElectron) _watchdogIniciar(); return refrescarSaldoAgente(); }],
+  ['nexo',              () => typeof window.nexoArrancar === 'function' && window.nexoArrancar()]
+];
+async function _arrancarPorEtapas(){
+  await Promise.race([Promise.all([
+    Promise.resolve().then(() => cargarSolicitudes(false)).catch(e => console.warn('[arranque] solicitudes', e)),
+    Promise.resolve().then(_lecturasPanel.chats).catch(e => console.warn('[arranque] chats', e))
+  ]), _pausaArranque(_ARRANQUE_TOPE_MS)]);
+  try{ renderInicio(); }catch(e){ console.warn('[arranque] inicio', e); }
+  for(const [paso, correr] of _ARRANQUE_SEGUNDA_ETAPA){
+    await _pausaArranque(_ARRANQUE_AIRE_MS);
+    _arranquePasos.add(paso);
+    try{ await Promise.race([Promise.resolve().then(correr), _pausaArranque(_ARRANQUE_TOPE_MS)]); }
+    catch(e){ console.warn('[arranque] ' + paso, e); }
+  }
 }
 
 // Adaptador de los handlers existentes. El servicio posee canales, timers y lecturas.
@@ -205,19 +284,11 @@ function _panelRealtime(){
     client: supabaseClient,
     getOffice: () => pcOperativa,
     getAliases: () => typeof pcAliasesHist === 'function' ? pcAliasesHist() : [pcOperativa],
-    hasOpenChat: () => !!((window.V154P && window.V154P.chatActual) || window.chatActualId || chatActualId),
-    refresh: {
-      requests: () => typeof cargarSolicitudesPortal === 'function' ? cargarSolicitudesPortal(true) : cargarSolicitudes(true),
-      wallets: () => cargarBilleteras(false),
-      chats: () => {
-        // Durante el cambio de caminos, el reloj de la lista también trae las conversaciones del
-        // canal nuevo. Sin await ni encadenado: si ese lado no contesta, la lista de siempre se
-        // dibuja igual (Juan, 2/10).
-        try{ if(window._chatCanalNuevo) window._chatCanalNuevo.cargar(); }catch(_e){}
-        return typeof cargarChatsPortal === 'function' ? cargarChatsPortal(true) : cargarChats(true);
-      },
-      conversation: () => typeof cargarChatPortalActual === 'function' ? cargarChatPortalActual(true) : cargarChatActual(true)
-    },
+    // Manda el chat que está en pantalla: la marca suelta la vacían varios lados del código viejo
+    // y la conversación del canal nuevo dejaba de pedir sus mensajes (Juan, 2/11).
+    hasOpenChat: () => !!((window.V154P && window.V154P.chatActual) || window.chatActualId || chatActualId
+      || (window.__nodoChatCurrentTicket && window.__nodoChatCurrentTicket._beta)),
+    refresh: _lecturasPanel,
     // Devuelve una firma corta de cómo está la bandeja. Mientras no cambie, no se baja la lista.
     // Si la RPC no está (panel viejo contra base vieja) devuelve null y queda sólo el reloj de 60 s.
     senal: async () => {

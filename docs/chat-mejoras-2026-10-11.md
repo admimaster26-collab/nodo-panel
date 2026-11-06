@@ -1,5 +1,7 @@
 # Chat y portal: revisión del 11 de octubre de 2026
 
+> **Reemplazado el 1/11/2026.** La guía del Portal que describe este documento no llegó a producción y se reescribió: ver D-132 en `DESCONEXIONES.md`. La migración candidata de este documento nunca se aplicó y su guarda busca un texto que el Portal ya no manda.
+
 El cambio prepara un chat con opciones, contexto y autores distinguibles. Está implementado en el código local. No se publicó el portal ni se modificó el bot de producción durante esta revisión.
 
 ## Lo que cambia

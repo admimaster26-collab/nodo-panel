@@ -302,6 +302,81 @@ window.pjPerfilDetalle = function(id,usuario,solicitudId,esLocal){
   const fields=Object.keys(labels).filter(function(k){ return row[k]!=null && row[k]!==''; }).map(function(k){ return '<div class="pj-field"><span>'+labels[k]+'</span><b>'+escapeHtml(String(row[k]))+'</b></div>'; }).join('');
   abrirModal('Detalle local · '+escapeHtml(usuario),'<p>Datos locales '+((row.pc_codigo || row.pc)?'de la oficina '+escapeHtml(row.pc_codigo || row.pc):'sin oficina identificada')+'. No integran el resumen del servidor.</p>'+fields,null,'');
 };
+// Titulares (de cargas y de retiros) y destinos de cobro (sólo retiros) de las operaciones de la
+// ficha. Lo que es nuestro (titular o alias de una billetera propia) no es del jugador.
+function _pjDatosDeOperaciones(ops){
+  const titulares={}, cbus={};
+  const propio=function(v){ try{ return !!(window.esDatoPropioBilletera && window.esDatoPropioBilletera(v)); }catch(_e){ return false; } };
+  const okEstados=['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'];
+  (ops||[]).forEach(function(o){
+    const tipo=String(o.tipo||'').toUpperCase(), fecha=o.fecha||'';
+    if(tipo!=='CARGA' && tipo!=='RETIRO') return;
+    const tit=String(o.titular||'').trim();
+    if(tit && !propio(tit)){
+      const k=tit.toLowerCase();
+      const t=titulares[k]||(titulares[k]={raw:tit,veces:0,cargas:0,retiros:0,ultima:''});
+      t.veces++; if(tipo==='CARGA') t.cargas++; else t.retiros++;
+      if(String(fecha)>String(t.ultima)) t.ultima=fecha;
+    }
+    const dest=String(o.cbu||o.destino||'').trim();
+    if(tipo==='RETIRO' && dest && !propio(dest)){
+      const k=typeof _jugNormCbu==='function' ? _jugNormCbu(dest) : dest.toLowerCase();
+      const c=cbus[k]||(cbus[k]={raw:dest,veces:0,ultima:''});
+      c.veces++;
+      if(tit) c.titular=tit;
+      if(okEstados.includes(String(o.estado||'').toUpperCase())) c.verificado=true;
+      if(String(fecha)>String(c.ultima)) c.ultima=fecha;
+    }
+  });
+  return {titulares:titulares, cbus:cbus};
+}
+// Une lo local con lo de las operaciones por clave. La cuenta de la operación manda: la local se
+// infla con cada recarga de la app; las marcas locales (verificado) se conservan.
+function _pjMezclarPorClave(local, deOps, clave){
+  const out={};
+  Object.values(local||{}).forEach(function(x){ const k=clave(x); if(k) out[k]=Object.assign({},x); });
+  Object.values(deOps||{}).forEach(function(x){
+    const k=clave(x); if(!k) return;
+    const prev=out[k]||{};
+    out[k]=Object.assign({},prev,x,{verificado:!!(prev.verificado||x.verificado),
+      ultima:String(prev.ultima||'')>String(x.ultima||'')?prev.ultima:x.ultima});
+  });
+  return Object.values(out);
+}
+function _pjVecesTitular(t){
+  if(!(t.cargas>0 || t.retiros>0)) return '×'+(t.veces||0);
+  const p=[];
+  if(t.cargas>0) p.push('×'+t.cargas+(t.cargas===1?' carga':' cargas'));
+  if(t.retiros>0) p.push('×'+t.retiros+(t.retiros===1?' retiro':' retiros'));
+  return p.join(' · ');
+}
+// IP desde la que el jugador mandó la solicitud (Portal, desde octubre). Va entre el titular y el
+// número de operación. Se pide aparte, con una sola llamada por perfil, y se completa cuando llega.
+window._pjIps = window._pjIps || {};
+function _pjIpHtml(solicitudId){
+  const sid = String(solicitudId||'');
+  if(!sid) return '';
+  const ip = window._pjIps[sid];
+  if(ip === '') return '';
+  return '<span class="pj-ip" data-sid="'+escapeHtml(sid)+'">'+(ip ? '🌐 '+escapeHtml(ip)+' · ' : '')+'</span>';
+}
+async function _pjCargarIps(){
+  try{
+    const spans = Array.from(document.querySelectorAll('.pj-ip[data-sid]'));
+    const faltan = Array.from(new Set(spans.map(function(e){ return e.getAttribute('data-sid'); })))
+      .filter(function(sid){ return !(sid in window._pjIps) && /^\d+$/.test(sid); });
+    if(faltan.length && typeof supabaseClient !== 'undefined' && supabaseClient){
+      faltan.forEach(function(sid){ window._pjIps[sid] = ''; });   // no volver a pedirlas
+      const r = await supabaseClient.rpc('panel_solicitudes_ip', { p_secret: window.PANEL_DATA_SECRET, p_ids: faltan.slice(0,500).map(Number) });
+      if(r && r.error){ faltan.forEach(function(sid){ delete window._pjIps[sid]; }); return; }
+      ((r && r.data) || []).forEach(function(row){ if(row && row.ip) window._pjIps[String(row.solicitud_id)] = String(row.ip); });
+    }
+    document.querySelectorAll('.pj-ip[data-sid]').forEach(function(e){
+      const ip = window._pjIps[e.getAttribute('data-sid')];
+      e.textContent = ip ? '🌐 '+ip+' · ' : '';
+    });
+  }catch(_e){}
+}
 function _pjActividadHtml(ops,usuario,esLocal){
   let tl='', diaPrev='';
   const esc=escapeHtml;
@@ -317,8 +392,9 @@ function _pjActividadHtml(ops,usuario,esLocal){
       + '<div style="min-width:0;flex:1"><div style="display:flex;justify-content:space-between;gap:8px"><span style="font-weight:800">'+(t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•')+' '+esc(t||'—')+' '+(eOk?'<span style="color:#22c55e">✅</span>':esc(o.estado||''))+'</span>'
       + '<b style="color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</b></div>'
       + (destTxt?'<div class="pj-mono small" style="color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ '+esc(destTxt)+'</div>':'')
-      + '<div class="small" style="color:#8b949e">'+(o.titular?'👤 '+esc(o.titular)+' · ':'')+(o.chuniorId?'Nº '+esc(String(o.chuniorId))+' · ':'')+(o.operador?'op:'+esc(o.operador):'')+'</div></div></div>';
+      + '<div class="small" style="color:#8b949e">'+(o.titular?'👤 '+esc(o.titular)+' · ':'')+_pjIpHtml(o.solicitudId)+(o.chuniorId?'Nº '+esc(String(o.chuniorId))+' · ':'')+(o.operador?'op:'+esc(o.operador):'')+'</div></div></div>';
   });
+  if(tl && typeof setTimeout === 'function') setTimeout(_pjCargarIps, 0);
   return tl;
 }
 
@@ -348,9 +424,15 @@ window.abrirPerfilJugador = function(usuario,vistaPrevia){
   const uEsc = u.replace(/'/g,"\\'");
 
   // ── carril izquierdo (identidad / instrumentos / bonos / resumen) ──
+  // Titulares e instrumentos salen también de las operaciones de esta misma ficha, que vienen del
+  // servidor. La base local es POR PC: si esta máquina no atendió esas operaciones, la ficha
+  // mostraba un solo titular "·reg" y "Sin destinos" con tres titulares y un retiro a la vista
+  // (milo30kc, 6/11). Donde la operación trae el dato, su cuenta manda sobre la local.
+  const deOps = _pjDatosDeOperaciones(ops);
   const tels = Object.keys(local.telefonos||{});
-  const cbus = Object.values(local.cbus||{});
-  const tits = Object.values(local.titulares||{});
+  const cbus = _pjMezclarPorClave(local.cbus, deOps.cbus, function(c){ return typeof _jugNormCbu==='function' ? _jugNormCbu(c.raw) : String(c.raw||'').toLowerCase(); });
+  const tits = _pjMezclarPorClave(local.titulares, deOps.titulares, function(t){ return String(t.raw||'').toLowerCase().trim(); })
+    .sort(function(a,b){ return (b.veces||0)-(a.veces||0); });
   const bonos = Array.isArray(local.bonos)?local.bonos.slice().reverse():[];
   // La identidad de servidor completa los datos que esta máquina no conoce.
   const _crmWtk = crm;
@@ -371,7 +453,7 @@ window.abrirPerfilJugador = function(usuario,vistaPrevia){
               ? ' <span title="'+esc(_bl.motivo||'')+(_bl.fecha?(' · '+esc(String(_bl.fecha).slice(0,10))):'')+'" style="background:#7f1d1d;color:#fecaca;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:900">'+(_bl.global?'BLOQUEADO · TODAS':'BLOQUEADO')+'</span>'
               : '';
             return '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(t.raw)
-                 + ' <span style="color:#8b949e;font-weight:600">×'+t.veces+'</span>'+_badge+_btn+'</span></div>';
+                 + ' <span style="color:#8b949e;font-weight:600">'+esc(_pjVecesTitular(t))+'</span>'+_badge+_btn+'</span></div>';
           }).join('')
         : (crmTit
             ? '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(crmTit)+' <span title="Del registro/whaticket" style="color:#8b949e;font-weight:600;font-size:10px">·reg</span></span></div>'
@@ -386,7 +468,11 @@ window.abrirPerfilJugador = function(usuario,vistaPrevia){
   // TODOS los cbu/alias que el usuario usó o ingresó, en un solo lugar (puede tener varias
   // cuentas propias — eso es normal). 🚨 = el titular de ESE instrumento no coincide con los
   // titulares conocidos del usuario (posible cuenta ajena). Tocá uno para copiarlo.
-  const titsSet = tits.map(function(t){ return String(t.raw).toLowerCase().trim(); });
+  // "Titular distinto" se compara contra quien CARGA (y el del registro): si se comparara contra
+  // todos, el titular que sólo aparece cobrando ya estaría en la lista y nunca saltaría el aviso.
+  const _titsCarga = tits.filter(function(t){ return t.cargas>0; }).map(function(t){ return String(t.raw).toLowerCase().trim(); });
+  if(_titsCarga.length && crmTit) _titsCarga.push(crmTit.toLowerCase());
+  const titsSet = _titsCarga.length ? _titsCarga : tits.map(function(t){ return String(t.raw).toLowerCase().trim(); });
   const cbuTitulo=beta ? (crm.cbu_fuente==='RETIRO_CONFIRMADO'?'Tomado de un retiro confirmado':crm.cbu_fuente==='VINCULO_DECLARADO'?'Destino declarado en el vínculo':'Destino registrado; procedencia sin confirmar') : 'Tomado del último retiro pagado';
   const cbuLeyenda=beta ? (crm.cbu_fuente==='RETIRO_CONFIRMADO'?'de un retiro confirmado':crm.cbu_fuente==='VINCULO_DECLARADO'?'declarado en el vínculo · no acredita un pago':'procedencia sin confirmar') : 'del último retiro';
   const railInstr =
@@ -516,7 +602,8 @@ function _pjUnirOperaciones(usuario,rows,incluirLocales){
     out.set(k,{
       id:h.id, tipo:String(h.tipo||'').toUpperCase(), monto:Number(h.monto||0),
       usuario:h.usuario,pc_codigo:h.pc_codigo,solicitudId:h.solicitud_id,
-      titular:notas.titular||'',destino:notas.destino||'',cbu:notas.cbu||'',obs:notas.obs||'',
+      // En una carga el alias de la nota es el de NUESTRA billetera: se muestra su nombre, como antes.
+      titular:notas.titular||'',destino:(String(h.tipo||'').toUpperCase()==='CARGA' && h.billetera_nombre) ? h.billetera_nombre : (notas.destino||''),cbu:notas.cbu||'',obs:notas.obs||'',
       estado:h.estado||'', saldoPre:h.saldo_pre, saldoPost:h.saldo_post,
       billeteraNombre:h.billetera_nombre||'', operador:h.operador||'',
       chuniorId:h.chunior_movimiento_id||null, notas:h.notas||'',

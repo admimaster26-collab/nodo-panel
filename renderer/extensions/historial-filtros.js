@@ -189,6 +189,7 @@
 
   window.filtrarHistorial=function(){
     installHistFilters();
+    if(typeof _histMostrarPaginaBeta==='function' && _histMostrarPaginaBeta())return;
 
     const tipo    = document.getElementById("filtHistTipo")?.value||"";
     const estado  = document.getElementById("filtHistEstado")?.value||"";
@@ -267,5 +268,8 @@
 
   // Reforzar instalación luego de que el panel cargue.
   setTimeout(()=>{installHistFilters(); try{filtrarHistorial()}catch(_e){}},900);
-  setInterval(()=>{try{installHistFilters()}catch(_e){}},3000);
+  setInterval(()=>{try{
+    if(window.nodoSeVe && !window.nodoSeVe(document.querySelector(".hist-filters"))) return;   // filtros fuera de la vista
+    installHistFilters();
+  }catch(_e){}},3000);
 })();

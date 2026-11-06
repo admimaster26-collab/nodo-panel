@@ -73,7 +73,7 @@ function abrirPanel(cotejo) {
     callDrex: async () => ({ exists: true }),
     supabaseClient: {
       rpc: async (nombre, args) => {
-        if (nombre === 'panel_vincular_usuario') {
+        if (nombre === 'panel_vincular_usuario' || nombre === 'panel_vincular_usuario_v2') {
           llamadas.vinculados.push({ usuario: args.p_usuario, telefono: args.p_telefono });
           return { data: { ok: true } };
         }

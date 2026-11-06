@@ -58,6 +58,9 @@ function _instalacionId(){
   }catch(_e){ return ''; }   // sin localStorage el servidor cae solo al modo viejo (por operador)
 }
 async function _latidoPanel(){
+  // Espera su paso del arranque por etapas. En el login window.pcOperativa ya trae la oficina de la
+  // sesión anterior (la deja validacion-pc.js), y el latido salía a su nombre y sin operador.
+  if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('latido')) return;
   try{
     const pc = (typeof pcOperativa!=='undefined'?pcOperativa:'') || window.pcOperativa || '';
     if(!pc) return; // todavía sin oficina resuelta
@@ -114,6 +117,7 @@ function _pintarAvisoLineas(d){
 }
 
 async function _revisarLineas(){
+  if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('lineas')) return;   // ídem el latido
   try{
     const pc = (typeof pcOperativa!=='undefined'?pcOperativa:'') || window.pcOperativa || '';
     if(!pc) return;  // todavía sin oficina resuelta
@@ -176,6 +180,16 @@ function money(v){ return NodoDomain.formatos.money(v); }
 function normalizar(v){ return NodoDomain.formatos.normalizar(v); }
 function setBox(id,html){const el=document.getElementById(id);if(el)el.innerHTML=html}
 function val(id){return document.getElementById(id)?.value||""}
+// ¿Este pedazo de pantalla se está viendo? Lo preguntan los relojes que reparan el DOM cada pocos
+// segundos: corrían igual en el login, con la ventana minimizada o con la sección cerrada. Mirar
+// la clase "hidden" no alcanza: en escritorio el chat la tiene y se ve igual (base.css).
+function nodoSeVe(el){
+  try{
+    if(!el || document.hidden) return false;
+    if(!document.body.classList.contains("app-lista")) return false;   // todavía en el login
+    return typeof el.checkVisibility === "function" ? el.checkVisibility() : el.getClientRects().length > 0;
+  }catch(_e){ return true; }   // ante la duda se repara, como antes
+}
 // Avisos apilados con fade. El tope de 4 evita que una tanda de operaciones tape media pantalla:
 // al llegar el quinto, el más viejo se va con su animación en vez de acumularse.
 const _TOAST_MAX = 4;
@@ -704,8 +718,10 @@ async function verificarRetiro24h(usuario) {
   // 1. Retiros del PORTAL. Antes esto miraba la tabla `solicitudes`, muerta desde el 30 de mayo:
   //    la fuente 1 del chequeo de 24 h no devolvía nunca nada. La regla igual funcionaba por la
   //    fuente 2 (historial_ops), pero un retiro del portal sin fila en el historial se colaba.
+  // Si una fuente no contesta, "no encontré nada" no es "no hay": el semáforo lo tiene que decir.
+  let _fuenteFallo = false;
   try {
-    const { data: dataSol } = await supabaseClient
+    const { data: dataSol, error: _eSol } = await supabaseClient
       .from("landing_solicitudes")
       .select("id, created_at, monto")
       .ilike("usuario", _uPat)
@@ -714,13 +730,14 @@ async function verificarRetiro24h(usuario) {
       .gte("created_at", new Date(hace24h).toISOString())
       .order("created_at", { ascending: false })
       .limit(1);
-    if(dataSol && dataSol.length)
+    if(_eSol || !Array.isArray(dataSol)) _fuenteFallo = true;
+    if(Array.isArray(dataSol) && dataSol.length)
       candidatos.push({ created_at: dataSol[0].created_at, monto: dataSol[0].monto, billetera_nombre: null, origen: "SOLICITUD" });
-  } catch(_){}
+  } catch(_){ _fuenteFallo = true; }
 
   // 2. Buscar en historial_ops (retiros del form manual, chat rápido)
   try {
-    const { data: dataH } = await supabaseClient
+    const { data: dataH, error: _eH } = await supabaseClient
       .from("historial_ops")
       .select("id, created_at, monto, billetera_nombre, notas")
       .ilike("usuario", _uPat)
@@ -732,9 +749,10 @@ async function verificarRetiro24h(usuario) {
     // Excluir PARCIALES (tramos de un retiro grande) y los marcados [BL_EXCLUIDO]: no son un
     // retiro separado → tomamos el retiro REAL más reciente (no parcial, no excluido).
     const dhReal = (dataH||[]).find(function(r){ return !_blEsParcial(r) && !/\[BL_EXCLUIDO\]/.test(String(r.notas||'')); });
+    if(_eH || !Array.isArray(dataH)) _fuenteFallo = true;
     if(dhReal)
       candidatos.push({ created_at: dhReal.created_at, monto: dhReal.monto, billetera_nombre: dhReal.billetera_nombre || null, origen: "HISTORIAL" });
-  } catch(_){}
+  } catch(_){ _fuenteFallo = true; }
 
   // 3. Buscar en CSV importado (últimas 24h)
   if(retiros24hCSV && retiros24hCSV.length){
@@ -746,7 +764,9 @@ async function verificarRetiro24h(usuario) {
     }
   }
 
-  health?.record('DATA', 'OK', candidatos.length ? 'RETIRO_24H_MATCH' : 'RETIRO_24H_CLEAR');
+  if(candidatos.length) health?.record('DATA', _fuenteFallo?'DEGRADED':'OK',
+    _fuenteFallo?'RETIRO_24H_MATCH_PARCIAL':'RETIRO_24H_MATCH');
+  else health?.record('DATA', _fuenteFallo ? 'DEGRADED' : 'OK', _fuenteFallo ? 'RETIRO_24H_SIN_COMPROBAR' : 'RETIRO_24H_CLEAR');
   if(!candidatos.length) return { bloqueado: false };
 
   // Tomar el retiro más reciente de cualquier fuente
@@ -1194,11 +1214,90 @@ function finalizarLogin(guardar=true){
     <span class="badge badge-ok">Oficina: ${pcOperativa}</span>
   `);
   _nodoListo = true;
-  refrescarTodo(false);
+  void _arrancarPorEtapas();
   iniciarRealtimeSolicitudes();
   iniciarBroadcastSolicitudes();
   iniciarBroadcastChat();
   _panelRealtime().startPolling();
+}
+
+// ── Arranque por etapas ─────────────────────────────────────────────────────────────────────
+// Juan, 6/11: "lo que necesitamos rápido es la pantalla principal, que lleguen las solicitudes y
+// los mensajes; el resto de la aplicación, si debe esperar, puede esperar". Al elegir el puesto se
+// largaba todo junto —y una parte ya corría desde antes del login, contra la oficina de la sesión
+// anterior o contra P1—: en una PC lenta la pantalla quedaba trabada más de medio minuto.
+//   · Sin oficina: no se pide nada de ninguna oficina.
+//   · Etapa 1: solicitudes y chats de esta oficina, juntos, y se dibuja el Inicio.
+//   · Etapa 2: lo demás, de a uno y con aire entre medio. Los relojes de esas partes esperan su
+//     paso (nodoArranqueHabilitado); lo que el operador necesite antes, lo pide y lo espera.
+const _ARRANQUE_AIRE_MS = 500;     // pausa entre un paso y el siguiente
+const _ARRANQUE_TOPE_MS = 15000;   // un paso que no contesta no frena a los que vienen atrás
+const _arranquePasos = new Set();  // pasos de la etapa 2 que ya arrancaron
+function nodoOficinaLista(){ try{ return !!(_nodoListo && pcOperativa); }catch(_e){ return false; } }
+function nodoArranqueHabilitado(paso){ try{ return nodoOficinaLista() && _arranquePasos.has(paso); }catch(_e){ return false; } }
+
+// La primera carga de billeteras con la oficina ya elegida. Si el operador las necesita antes de
+// que el arranque llegue a ese paso (abrir un pago parcial, por ejemplo), las pide acá y espera
+// esa misma carga. Devuelve null cuando no hay nada que esperar.
+let _billeterasPrimera = null, _billeterasListas = false;
+function nodoAsegurarBilleteras(){
+  if(_billeterasListas || !nodoOficinaLista()) return null;
+  if(!_billeterasPrimera){
+    _billeterasPrimera = Promise.resolve().then(() => cargarBilleteras(false)).then(r => {
+      _billeterasListas = true;
+      // Una oficina sin billeteras se quedaba con el "Cargando…" del Inicio.
+      try{ if(!(billeteras || []).length) renderBillerasInicio(); }catch(_e){}
+      return r;
+    }, e => { _billeterasPrimera = null; console.warn('[arranque] billeteras', e); });
+  }
+  return _billeterasPrimera;
+}
+function nodoBilleterasCargando(){ try{ return !_billeterasListas && nodoOficinaLista(); }catch(_e){ return false; } }
+
+// Un solo dueño por dato: lo que se repite lo pide NodoRealtime (su reloj y sus canales). El
+// puente del portal tenía otro reloj para solicitudes, chats y la conversación abierta, así que
+// cada cosa se pedía dos veces. La primera vuelta del arranque usa estas mismas lecturas.
+const _lecturasPanel = {
+  requests: () => typeof cargarSolicitudesPortal === 'function' ? cargarSolicitudesPortal(true) : cargarSolicitudes(true),
+  // La primera carga la hace la etapa 2; hasta entonces este reloj no pide nada.
+  wallets: () => { if(nodoArranqueHabilitado('billeteras')) return cargarBilleteras(false); },
+  chats: () => {
+    // Durante el cambio de caminos, el reloj de la lista también trae las conversaciones del
+    // canal nuevo. Sin await ni encadenado: si ese lado no contesta, la lista de siempre se
+    // dibuja igual (Juan, 2/10).
+    try{ if(window._chatCanalNuevo) window._chatCanalNuevo.cargar(); }catch(_e){}
+    // cargarChats ya sólo repinta (chat-hilos.js): la que pide la lista al servidor es ésta.
+    return typeof window.nodoCargarChatsPortal === 'function' ? window.nodoCargarChatsPortal(true) : cargarChats(true);
+  },
+  // Lo mismo con la conversación abierta: cargarChatActual repinta, _v154pCargarChat la pide.
+  conversation: () => typeof window._v154pCargarChat === 'function' ? window._v154pCargarChat(true) : cargarChatActual(true)
+};
+
+const _pausaArranque = ms => new Promise(resolve => setTimeout(resolve, ms));
+const _ARRANQUE_SEGUNDA_ETAPA = [
+  ['billeteras',        () => nodoAsegurarBilleteras()],
+  // Los titulares bloqueados los pudo haber marcado OTRA PC: se traen de la base.
+  ['titulares',         () => typeof sincronizarTitularesBloqueados === 'function' && sincronizarTitularesBloqueados()],
+  ['historial',         () => cargarHistorial()],                 // una sola vez: antes se pedía dos
+  ['billeterasChunior', () => sincronizarBilleterasChunior(true)],
+  ['latido',            () => _latidoPanel()],
+  ['lineas',            () => _revisarLineas()],
+  ['verificaciones',    () => {}],                                // sólo habilita sus relojes
+  ['agentes',           () => { if(enElectron) _watchdogIniciar(); return refrescarSaldoAgente(); }],
+  ['nexo',              () => typeof window.nexoArrancar === 'function' && window.nexoArrancar()]
+];
+async function _arrancarPorEtapas(){
+  await Promise.race([Promise.all([
+    Promise.resolve().then(() => cargarSolicitudes(false)).catch(e => console.warn('[arranque] solicitudes', e)),
+    Promise.resolve().then(_lecturasPanel.chats).catch(e => console.warn('[arranque] chats', e))
+  ]), _pausaArranque(_ARRANQUE_TOPE_MS)]);
+  try{ renderInicio(); }catch(e){ console.warn('[arranque] inicio', e); }
+  for(const [paso, correr] of _ARRANQUE_SEGUNDA_ETAPA){
+    await _pausaArranque(_ARRANQUE_AIRE_MS);
+    _arranquePasos.add(paso);
+    try{ await Promise.race([Promise.resolve().then(correr), _pausaArranque(_ARRANQUE_TOPE_MS)]); }
+    catch(e){ console.warn('[arranque] ' + paso, e); }
+  }
 }
 
 // Adaptador de los handlers existentes. El servicio posee canales, timers y lecturas.
@@ -1208,19 +1307,11 @@ function _panelRealtime(){
     client: supabaseClient,
     getOffice: () => pcOperativa,
     getAliases: () => typeof pcAliasesHist === 'function' ? pcAliasesHist() : [pcOperativa],
-    hasOpenChat: () => !!((window.V154P && window.V154P.chatActual) || window.chatActualId || chatActualId),
-    refresh: {
-      requests: () => typeof cargarSolicitudesPortal === 'function' ? cargarSolicitudesPortal(true) : cargarSolicitudes(true),
-      wallets: () => cargarBilleteras(false),
-      chats: () => {
-        // Durante el cambio de caminos, el reloj de la lista también trae las conversaciones del
-        // canal nuevo. Sin await ni encadenado: si ese lado no contesta, la lista de siempre se
-        // dibuja igual (Juan, 2/10).
-        try{ if(window._chatCanalNuevo) window._chatCanalNuevo.cargar(); }catch(_e){}
-        return typeof cargarChatsPortal === 'function' ? cargarChatsPortal(true) : cargarChats(true);
-      },
-      conversation: () => typeof cargarChatPortalActual === 'function' ? cargarChatPortalActual(true) : cargarChatActual(true)
-    },
+    // Manda el chat que está en pantalla: la marca suelta la vacían varios lados del código viejo
+    // y la conversación del canal nuevo dejaba de pedir sus mensajes (Juan, 2/11).
+    hasOpenChat: () => !!((window.V154P && window.V154P.chatActual) || window.chatActualId || chatActualId
+      || (window.__nodoChatCurrentTicket && window.__nodoChatCurrentTicket._beta)),
+    refresh: _lecturasPanel,
     // Devuelve una firma corta de cómo está la bandeja. Mientras no cambie, no se baja la lista.
     // Si la RPC no está (panel viejo contra base vieja) devuelve null y queda sólo el reloj de 60 s.
     senal: async () => {
@@ -1623,7 +1714,9 @@ function renderInicio(){
   renderFichasInicio();
   renderBillerasInicio();
   poblarManualBilletera();
-  if(!_historialCargado) cargarHistorial();
+  // El historial lo trae el arranque por etapas, después del primer dibujo: si esto lo pedía, salía
+  // junto con las solicitudes (y antes del login, para ninguna oficina).
+  if(!_historialCargado && (!window.nodoArranqueHabilitado || window.nodoArranqueHabilitado('historial'))) cargarHistorial();
 }
 // ── Estado de fichas en Inicio ────────────────────────────────────────────────
 function renderFichasInicio(extraEstado, extraTexto){
@@ -1677,7 +1770,10 @@ function renderBillerasInicio(){
     return normalizar(b.ACTIVA)==='SI' && normalizar(b.ESTADO||'ACTIVA') !== 'FUSIONADA';
   });
   if(!lista.length){
-    el.innerHTML = '<div class="small" style="color:var(--muted);padding:8px">Sin billeteras operativas para esta oficina.</div>';
+    // Recién elegido el puesto las billeteras llegan después de las solicitudes: mientras tanto no
+    // se dice que no hay.
+    const _cargando = typeof window.nodoBilleterasCargando === 'function' && window.nodoBilleterasCargando();
+    el.innerHTML = '<div class="small" style="color:var(--muted);padding:8px">'+(_cargando ? 'Cargando billeteras…' : 'Sin billeteras operativas para esta oficina.')+'</div>';
     renderEstadoLanding();
     return;
   }
@@ -1832,7 +1928,7 @@ function _agentesBadgePintar(){
     el.style.display='flex';
   }catch(_e){}
 }
-try{ setInterval(_agentesBadgePintar, 1000); }catch(_e){}
+try{ setInterval(function(){ if(!document.hidden) _agentesBadgePintar(); }, 1000); }catch(_e){}   // con la ventana abajo no se pinta
 
 window.estadoAgentes = function(){
   const b = window._drexGlobalBusy;
@@ -2859,7 +2955,8 @@ window._updaterAnclar=_updaterAnclar;
 try{
   addEventListener("resize", _updaterAnclar);
   setTimeout(_updaterAnclar, 1200);
-  setInterval(_updaterAnclar, 5000);   // el panel de chat se minimiza/restaura sin avisar
+  // El panel de chat se minimiza/restaura sin avisar. Mide la pantalla: con la ventana abajo, no.
+  setInterval(function(){ if(!document.hidden) _updaterAnclar(); }, 5000);
 }catch(_e){}
 function nodoUpdaterMinimizar(min){
   try{
@@ -2984,6 +3081,14 @@ window._altaNuevoUsarSugerencia = function(usuario, telefono){
   try{ _altaNuevoCotejar(); }catch(_e){}
 };
 
+// Valida el alias que ya existe en el casino con el teléfono escrito: el mismo camino que "Validar y
+// vincular" (verifica en Agentes, vincula y le manda el botón Ingresar).
+window._altaValidarExistente = function(el){
+  const u = el && el.getAttribute('data-u'), t = el && el.getAttribute('data-t');
+  if(!u || !t) return;
+  try{ cerrarModal(); }catch(_e){}
+  return ejecutarVincular(u, t, true);
+};
 async function _ejecutarCrearUsuario(){
   const usuario = (document.getElementById("nuevoJugUsuario")?.value || "").trim().toLowerCase().replace(/\s+/g, "");
   const clave   = (document.getElementById("nuevoJugClave")?.value   || "").trim() || "12345a";
@@ -3041,7 +3146,11 @@ async function _ejecutarCrearUsuario(){
       } else {
         extra = '<div style="margin-top:8px;font-size:12px;color:var(--muted)">No se generaron alternativas libres. Probá con otra base.</div>';
       }
-      if(resEl) resEl.innerHTML = '<div class="err-box" style="padding:10px;margin-top:8px">❌ El alias <b>'+escapeHtml(usuario)+'</b> ya existe en el casino.'+extra+'</div>';
+      // Si ya existe puede ser ÉL: se ofrece validarlo con este teléfono en vez de inventarle otro alias
+      // (annamartinezz, 6/11: existía con los datos exactos y la ventana sólo ofrecía crear otro).
+      const _validarEste = '<div style="margin-top:8px"><button type="button" class="mini-btn green" data-u="'+escapeHtml(usuario)+'" data-t="'+escapeHtml(String(telefono).replace(/\D/g,''))+'"'
+        + ' onclick="_altaValidarExistente(this)">✓ Es este jugador: validarlo con este teléfono</button></div>';
+      if(resEl) resEl.innerHTML = '<div class="err-box" style="padding:10px;margin-top:8px">❌ El alias <b>'+escapeHtml(usuario)+'</b> ya existe en el casino.'+_validarEste+extra+'</div>';
     } else {
       const msg = r?.message || "No se pudo crear el usuario.";
       if(resEl) resEl.innerHTML = '<div class="err-box" style="margin-top:8px">❌ ' + escapeHtml(msg) + '</div>';
@@ -3135,7 +3244,9 @@ function _movParseNotas(notas){
   const grab = function(re){ const m = s.match(re); return m ? m[1].trim() : ''; };
   return {
     titular: grab(/Titular:\s*([^·|]+)/i),
-    destino: grab(/Destino:\s*([^·|]+)/i),
+    // Desde el 10/09 portalNotasBase escribe "Alias:" en vez de "Destino:". Sin leer los dos, el
+    // alias existía en la nota pero dejó de verse en el perfil y de llegar a la ficha del jugador.
+    destino: grab(/Destino:\s*([^·|]+)/i) || grab(/Alias:\s*([^·|]+)/i),
     cbu:     grab(/CBU\/?\s*C?V?U?:\s*([^·|]+)/i),
     obs:     grab(/Obs:\s*([^·|]+)/i)
   };
@@ -3258,45 +3369,54 @@ async function _nexoCargarOpsBeta(pc){
       const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
       if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(pc))) return null;
     }
-    if(window._nexoCapCache[pc] !== true){
+    if(!(Date.now() - window._nexoCapCache[pc] >= 0 && Date.now() - window._nexoCapCache[pc] < 60000)){
       const capRes = await window.panelAPI.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: pc, p_activate: false });
       const capData = capRes && capRes.data;
       const caps = (capData && Array.isArray(capData.capabilities)) ? capData.capabilities : [];
-      if(!capData || capData.ok !== true || capData.enabled !== true || !caps.includes('nexo.export.v1')) return null;
-      window._nexoCapCache[pc] = true;
+      if(capRes?.error || !capData || capData.ok !== true || capData.contract !== 'nodo.beta.v1' || capData.scope?.pc_codigo !== pc) throw new Error('NEXO_CAPABILITY_CONTRACT');
+      if(!caps.includes('nexo.export.v1')) return null;
+      window._nexoCapCache[pc] = Date.now();
     }
     let todas = [], cursor = null, paginas = 0, total = null, completo = true;
-    while(paginas < 16){
+    const cursors = new Set();
+    while(true){
       const r = await window.panelAPI.rpc('nodo_beta_nexo_export_v1', { p_pc_codigo: pc, p_limit: 500, p_cursor: cursor });
-      if(!r || r.error || !r.data || r.data.ok !== true || !Array.isArray(r.data.rows)) return null;
+      if(!r || r.error || !r.data || r.data.ok !== true || r.data.contract !== 'nodo.beta.v1' || r.data.scope?.pc_codigo !== pc || !Array.isArray(r.data.rows)) throw new Error('NEXO_INVALID_PAGE');
+      if(pc !== String(window.pcOperativa || pcOperativa || '').trim().toUpperCase()) throw new Error('NEXO_CONTEXT_CHANGED');
+      if(r.data.requiere_revision) throw new Error('NEXO_REVISION_REQUIRED');
       todas = todas.concat(r.data.rows);
       total = r.data.total != null ? Number(r.data.total) : total;
       paginas++;
-      if(!r.data.has_more || !r.data.next_cursor){ completo = true; break; }
+      if(r.data.has_more === false){ completo = true; break; }
+      const cursorKey = JSON.stringify(r.data.next_cursor);
+      if(r.data.has_more !== true || !r.data.rows.length || !r.data.next_cursor || cursors.has(cursorKey)) throw new Error('NEXO_INVALID_CURSOR');
+      cursors.add(cursorKey);
       cursor = r.data.next_cursor;
       completo = false;
     }
     const ult = todas.length ? todas[todas.length - 1] : null;
     window._nexoEstado = { mode: 'beta', completo: completo, analizadas: todas.length, total: total, corteFecha: ult ? ult.created_at : null };
     return todas;
-  }catch(_e){ return null; }
+  }catch(_e){ return {error:{code:/^NEXO_/.test(_e.message)?_e.message:'NEXO_READ_FAILED'}}; }
 }
 async function _nexoCargarOpsCompletas(force){
   const FRESH = 15*60*1000;
   const health = window.NodoSalud?.begin('NEXO');
   const pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase();
-  if(!force && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
+  if(!force && window._nexoOpsCachePc===pc && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
   const betaRows = await _nexoCargarOpsBeta(pc);
+  if(betaRows?.error){ health?.record('DATA','ERROR',betaRows.error.code); throw Object.assign(new Error('No se pudo completar la exportación desde el servidor.'),betaRows.error); }
   if(Array.isArray(betaRows)){
     window._nexoOpsCache = betaRows;
+    window._nexoOpsCachePc = pc;
     window._nexoOpsCacheAt = Date.now();
     health?.reply(null);
     health?.record('DATA', window._nexoEstado.completo ? 'OK' : 'DEGRADED', window._nexoEstado.completo ? 'NEXO_EXPORT_COMPLETE' : 'NEXO_EXPORT_TRUNCATED');
     return betaRows;
   }
-  if(!force && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
+  if(!force && window._nexoOpsCachePc===pc && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
   try{
-    if(typeof supabaseClient==='undefined' || !supabaseClient) return window._nexoOpsCache||[];
+    if(typeof supabaseClient==='undefined' || !supabaseClient) return window._nexoOpsCachePc===pc ? window._nexoOpsCache||[] : [];
     const pcs = (typeof pcAliasesHist==='function') ? pcAliasesHist() : [];
     let todas = [], desde = 0; const PAG = 1000, MAX = 8000;
     while(desde < MAX){
@@ -3312,6 +3432,7 @@ async function _nexoCargarOpsCompletas(force){
     }
     if(todas.length){
       window._nexoOpsCache = todas;
+      window._nexoOpsCachePc = pc;
       window._nexoOpsCacheAt = Date.now();
       const completo = todas.length < MAX;
       const ult = todas[todas.length - 1];
@@ -3320,7 +3441,7 @@ async function _nexoCargarOpsCompletas(force){
       health?.record('DATA', completo ? 'OK' : 'DEGRADED', completo ? 'NEXO_LEGACY_OK' : 'NEXO_LEGACY_TRUNCATED_8000');
     }
   }catch(_e){}
-  return window._nexoOpsCache || [];
+  return window._nexoOpsCachePc===pc ? window._nexoOpsCache || [] : [];
 }
 // opsExtra = historia completa de Supabase. Se mergea con el archivo local + movStore (dedup por id)
 // → el payload lleva TODO el historial, no solo lo de esta sesión.
@@ -3580,11 +3701,19 @@ window.nexo = async function(cmd){
 // Sync periódico → Nexo redibuja en cada uno (escribe siempre, aunque no cambien datos, así el mtime
 // se actualiza y Nexo relee). Configurable con window._nexoIntervaloMs (default 90s).
 window._nexoIntervaloMs = window._nexoIntervaloMs || 90000;
-try{ setInterval(function(){ nexoSync(false); }, window._nexoIntervaloMs); }catch(_e){}
-// Los pedidos de Nexo se revisan en el mismo ciclo. Arranca APAGADO (ver nexoPedidosActivar):
-// mientras el fix de panel_vincular_usuario no esté aplicado, aplicar pedidos duplica usuarios.
-try{ setInterval(function(){ _nexoProcesarPedidos(); }, window._nexoIntervaloMs); }catch(_e){}
-try{ setTimeout(function(){ nexoSync(true); }, 20000); }catch(_e){}   // primer envío (visible en consola/toast)
+// Arranca con la oficina ya elegida: lo llama el arranque por etapas (login-y-realtime.js), último.
+// Antes corría desde que abría la página y, en el login, bajaba la historia entera de la oficina
+// de la sesión anterior. Los tiempos son los de siempre, contados desde acá.
+let _nexoArrancado = false;
+window.nexoArrancar = function(){
+  if(_nexoArrancado) return;
+  _nexoArrancado = true;
+  try{ setInterval(function(){ nexoSync(false); }, window._nexoIntervaloMs); }catch(_e){}
+  // Los pedidos de Nexo se revisan en el mismo ciclo. Arranca APAGADO (ver nexoPedidosActivar):
+  // mientras el fix de panel_vincular_usuario no esté aplicado, aplicar pedidos duplica usuarios.
+  try{ setInterval(function(){ _nexoProcesarPedidos(); }, window._nexoIntervaloMs); }catch(_e){}
+  try{ setTimeout(function(){ nexoSync(true); }, 20000); }catch(_e){}   // primer envío (visible en consola/toast)
+};
 
 // ── Base local de JUGADORES (CRM-lite · portado de NexoBetaChan 1.0.85) ──────────
 // Modelo PAM (KYC-lite): por jugador guarda teléfonos (verificación), INSTRUMENTOS DE PAGO
@@ -3746,11 +3875,11 @@ window.pjDesbloquearTitular = function(usuario, titular){
     if(typeof abrirPerfilJugador==='function') abrirPerfilJugador(usuario);
   }catch(e){ toast('No se pudo desbloquear: '+(e.message||''), 'red'); }
 };
-window.jugadorRegistrarDato = function(usuario, dato){
+// Suma un dato a la ficha de un jugador dentro de `map`, sin leer ni escribir el almacén.
+function _jugAplicarDato(map, usuario, dato){
   const u = String(usuario||'').toLowerCase().trim();
   if(!u || !dato) return;
-  try{
-    const map = _jugStoreAll();
+  {
     const j = map[u] || { usuario:u, telefonos:{}, cbus:{}, titulares:{}, bonos:[], creado:new Date().toISOString() };
     const fecha = dato.fecha || new Date().toISOString();
     if(dato.telefono){
@@ -3790,6 +3919,25 @@ window.jugadorRegistrarDato = function(usuario, dato){
     }
     j.ultimaAct = fecha;
     map[u] = j;
+  }
+}
+window.jugadorRegistrarDato = function(usuario, dato){
+  if(!usuario || !dato) return;
+  try{
+    const map = _jugStoreAll();
+    _jugAplicarDato(map, usuario, dato);
+    _jugStoreSave(map);
+  }catch(_e){}
+};
+// Una tanda entera con una sola lectura y una sola escritura del almacén. Uno por uno, cada dato
+// leía y reescribía el almacén completo: al arrancar se siembran cientos de filas y en la PC de
+// Sánchez la pantalla quedaba trabada 36 s después de entrar a Chunior, hasta que Electron la
+// recargaba y vuelta a empezar (6/11). `lista` es [[usuario, dato], ...].
+window.jugadorRegistrarDatos = function(lista){
+  if(!Array.isArray(lista) || !lista.length) return;
+  try{
+    const map = _jugStoreAll();
+    lista.forEach(function(par){ try{ _jugAplicarDato(map, par && par[0], par && par[1]); }catch(_e){} });
     _jugStoreSave(map);
   }catch(_e){}
 };
@@ -3824,12 +3972,14 @@ window.jugadorCbuCheck = function(usuario, cbu, titular){
 try{
   if(!localStorage.getItem(JUG_STORE_KEY)){
     const all = _movStoreAll();
+    const tanda = [];
     Object.keys(all).forEach(function(k){
       const m = all[k]||{};
       const esRet = String(m.tipo||'').toUpperCase()==='RETIRO';
       if(m.usuario && ((esRet && (m.cbu||m.destino)) || m.titular))
-        jugadorRegistrarDato(m.usuario, { cbu: esRet ? (m.cbu||m.destino) : '', titular:m.titular, fecha:m._fecha });
+        tanda.push([m.usuario, { cbu: esRet ? (m.cbu||m.destino) : '', titular:m.titular, fecha:m._fecha }]);
     });
+    jugadorRegistrarDatos(tanda);
   }
 }catch(_e){}
 
@@ -4251,6 +4401,81 @@ window.pjPerfilDetalle = function(id,usuario,solicitudId,esLocal){
   const fields=Object.keys(labels).filter(function(k){ return row[k]!=null && row[k]!==''; }).map(function(k){ return '<div class="pj-field"><span>'+labels[k]+'</span><b>'+escapeHtml(String(row[k]))+'</b></div>'; }).join('');
   abrirModal('Detalle local · '+escapeHtml(usuario),'<p>Datos locales '+((row.pc_codigo || row.pc)?'de la oficina '+escapeHtml(row.pc_codigo || row.pc):'sin oficina identificada')+'. No integran el resumen del servidor.</p>'+fields,null,'');
 };
+// Titulares (de cargas y de retiros) y destinos de cobro (sólo retiros) de las operaciones de la
+// ficha. Lo que es nuestro (titular o alias de una billetera propia) no es del jugador.
+function _pjDatosDeOperaciones(ops){
+  const titulares={}, cbus={};
+  const propio=function(v){ try{ return !!(window.esDatoPropioBilletera && window.esDatoPropioBilletera(v)); }catch(_e){ return false; } };
+  const okEstados=['OK','ACREDITADA','PAGADA','COMPLETADA','APROBADA'];
+  (ops||[]).forEach(function(o){
+    const tipo=String(o.tipo||'').toUpperCase(), fecha=o.fecha||'';
+    if(tipo!=='CARGA' && tipo!=='RETIRO') return;
+    const tit=String(o.titular||'').trim();
+    if(tit && !propio(tit)){
+      const k=tit.toLowerCase();
+      const t=titulares[k]||(titulares[k]={raw:tit,veces:0,cargas:0,retiros:0,ultima:''});
+      t.veces++; if(tipo==='CARGA') t.cargas++; else t.retiros++;
+      if(String(fecha)>String(t.ultima)) t.ultima=fecha;
+    }
+    const dest=String(o.cbu||o.destino||'').trim();
+    if(tipo==='RETIRO' && dest && !propio(dest)){
+      const k=typeof _jugNormCbu==='function' ? _jugNormCbu(dest) : dest.toLowerCase();
+      const c=cbus[k]||(cbus[k]={raw:dest,veces:0,ultima:''});
+      c.veces++;
+      if(tit) c.titular=tit;
+      if(okEstados.includes(String(o.estado||'').toUpperCase())) c.verificado=true;
+      if(String(fecha)>String(c.ultima)) c.ultima=fecha;
+    }
+  });
+  return {titulares:titulares, cbus:cbus};
+}
+// Une lo local con lo de las operaciones por clave. La cuenta de la operación manda: la local se
+// infla con cada recarga de la app; las marcas locales (verificado) se conservan.
+function _pjMezclarPorClave(local, deOps, clave){
+  const out={};
+  Object.values(local||{}).forEach(function(x){ const k=clave(x); if(k) out[k]=Object.assign({},x); });
+  Object.values(deOps||{}).forEach(function(x){
+    const k=clave(x); if(!k) return;
+    const prev=out[k]||{};
+    out[k]=Object.assign({},prev,x,{verificado:!!(prev.verificado||x.verificado),
+      ultima:String(prev.ultima||'')>String(x.ultima||'')?prev.ultima:x.ultima});
+  });
+  return Object.values(out);
+}
+function _pjVecesTitular(t){
+  if(!(t.cargas>0 || t.retiros>0)) return '×'+(t.veces||0);
+  const p=[];
+  if(t.cargas>0) p.push('×'+t.cargas+(t.cargas===1?' carga':' cargas'));
+  if(t.retiros>0) p.push('×'+t.retiros+(t.retiros===1?' retiro':' retiros'));
+  return p.join(' · ');
+}
+// IP desde la que el jugador mandó la solicitud (Portal, desde octubre). Va entre el titular y el
+// número de operación. Se pide aparte, con una sola llamada por perfil, y se completa cuando llega.
+window._pjIps = window._pjIps || {};
+function _pjIpHtml(solicitudId){
+  const sid = String(solicitudId||'');
+  if(!sid) return '';
+  const ip = window._pjIps[sid];
+  if(ip === '') return '';
+  return '<span class="pj-ip" data-sid="'+escapeHtml(sid)+'">'+(ip ? '🌐 '+escapeHtml(ip)+' · ' : '')+'</span>';
+}
+async function _pjCargarIps(){
+  try{
+    const spans = Array.from(document.querySelectorAll('.pj-ip[data-sid]'));
+    const faltan = Array.from(new Set(spans.map(function(e){ return e.getAttribute('data-sid'); })))
+      .filter(function(sid){ return !(sid in window._pjIps) && /^\d+$/.test(sid); });
+    if(faltan.length && typeof supabaseClient !== 'undefined' && supabaseClient){
+      faltan.forEach(function(sid){ window._pjIps[sid] = ''; });   // no volver a pedirlas
+      const r = await supabaseClient.rpc('panel_solicitudes_ip', { p_secret: window.PANEL_DATA_SECRET, p_ids: faltan.slice(0,500).map(Number) });
+      if(r && r.error){ faltan.forEach(function(sid){ delete window._pjIps[sid]; }); return; }
+      ((r && r.data) || []).forEach(function(row){ if(row && row.ip) window._pjIps[String(row.solicitud_id)] = String(row.ip); });
+    }
+    document.querySelectorAll('.pj-ip[data-sid]').forEach(function(e){
+      const ip = window._pjIps[e.getAttribute('data-sid')];
+      e.textContent = ip ? '🌐 '+ip+' · ' : '';
+    });
+  }catch(_e){}
+}
 function _pjActividadHtml(ops,usuario,esLocal){
   let tl='', diaPrev='';
   const esc=escapeHtml;
@@ -4266,8 +4491,9 @@ function _pjActividadHtml(ops,usuario,esLocal){
       + '<div style="min-width:0;flex:1"><div style="display:flex;justify-content:space-between;gap:8px"><span style="font-weight:800">'+(t==='CARGA'?'⬆️':t==='RETIRO'?'⬇️':'•')+' '+esc(t||'—')+' '+(eOk?'<span style="color:#22c55e">✅</span>':esc(o.estado||''))+'</span>'
       + '<b style="color:'+(t==='RETIRO'?'#fb923c':'#22c55e')+'">'+money(Math.abs(Number(o.monto||0)))+'</b></div>'
       + (destTxt?'<div class="pj-mono small" style="color:#c9d1d9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">→ '+esc(destTxt)+'</div>':'')
-      + '<div class="small" style="color:#8b949e">'+(o.titular?'👤 '+esc(o.titular)+' · ':'')+(o.chuniorId?'Nº '+esc(String(o.chuniorId))+' · ':'')+(o.operador?'op:'+esc(o.operador):'')+'</div></div></div>';
+      + '<div class="small" style="color:#8b949e">'+(o.titular?'👤 '+esc(o.titular)+' · ':'')+_pjIpHtml(o.solicitudId)+(o.chuniorId?'Nº '+esc(String(o.chuniorId))+' · ':'')+(o.operador?'op:'+esc(o.operador):'')+'</div></div></div>';
   });
+  if(tl && typeof setTimeout === 'function') setTimeout(_pjCargarIps, 0);
   return tl;
 }
 
@@ -4297,9 +4523,15 @@ window.abrirPerfilJugador = function(usuario,vistaPrevia){
   const uEsc = u.replace(/'/g,"\\'");
 
   // ── carril izquierdo (identidad / instrumentos / bonos / resumen) ──
+  // Titulares e instrumentos salen también de las operaciones de esta misma ficha, que vienen del
+  // servidor. La base local es POR PC: si esta máquina no atendió esas operaciones, la ficha
+  // mostraba un solo titular "·reg" y "Sin destinos" con tres titulares y un retiro a la vista
+  // (milo30kc, 6/11). Donde la operación trae el dato, su cuenta manda sobre la local.
+  const deOps = _pjDatosDeOperaciones(ops);
   const tels = Object.keys(local.telefonos||{});
-  const cbus = Object.values(local.cbus||{});
-  const tits = Object.values(local.titulares||{});
+  const cbus = _pjMezclarPorClave(local.cbus, deOps.cbus, function(c){ return typeof _jugNormCbu==='function' ? _jugNormCbu(c.raw) : String(c.raw||'').toLowerCase(); });
+  const tits = _pjMezclarPorClave(local.titulares, deOps.titulares, function(t){ return String(t.raw||'').toLowerCase().trim(); })
+    .sort(function(a,b){ return (b.veces||0)-(a.veces||0); });
   const bonos = Array.isArray(local.bonos)?local.bonos.slice().reverse():[];
   // La identidad de servidor completa los datos que esta máquina no conoce.
   const _crmWtk = crm;
@@ -4320,7 +4552,7 @@ window.abrirPerfilJugador = function(usuario,vistaPrevia){
               ? ' <span title="'+esc(_bl.motivo||'')+(_bl.fecha?(' · '+esc(String(_bl.fecha).slice(0,10))):'')+'" style="background:#7f1d1d;color:#fecaca;border-radius:999px;padding:1px 7px;font-size:10px;font-weight:900">'+(_bl.global?'BLOQUEADO · TODAS':'BLOQUEADO')+'</span>'
               : '';
             return '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(t.raw)
-                 + ' <span style="color:#8b949e;font-weight:600">×'+t.veces+'</span>'+_badge+_btn+'</span></div>';
+                 + ' <span style="color:#8b949e;font-weight:600">'+esc(_pjVecesTitular(t))+'</span>'+_badge+_btn+'</span></div>';
           }).join('')
         : (crmTit
             ? '<div class="pj-field"><span class="k">Titular</span><span class="v">'+esc(crmTit)+' <span title="Del registro/whaticket" style="color:#8b949e;font-weight:600;font-size:10px">·reg</span></span></div>'
@@ -4335,7 +4567,11 @@ window.abrirPerfilJugador = function(usuario,vistaPrevia){
   // TODOS los cbu/alias que el usuario usó o ingresó, en un solo lugar (puede tener varias
   // cuentas propias — eso es normal). 🚨 = el titular de ESE instrumento no coincide con los
   // titulares conocidos del usuario (posible cuenta ajena). Tocá uno para copiarlo.
-  const titsSet = tits.map(function(t){ return String(t.raw).toLowerCase().trim(); });
+  // "Titular distinto" se compara contra quien CARGA (y el del registro): si se comparara contra
+  // todos, el titular que sólo aparece cobrando ya estaría en la lista y nunca saltaría el aviso.
+  const _titsCarga = tits.filter(function(t){ return t.cargas>0; }).map(function(t){ return String(t.raw).toLowerCase().trim(); });
+  if(_titsCarga.length && crmTit) _titsCarga.push(crmTit.toLowerCase());
+  const titsSet = _titsCarga.length ? _titsCarga : tits.map(function(t){ return String(t.raw).toLowerCase().trim(); });
   const cbuTitulo=beta ? (crm.cbu_fuente==='RETIRO_CONFIRMADO'?'Tomado de un retiro confirmado':crm.cbu_fuente==='VINCULO_DECLARADO'?'Destino declarado en el vínculo':'Destino registrado; procedencia sin confirmar') : 'Tomado del último retiro pagado';
   const cbuLeyenda=beta ? (crm.cbu_fuente==='RETIRO_CONFIRMADO'?'de un retiro confirmado':crm.cbu_fuente==='VINCULO_DECLARADO'?'declarado en el vínculo · no acredita un pago':'procedencia sin confirmar') : 'del último retiro';
   const railInstr =
@@ -4465,7 +4701,8 @@ function _pjUnirOperaciones(usuario,rows,incluirLocales){
     out.set(k,{
       id:h.id, tipo:String(h.tipo||'').toUpperCase(), monto:Number(h.monto||0),
       usuario:h.usuario,pc_codigo:h.pc_codigo,solicitudId:h.solicitud_id,
-      titular:notas.titular||'',destino:notas.destino||'',cbu:notas.cbu||'',obs:notas.obs||'',
+      // En una carga el alias de la nota es el de NUESTRA billetera: se muestra su nombre, como antes.
+      titular:notas.titular||'',destino:(String(h.tipo||'').toUpperCase()==='CARGA' && h.billetera_nombre) ? h.billetera_nombre : (notas.destino||''),cbu:notas.cbu||'',obs:notas.obs||'',
       estado:h.estado||'', saldoPre:h.saldo_pre, saldoPost:h.saldo_post,
       billeteraNombre:h.billetera_nombre||'', operador:h.operador||'',
       chuniorId:h.chunior_movimiento_id||null, notas:h.notas||'',
@@ -6030,50 +6267,76 @@ window._histBetaCapCache = window._histBetaCapCache || {};
 async function _histBetaConsultar(cursor){
   const pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase();
   if(!pc || !window.panelAPI || typeof window.panelAPI.rpc !== 'function') return { mode: 'legacy' };
+  const filtros=_histFiltrosActivos(), queryKey=JSON.stringify([pc,filtros]);
+  const requestEpoch=window._histRequestEpoch=(window._histRequestEpoch||0)+1;
   try{
     if(typeof window.panelAPI.getContext === 'function'){
       const rawCtx = await window.panelAPI.getContext();
       const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
       if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(pc))) return { mode: 'legacy' };
     }
-    if(window._histBetaCapCache[pc] !== true){
+    if(!(Date.now() - window._histBetaCapCache[pc] >= 0 && Date.now() - window._histBetaCapCache[pc] < 60000)){
       const capRes = await window.panelAPI.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: pc, p_activate: false });
       const capData = capRes && capRes.data;
       const caps = (capData && Array.isArray(capData.capabilities)) ? capData.capabilities : [];
-      if(!capData || capData.ok !== true || capData.enabled !== true || !caps.includes('historial.filters.v1')){
-        return { mode: 'legacy' };
+      if(capRes?.error || !capData || capData.ok !== true || capData.contract !== 'nodo.beta.v1' || capData.scope?.pc_codigo !== pc){
+        return { mode: 'beta', data: null, error: capRes?.error || {code:'HISTORIAL_CAPABILITY_CONTRACT'} };
       }
-      window._histBetaCapCache[pc] = true;
+      if(!caps.includes('historial.filters.v1')) return { mode: 'legacy' };
+      window._histBetaCapCache[pc] = Date.now();
     }
     const r = await window.panelAPI.rpc('nodo_beta_historial_v1', {
       p_pc_codigo: pc,
-      p_filtros: _histFiltrosActivos(),
+      p_filtros: filtros,
       p_limit: 200,
       p_cursor: cursor || null
     });
     if(r && r.error){
-      if(r.error.code === 'PGRST202' || r.error.code === '42883') return { mode: 'legacy' };
       return { mode: 'beta', data: null, error: r.error };
     }
     const d = r && r.data;
-    if(!d || d.ok !== true || !Array.isArray(d.rows)){
+    if(requestEpoch!==window._histRequestEpoch || queryKey!==JSON.stringify([String(window.pcOperativa || pcOperativa || '').trim().toUpperCase(),_histFiltrosActivos()])){
+      return {mode:'beta',data:null,error:{code:'HISTORIAL_CONTEXT_CHANGED'}};
+    }
+    if(!d || d.ok !== true || d.contract !== 'nodo.beta.v1' || d.scope?.pc_codigo !== pc ||
+      pc !== String(window.pcOperativa || pcOperativa || '').trim().toUpperCase() || !Array.isArray(d.rows)){
       return { mode: 'beta', data: null, error: { code: 'HISTORIAL_INVALID_DATA', message: 'Respuesta beta inválida' } };
     }
     return {
       mode: 'beta',
       data: d.rows,
       error: null,
+      queryKey,
       totals: d.totals || null,
       billeteras: Array.isArray(d.billeteras) ? d.billeteras : [],
       hasMore: d.has_more === true,
       nextCursor: d.next_cursor || null
     };
   }catch(_e){
-    return { mode: 'legacy' };
+    return { mode: 'beta', data: null, error: {code:'HISTORIAL_TRANSPORT_ERROR'} };
   }
+}
+// Beta draws the SQL page. A changed filter requests a new page, never filters a subset.
+function _histMostrarPaginaBeta(){
+  if(window._histBetaActive!==true)return false;
+  const pc=String(window.pcOperativa || pcOperativa || '').trim().toUpperCase();
+  const key=JSON.stringify([pc,_histFiltrosActivos()]);
+  const total=document.getElementById('histFilterTotal');
+  if(window._histBetaFiltersKey!==key){
+    if(total)total.textContent='Consultando servidor…';
+    clearTimeout(window._histBetaFilterTimer);
+    window._histBetaFilterTimer=setTimeout(()=>{void cargarHistorial();},180);
+    return true;
+  }
+  renderHistorial(window._historialData || []);
+  if(total)total.textContent=String(window._histBetaTotals?.total_rows ?? 0)+' resultados en servidor';
+  const summary=document.getElementById('histFilterSummary');
+  if(summary)summary.textContent='Filtros resueltos en servidor';
+  return true;
 }
 window.cargarMasHistorialBeta = async function(){
   if(!window._histBetaHasMore || !window._histBetaNextCursor) return;
+  if(window._histBetaFiltersKey!==JSON.stringify([String(window.pcOperativa || pcOperativa || '').trim().toUpperCase(),_histFiltrosActivos()]))return cargarHistorial();
   const health = window.NodoSalud?.begin('HISTORIAL');
   try{
     const res = await _histBetaConsultar(window._histBetaNextCursor);
@@ -6083,7 +6346,7 @@ window.cargarMasHistorialBeta = async function(){
       return;
     }
     health?.reply(null);
-    health?.record('DATA', 'OK', 'HISTORIAL_PAGE_VALID');
+    health?.record('DATA', res.totals?.requiere_revision?'DEGRADED':'OK', res.totals?.requiere_revision?'HISTORIAL_REVISION_REQUIRED':'HISTORIAL_PAGE_VALID');
     const seen = new Set((_historialData || []).map(function(x){ return String(x.id); }));
     res.data.forEach(function(row){
       if(row && row.id != null && !seen.has(String(row.id))){
@@ -6093,6 +6356,7 @@ window.cargarMasHistorialBeta = async function(){
     });
     window._historialData = _historialData;
     window._histBetaTotals = res.totals || window._histBetaTotals;
+    window._histBetaFiltersKey = res.queryKey;
     window._histBetaHasMore = res.hasMore;
     window._histBetaNextCursor = res.nextCursor;
     filtrarHistorial();
@@ -6115,15 +6379,19 @@ async function cargarHistorial(){
   // de operaciones que nacen desde solicitudes del portal.
   const _v = _histVentana();
   const _betaRes = await _histBetaConsultar(null);
+  if(_betaRes.error?.code==='HISTORIAL_CONTEXT_CHANGED')return;
   let data, error;
   if(_betaRes.mode === 'beta'){
+    window._histBetaActive = true;
     data = _betaRes.data;
     error = _betaRes.error;
     window._histBetaTotals = _betaRes.totals || null;
     window._histBetaBilleteras = _betaRes.billeteras || [];
     window._histBetaHasMore = !!_betaRes.hasMore;
     window._histBetaNextCursor = _betaRes.nextCursor || null;
+    if(!_betaRes.error)window._histBetaFiltersKey = _betaRes.queryKey;
   } else {
+    window._histBetaActive = false;
     window._histBetaTotals = null;
     window._histBetaBilleteras = null;
     window._histBetaHasMore = false;
@@ -6160,7 +6428,7 @@ async function cargarHistorial(){
     if(el)el.innerHTML='<div class="err-box">El servidor no devolvió un historial válido. Se conserva la copia anterior.</div>';
     return;
   }
-  health?.record('DATA','OK','HISTORIAL_LIST_VALID');
+  health?.record('DATA',window._histBetaTotals?.requiere_revision?'DEGRADED':'OK',window._histBetaTotals?.requiere_revision?'HISTORIAL_REVISION_REQUIRED':'HISTORIAL_LIST_VALID');
   _historialData = data;
   // Mismo caso: el CRM y el expediente leen window._historialData y siempre les daba undefined.
   try{ window._historialData = _historialData; }catch(_e){}
@@ -6176,6 +6444,7 @@ async function cargarHistorial(){
     if(window.jugadorRegistrarDato){
       window.__jugHistSeeded = window.__jugHistSeeded || new Set();
       const _okEstadosJug = ['OK','PAGADA','ACREDITADA','COMPLETADA','APROBADA'];
+      const _tandaJug = [];
       _historialData.forEach(function(h){
         if(!h || !h.usuario) return;
         const sid = String(h.id!=null ? h.id : (h.usuario+'_'+(h.created_at||'')));
@@ -6185,13 +6454,16 @@ async function cargarHistorial(){
         const esRet = String(h.tipo||'').toUpperCase()==='RETIRO';
         const opOk  = _okEstadosJug.includes(String(h.estado||'').toUpperCase());
         // Se registra SIEMPRE (aunque no haya titular/CBU) para que el usuario EXISTA en el arbolito.
-        window.jugadorRegistrarDato(h.usuario, {
+        _tandaJug.push([h.usuario, {
           cbu: esRet ? (p.cbu||p.destino) : '',
           titular: p.titular,
           instrumentoVerificado: esRet && opOk,   // retiro pagado a ese destino = instrumento verificado
           fecha: h.created_at
-        });
+        }]);
       });
+      // Una sola lectura y escritura del almacén para toda la tanda (ver jugadorRegistrarDatos).
+      if(window.jugadorRegistrarDatos) window.jugadorRegistrarDatos(_tandaJug);
+      else _tandaJug.forEach(function(par){ window.jugadorRegistrarDato(par[0], par[1]); });
     }
   }catch(_e){}
 
@@ -6268,6 +6540,7 @@ async function _cargarOperacionesAgenteAhora(){
 }
 
 function filtrarHistorial(){
+  if(_histMostrarPaginaBeta())return;
   const tipo    = document.getElementById("filtHistTipo")?.value||"";
   const estado  = document.getElementById("filtHistEstado")?.value||"";
   const origen  = document.getElementById("filtHistOrigen")?.value||"";
@@ -6497,7 +6770,7 @@ function renderHistorial(lista){
   if(window._histBetaTotals){
     const _bt = window._histBetaTotals;
     html = '<div class="small" style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:6px 10px;margin-bottom:8px;background:#161b22;border:1px solid #262d3a;border-radius:8px;color:#c9d1d9">'
-      + '<span>📊 <b>Totales en servidor:</b> ' + Number(_bt.total_rows||0) + ' filas · <span style="color:#22c55e">⬆ ' + Number(_bt.cargas||0) + ' (' + money(Number(_bt.monto_cargas||0)) + ')</span> · <span style="color:#fb923c">⬇ ' + Number(_bt.retiros||0) + ' (' + money(Number(_bt.monto_retiros||0)) + ')</span> · Neto <b>' + money(Number(_bt.neto||0)) + '</b></span>'
+      + (_bt.requiere_revision ? '<span>Hay reversiones pendientes de cotejo. Los totales requieren revisión.</span>' : '<span>📊 <b>Totales en servidor:</b> ' + Number(_bt.total_rows||0) + ' filas · <span style="color:#22c55e">⬆ ' + Number(_bt.cargas||0) + ' (' + money(Number(_bt.monto_cargas||0)) + ')</span> · <span style="color:#fb923c">⬇ ' + Number(_bt.retiros||0) + ' (' + money(Number(_bt.monto_retiros||0)) + ')</span> · Neto <b>' + money(Number(_bt.neto||0)) + '</b></span>')
       + (window._histBetaHasMore ? '<button class="mini-btn blue" onclick="cargarMasHistorialBeta()">Ver más del servidor</button>' : '<span style="color:#8b949e">Página completa</span>')
       + '</div>' + html;
   }
@@ -9475,14 +9748,18 @@ function nodoPintarEstadoSistema(probando){
   const abierto = !!box.querySelector("details")?.open;
   r.partes.forEach(function(p){
     const prueba = window.NodoPruebas?.vigente(p.nombre);
-    if(prueba){ p.estado = prueba.ok ? "probada" : "falla"; p.detalle = prueba.detalle || ""; }
+    // Una prueba que dio bien no tapa que lo nuevo del servidor no está llegando (la prueba lee la
+    // lista; la llegada compara contra el servidor).
+    if(prueba && !(prueba.ok && p.llegada === "no_llega")){ p.estado = prueba.ok ? "probada" : "falla"; p.detalle = prueba.detalle || ""; }
   });
   const fallas = r.partes.filter(function(p){ return p.estado === "falla"; });
   const probadas = r.partes.filter(function(p){ return p.estado === "probada"; });
-  const andan = r.partes.filter(function(p){ return p.estado === "anda"; });
+  // "Al día" = comparado contra el servidor; "Anduvo hace N min" = lo último que se vio, ya viejo.
+  const andan = r.partes.filter(function(p){ return p.estado === "anda" || p.estado === "al_dia" || p.estado === "anduvo"; });
   const fila = function(p){
-    const color = p.estado === "falla" ? "#f87171" : p.estado === "probada" ? "#22c55e" : p.estado === "anda" ? "#94a3b8" : "#64748b";
-    const texto = p.estado === "falla" ? p.detalle : p.estado === "probada" ? "Funciona · recién probado" : p.estado === "anda" ? "Sin fallas" : "Sin actividad todavía";
+    const color = p.estado === "falla" ? "#f87171" : p.estado === "probada" || p.estado === "al_dia" ? "#22c55e" : p.estado === "anda" ? "#94a3b8" : "#64748b";
+    const texto = p.estado === "falla" ? p.detalle : p.estado === "probada" ? "Funciona · recién probado" : p.estado === "al_dia" ? "Al día"
+      : p.estado === "anda" ? "Sin fallas" : p.estado === "anduvo" ? "Anduvo " + (p.hace || "hace un rato") : "Sin actividad todavía";
     return '<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0">'
       + '<span style="color:#cbd5e1">' + escapeHtml(p.nombre) + '</span>'
       + '<span style="color:' + color + '">' + escapeHtml(texto) + '</span></div>';
@@ -9734,10 +10011,16 @@ async function refrescarSaldoAgente(){
     if(_conCandado) _drexGlobalUnlock();
   }
 }
+// La primera lectura abre la ventana de Agentes: espera su paso del arranque por etapas, que la
+// hace él mismo (login-y-realtime.js). Antes se abría a los 4 s, todavía en el login.
+function _saldoAgenteSiToca(){
+  if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('agentes')) return;
+  return refrescarSaldoAgente();
+}
 if(enElectron){
   // Refresca el saldo del agente cada 60 segundos
-  setInterval(refrescarSaldoAgente, 60000);
-  setTimeout(refrescarSaldoAgente, 4000); // 4s después del load inicial
+  setInterval(_saldoAgenteSiToca, 60000);
+  setTimeout(_saldoAgenteSiToca, 4000); // 4s después del load inicial
 }
 
 // Rechequeo MANUAL de fichas (portado de NexoBetaChan): relee Drex + Chunior y compara AHORA.
@@ -10082,8 +10365,13 @@ function _watchdogTrigger(delayMs){
 }
 
 if(enElectron){
-  // Arranca el watchdog 12s después del load (da tiempo a que la ventana de Chunior esté lista)
-  setTimeout(_watchdogIniciar, 12000);
+  // Arranca el watchdog 12s después del load (da tiempo a que la ventana de Chunior esté lista).
+  // Lee las fichas con la ventana de Agentes: si para entonces no se eligió el puesto, lo arranca
+  // el paso "agentes" del arranque por etapas.
+  setTimeout(function(){
+    if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('agentes')) return;
+    _watchdogIniciar();
+  }, 12000);
 }
 function chatUsuarioActivo(){
   const c = chats.find(x=>String(x.ID_CHAT)===String(chatActualId));
@@ -10148,7 +10436,18 @@ function _altaDist(a, b){
   return prev[n];
 }
 function _altaNormU(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,''); }
-function _altaNormTel(s){ return String(s||'').replace(/\D/g,''); }
+// Igual que el servidor (telefono_canon): 10 dígitos, sin 54, 9 ni 0 adelante. Antes sólo sacaba lo
+// que no era dígito: "+54 9 3735 63-9528" quedaba 5493735639528, no coincidía con ninguna cuenta
+// (todas guardan 3735639528) y la tarjeta decía que el número no figuraba (6/11).
+function _altaNormTel(s){
+  let v = String(s||'').replace(/\D/g,'');
+  if(v.length > 10){
+    if(v.indexOf('54') === 0) v = v.slice(2);
+    if(v.charAt(0) === '9') v = v.slice(1);
+    if(v.charAt(0) === '0') v = v.slice(1);
+  }
+  return v.length > 10 ? v.slice(-10) : v;
+}
 // ── LO QUE YA SE RESOLVIÓ EN ESTA CONSULTA ────────────────────────────────────────────────
 // Juan, 19/10: "revisa tambien que la proxima version cambie el cartel de revisar cuando se
 // termine de validar para que aparezca todo joya, por como esta en la version actual sigue
@@ -10254,11 +10553,35 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
       if(x.telefono && cand[k].telefonos.indexOf(String(x.telefono))<0) cand[k].telefonos.push(String(x.telefono));
     });
   }catch(_e){}
-  // Buscador WTK: UNA sola RPC con el término más informativo (el teléfono si vino, si no el usuario).
+  // Buscador WTK por el teléfono Y por el usuario. Antes iba un solo término (el teléfono si vino):
+  // con un número nuevo o mal tipeado el usuario nunca se buscaba y la tarjeta decía "no hay cuenta
+  // con este usuario" de alguien vinculado hace meses (edga300x, 6/11).
+  // La identidad (veredicto del servidor con la historia de los dos) va en paralelo.
+  // Su luz en el semáforo (IDENTIDAD): OK sólo si el servidor contestó con un veredicto conocido. Si
+  // la consulta se cae, la tarjeta vuelve a lo de antes sin avisar: por eso queda a la vista.
+  const _identidad = (async function(){
+    const salud=window.NodoSalud?.begin?.('IDENTIDAD');
+    try{
+      if(typeof supabaseClient==='undefined' || !supabaseClient) return null;
+      const pc=String((typeof pcOperativa!=='undefined'&&pcOperativa)||window.pcOperativa||'');
+      if(!pc) return null;
+      const r=await supabaseClient.rpc('panel_identidad_cotejo',{p_secret:window.PANEL_DATA_SECRET, p_pc_codigo:pc, p_usuario:String(usuarioDecl||''), p_telefono:String(telefonoDecl||'')});
+      salud?.reply?.(r && r.error);
+      const ok = !r.error && r.data && r.data.ok && typeof r.data.veredicto === 'string';
+      if(r.error) salud?.record?.('DATA', (r.error.code==='PGRST202'||r.error.code==='42883') ? 'UNKNOWN' : 'ERROR', (r.error.code==='PGRST202'||r.error.code==='42883') ? 'IDENTIDAD_SIN_SERVIDOR' : 'IDENTIDAD_COTEJO_FALLO');
+      else salud?.record?.('DATA', ok ? 'OK' : 'DEGRADED', ok ? 'IDENTIDAD_'+r.data.veredicto : 'IDENTIDAD_RESPUESTA_INVALIDA');
+      return ok ? r.data : null;
+    }catch(_e){ try{ salud?.record?.('DATA','ERROR','IDENTIDAD_COTEJO_FALLO'); }catch(_x){} return null; }
+  })();
   try{
-    const q=(tD.length>=6?tD:String(usuarioDecl||'').trim());
-    if(q && q.length>=3 && typeof supabaseClient!=='undefined' && supabaseClient){
-      const r=await supabaseClient.rpc('panel_crm_vinculos_buscar',{p_pc_codigos:null, p_query:q, p_limit:40, p_secret:window.PANEL_DATA_SECRET});
+    const _terminos=[tD.length>=6?tD:'', String(usuarioDecl||'').trim()].filter(function(q, i, a){ return q && q.length>=3 && a.indexOf(q)===i; });
+    if(_terminos.length && typeof supabaseClient!=='undefined' && supabaseClient){
+      const _resps=await Promise.all(_terminos.map(function(q){
+        // Promise.resolve: el pedido de supabase sólo tiene then(), no catch(). Encadenado directo
+        // tiraba error, se perdía la búsqueda entera y la tarjeta decía "no hay cuenta" (annamartinezz, 6/11).
+        return Promise.resolve(supabaseClient.rpc('panel_crm_vinculos_buscar',{p_pc_codigos:null, p_query:q, p_limit:40, p_secret:window.PANEL_DATA_SECRET})).catch(function(){ return { error:true }; });
+      }));
+      _resps.forEach(function(r){
       if(!r.error && Array.isArray(r.data)){
         r.data.forEach(function(v){
           const k=String(v.usuario||'').toLowerCase(); if(!k) return;
@@ -10280,8 +10603,10 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
           if(!cand[k].titular && v.titular) cand[k].titular=v.titular;
         });
       }
+      });
     }
   }catch(_e){}
+  out.identidad = await _identidad;
   // Sólo lo que tiene respaldo. Una declaración suelta no es "una cuenta en el sistema".
   const lista=Object.values(cand).filter(function(c){ return c.confiable; });
   // ── USUARIO ──
@@ -10337,7 +10662,10 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
   }
   return out;
 };
-async function ejecutarVincular(usuario, telefono, desdeChat){
+// opts.motivo     → queda en la historia del jugador (cambio de número, usuario reemplazado).
+// opts.confirmado → el operador ya decidió en la tarjeta de identidad: no se vuelve a preguntar.
+async function ejecutarVincular(usuario, telefono, desdeChat, opts){
+  opts = opts || {};
   usuario=String(usuario||"").trim(); telefono=String(telefono||"").trim();
   if(!usuario){ toast("Falta el usuario a vincular","red"); return; }
   if(!telefono){ toast("Falta el teléfono para vincular","red"); return; }
@@ -10358,9 +10686,15 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
     // Queda registrado QUIÉN validó. Antes el vínculo no guardaba el operador (la RPC ni siquiera
     // lo recibía), así que ante una cuenta dudosa no había forma de saber de dónde había salido.
     const _opVinc = (typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || '';
-    const _vinc=async(forzar)=> forzar
-      ? await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono,p_forzar:true,p_operador:_opVinc})
-      : await supabaseClient.rpc('panel_vincular_usuario',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono,p_operador:_opVinc});
+    // v2: no borra a nadie (el que tenía el número queda como usuario anterior, apuntando a este) y
+    // anota el cambio de número con su motivo. Si el servidor todavía no la tiene, la de siempre.
+    const _vinc=async(forzar)=>{
+      const base={p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono,p_forzar:!!forzar,p_operador:_opVinc};
+      const r2=await supabaseClient.rpc('panel_vincular_usuario_v2',Object.assign({p_motivo:opts.motivo||null},base));
+      if(!(r2&&r2.error&&(r2.error.code==='PGRST202'||r2.error.code==='42883'))) return r2;
+      return forzar ? await supabaseClient.rpc('panel_vincular_usuario',base)
+        : await supabaseClient.rpc('panel_vincular_usuario',{p_secret:base.p_secret,p_pc_codigo:pcCod,p_usuario:usuario,p_telefono:telefono,p_operador:_opVinc});
+    };
     let r=await _vinc(false);
     let d=(r&&r.data)||{};
     let _notaEvento=null;   // se completa si hubo que reasignar el teléfono desde otro usuario
@@ -10374,13 +10708,13 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
         // El confirm dice EXPLÍCITO qué cuenta va a quedar y qué mensaje le llega al cliente. Sin
         // eso el operador aceptaba pensando "sí, es la misma persona" y terminaba mandándole al
         // cliente el usuario del OTRO — o sea, acceso a una cuenta ajena.
-        if(!confirm(
+        if(!opts.confirmado && !confirm(
           "⚠ CONFLICTO DE TELÉFONO\n\n"+
           "El teléfono "+telefono+" hoy figura de «"+otro+"».\n"+
           "Vos estás validando a «"+usuario+"».\n\n"+
           "Si aceptás:\n"+
           "  · el teléfono pasa a «"+usuario+"»\n"+
-          "  · «"+otro+"» queda SIN ese teléfono\n"+
+          "  · «"+otro+"» queda como usuario anterior de ese número (no se borra)\n"+
           "  · al cliente se le avisa que entre como «"+usuario+"»\n\n"+
           "¿Son la misma persona?")) return;
         r=await _vinc(true); d=(r&&r.data)||{};
@@ -10420,7 +10754,8 @@ async function ejecutarVincular(usuario, telefono, desdeChat){
         // La marca lleva usuario|telefono CORREGIDOS: si el operador cambió el tel (o el usuario), el
         // portal revalida con los datos buenos y el botón "Ingresar" funciona sin re-loguear.
         const msg="✅ ¡Listo! Ya validamos tu cuenta.\n\nPara entrar al portal usá:\n👤 Usuario: "+usuario+"\n📱 Teléfono: "+telefono+"\n\nTocá el botón *Ingresar* acá abajo 👇\n⟦INGRESAR:"+usuario+"|"+telefono+"⟧";
-        window.nodoEnviarMensajePortal(usuario,msg,desdeChat).then(rr=>{
+        // Con el chat cerrado también tiene que llegarle: está esperando el botón Ingresar.
+        (window.nodoIniciarChat||window.nodoEnviarMensajePortal)(usuario,msg,desdeChat).then(rr=>{
           if(rr&&rr.ok) return;
           const _e=(rr&&rr.error)||"?";
           console.warn("aviso 'Ingresar' no ruteado ("+_e+") — el portal lo detecta igual por auto-chequeo");
@@ -10477,6 +10812,101 @@ function abrirModalVincular(usuarioSugerido, telefono, prefill, desdeChat){
 // después de 6 líneas de datos crudos, y el alias se repetía 4 veces → el operador tenía que leer
 // todo para saber si podía seguir. Ahora: estado de un vistazo, y el detalle solo si aporta.
 // onPick = función global que recibe (usuario, telefono). titulo = contexto (esquina derecha).
+// ── Identidad: cambio de número o de usuario (6/11) ─────────────────────────────────────────────
+// "Redirigir la información al operador, nunca redirigir la identidad del usuario automáticamente"
+// (Juan). El servidor (panel_identidad_cotejo) dice qué pasa y con qué historia; acá se muestra y
+// decide el operador: es la misma persona (se anota el cambio con su motivo), es otra persona (no
+// hereda el usuario viejo), o no hay evidencia (queda pendiente, sin acceso). Nada se aplica solo.
+const _ALTA_ID_REVISAR = ['CAMBIO_TELEFONO','TELEFONO_ANTERIOR','TELEFONO_DE_OTRO','USUARIO_REEMPLAZADO'];
+function _altaIdentidadBloque(uDecl, tDecl, id){
+  if(!id || _ALTA_ID_REVISAR.indexOf(id.veredicto) < 0) return '';
+  const esc=escapeHtml, u=id.usuario||{}, t=id.telefono||{}, d=t.dueno||null;
+  const fecha=function(x){ const f=new Date(x||''); return isNaN(f)?'':f.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}); };
+  const nombre=function(x){ return '<b>'+esc(String(x||''))+'</b>'; };
+  const num=function(x){ return '<b style="font-family:monospace">'+esc(String(x||'—'))+'</b>'; };
+  const actividad=function(o){
+    if(!o) return '';
+    const n=Number(o.operaciones||0);
+    return n ? ' · '+n+(n===1?' operación':' operaciones')+(o.ultima_operacion?(', la última el '+fecha(o.ultima_operacion)):'') : ' · sin operaciones';
+  };
+  const usuario=u.usuario||uDecl, telConsulta=t.telefono||_altaNormTel(tDecl);
+  const lineas=[];
+  if(id.veredicto==='CAMBIO_TELEFONO'){
+    lineas.push(nombre(usuario)+' existe desde el '+fecha(u.desde)+actividad(u)+'.');
+    lineas.push('Su número registrado es '+num(u.telefono)+'. Esta consulta viene con '+num(telConsulta)+', que no figura en ninguna cuenta.');
+  } else if(id.veredicto==='TELEFONO_ANTERIOR'){
+    lineas.push(nombre(usuario)+' pide con '+num(telConsulta)+', un número que antes era suyo. Hoy tiene registrado '+num(u.telefono)+'.');
+  } else if(id.veredicto==='TELEFONO_DE_OTRO'){
+    lineas.push(nombre(usuario)+' está asociado al teléfono '+num(u.telefono)+actividad(u)+'.');
+    lineas.push('El teléfono de esta consulta, '+num(telConsulta)+', hoy figura con '+nombre(d&&d.usuario)+actividad(d)+'.');
+  } else {
+    lineas.push('Este usuario es antiguo. Anteriormente estaba asociado al teléfono '+num(u.telefono)+'.');
+    lineas.push('Actualmente ese teléfono figura con '+nombre(u.vigente)+'. El teléfono de esta consulta es '+num(telConsulta)+'.');
+  }
+  (id.telefonos_anteriores||[]).slice(0,2).forEach(function(x){
+    lineas.push('<span style="color:#8b949e">'+nombre(usuario)+' antes usaba '+num(x.anterior)+' (cambiado el '+fecha(x.cuando)+(x.operador?(' por '+esc(x.operador)):'')+(x.nota?(' · '+esc(x.nota)):'')+').</span>');
+  });
+  (id.usuarios_anteriores||[]).slice(0,2).forEach(function(x){
+    lineas.push('<span style="color:#8b949e">Este número antes lo usaba '+nombre(x.usuario)+' (hasta el '+fecha(x.cuando)+').</span>');
+  });
+  // Historia o CBU de cobro del usuario de la consulta: alerta fuerte, decide una persona.
+  const fuerte = (Number(u.operaciones||0) > 0 || u.tiene_cbu) && (id.veredicto==='TELEFONO_DE_OTRO' || id.veredicto==='USUARIO_REEMPLAZADO');
+  if(fuerte) lineas.push('<b style="color:#ff7b72">'+esc(usuario)+' tiene '+Number(u.operaciones||0)+' operaciones'+(u.tiene_cbu?' y cuenta de cobro':'')+': decidí vos antes de validar.</b>');
+  if(u.vigente) lineas.push('<span style="color:#8b949e">El último usuario validado con ese número es '+nombre(u.vigente)+'. Es un dato, no se aplica solo.</span>');
+  lineas.push('<span style="color:#8b949e">No se redirecciona automáticamente.</span>');
+  const col = fuerte ? { c:'#ff7b72', bg:'rgba(248,81,73,.12)', bd:'rgba(248,81,73,.50)', ico:'🚨' }
+                     : { c:'#e3b341', bg:'rgba(227,179,65,.11)', bd:'rgba(227,179,65,.42)', ico:'⚠️' };
+  const titulo = id.veredicto==='CAMBIO_TELEFONO' ? 'Cambio de número'
+               : id.veredicto==='TELEFONO_ANTERIOR' ? 'Número anterior'
+               : id.veredicto==='TELEFONO_DE_OTRO' ? 'Número de otro usuario' : 'Usuario antiguo';
+  const datos=' data-u="'+esc(usuario)+'" data-t="'+esc(telConsulta)+'" data-v="'+esc(id.veredicto)+'"';
+  const boton=function(dec, texto, fondo){
+    return '<button type="button" onclick="altaIdentidadDecidir(\x27'+dec+'\x27,this)"'+datos
+      +' style="border:0;border-radius:7px;padding:6px 9px;font-size:11.5px;font-weight:800;cursor:pointer;background:'+fondo+';color:#fff;margin:3px 4px 0 0">'+texto+'</button>';
+  };
+  const misma = id.veredicto==='USUARIO_REEMPLAZADO' ? 'Es '+esc(usuario)+': este número reemplaza al anterior'
+              : 'Es '+esc(usuario)+': '+esc(telConsulta)+' pasa a ser su número';
+  return '<div style="border:1px solid '+col.bd+';border-radius:10px;background:#0d1117;overflow:hidden">'
+    +   '<div style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:'+col.bg+';border-bottom:1px solid '+col.bd+'">'
+    +     '<span style="font-size:12px;line-height:1">'+col.ico+'</span>'
+    +     '<span style="font-weight:800;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:'+col.c+'">'+titulo+' · revisión humana</span>'
+    +   '</div>'
+    +   '<div style="padding:7px 10px;font-size:12px;line-height:1.45;color:#c9d1d9">'+lineas.map(function(l){ return '<div style="margin-bottom:3px">'+l+'</div>'; }).join('')
+    +     '<div style="margin-top:6px">'
+    +       boton('MISMA', misma, '#238636')
+    +       boton('OTRA', 'Es otra persona', '#1f6feb')
+    +       boton('PENDIENTE', 'Sin evidencia: queda pendiente', '#30363d')
+    +     '</div>'
+    +   '</div>'
+    + '</div>';
+}
+window.altaIdentidadDecidir = async function(dec, el){
+  const usuario=(el&&el.getAttribute('data-u'))||'', tel=(el&&el.getAttribute('data-t'))||'', ver=(el&&el.getAttribute('data-v'))||'';
+  if(!usuario) return;
+  const _op=(typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || '';
+  const pc=String((typeof pcOperativa!=='undefined'&&pcOperativa)||window.pcOperativa||'');
+  if(dec==='MISMA'){
+    const sugerido = ver==='USUARIO_REEMPLAZADO' ? 'volvió con otro número' : 'perdió el número';
+    const motivo = prompt('¿Por qué '+tel+' pasa a ser el número de '+usuario+'? Queda en su historia.', sugerido);
+    if(motivo===null) return;
+    if(!String(motivo).trim()){ toast('Escribí el motivo: queda registrado.','yellow'); return; }
+    return ejecutarVincular(usuario, tel, true, { motivo:String(motivo).trim(), confirmado:true });
+  }
+  const decision = dec==='OTRA' ? 'OTRA_PERSONA' : 'SIN_EVIDENCIA';
+  const motivo = prompt(dec==='OTRA' ? 'Es otra persona: no hereda '+usuario+'. ¿Algo para dejar anotado?' : 'Queda pendiente, sin acceso. ¿Qué falta?',
+    dec==='OTRA' ? 'el número es de otra persona' : 'no hay datos suficientes');
+  if(motivo===null) return;
+  try{
+    const r=await supabaseClient.rpc('panel_identidad_decision',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pc,p_usuario:usuario,p_telefono:tel,p_decision:decision,p_motivo:String(motivo||'').trim()||null,p_operador:_op});
+    if(r.error || !(r.data&&r.data.ok)) throw new Error((r.error&&r.error.message)||(r.data&&r.data.mensaje)||'error');
+  }catch(e){ toast('No se pudo anotar la decisión: '+(e.message||e),'red'); return; }
+  if(dec==='OTRA'){
+    toast('Anotado: es otra persona. Creá o validá su cuenta; no hereda '+usuario+'.','blue');
+    try{ abrirModalVincular('', tel, false, true); }catch(_e){}
+  } else {
+    toast('Queda pendiente, sin acceso. No se tocó ningún vínculo.','blue');
+  }
+};
 function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
   const esc=escapeHtml, tN=_altaNormTel(tDecl);
   const telsDe=function(c){ return ((c&&c.telefonos)||[]).map(_altaNormTel).filter(Boolean); };
@@ -10699,8 +11129,11 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
   if(_esAltaNueva){
     // La comilla se arma aparte: el valor viaja DENTRO de un onclick, y una comilla suelta en el
     // alias rompía el atributo entero (el botón quedaba muerto sin decir nada).
+    // Y sólo caracteres que no rompan nada: el teléfono sale del mensaje con lo que le sigue ("Tel:
+    // 1131388204." + el salto de línea del próximo mensaje) y ese salto dentro del onclick lo dejaba
+    // con "Invalid or unexpected token": el botón no hacía nada (pepe, 6/11).
     const _q = String.fromCharCode(39);
-    const _u = esc(String(uDecl||'').split(_q).join('')), _t = esc(String(tDecl||'').split(_q).join(''));
+    const _u = esc(String(uDecl||'').replace(/[^A-Za-z0-9._-]/g,'')), _t = esc(String(tDecl||'').replace(/\D/g,''));
     acciones = '<div style="margin-top:7px"><button type="button" onclick="_altaCrearDesdeCotejo('+_q+_u+_q+','+_q+_t+_q+')"'
       + ' style="cursor:pointer;background:rgba(18,183,106,.12);border:1px solid rgba(18,183,106,.55);color:#3fb950'
       + ';border-radius:8px;padding:5px 11px;font-size:11px;font-weight:800">➕ Crear la cuenta y mandarle los datos</button></div>';
@@ -10739,6 +11172,11 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
                  : nivel==='nuevo'     ? 'Sin usuario'
                  : (uOk&&tOk)          ? 'Coinciden'
                  : uOk                 ? 'Usuario en sistema' : 'Teléfono en sistema';
+
+  // Si el servidor dice que hay un cambio de número o de usuario, esa tarjeta manda: la de abajo
+  // podía decir "coinciden" o "no hay cuenta" sobre el mismo caso. Lo ya validado se ve como siempre.
+  const _idBloque = (resuelto && resuelto.usuario) ? '' : _altaIdentidadBloque(uDecl, tDecl, r.identidad);
+  if(_idBloque) return { html:_idBloque, alerta:true, nivel:'revisar' };
 
   const html =
       '<div style="border:1px solid '+T.bd+';border-radius:10px;background:#0d1117;overflow:hidden">'
@@ -10918,15 +11356,38 @@ window._altaCotejoConsulta = async function(ticket){
   if(!cont) return;
   if(!ticket){ cont.innerHTML=''; window.__altaCotejoDecl=null; return; }
   // 1) Lo DECLARADO por el cliente, parseado del mensaje
-  let txt='';
+  let txt='', ingU='', ingT='';
   try{
     const th=ticket.thread||ticket.mensajes||[];
-    txt=(Array.isArray(th)?th:[]).map(function(m){ return String((m&&(m.mensaje||m.texto||m.body||m.MENSAJE))||''); }).join(' \n ');
+    // Sólo lo que escribió el JUGADOR. Con todo el hilo, el "Usuario: noex90" del mensaje de
+    // validación pasaba por lo declarado, la marca de "ya validado" no coincidía y la tarjeta
+    // volvía a pedir revisión (Juan, 2/11).
+    const delJugador=function(m){
+      const r=window.NodoChatMessage && window.NodoChatMessage.role ? window.NodoChatMessage.role(m) : '';
+      if(r) return r==='USUARIO';
+      const o=String((m&&(m.origen||m.tipo_emisor||m.TIPO_EMISOR))||'').toUpperCase();
+      return !o || o==='USUARIO' || o==='CLIENTE';
+    };
+    txt=(Array.isArray(th)?th:[]).filter(delJugador).map(function(m){ return String((m&&(m.mensaje||m.texto||m.body||m.MENSAJE))||''); }).join(' \n ');
+    // El aviso de validación lleva el usuario y el teléfono validados (⟦INGRESAR:usuario|teléfono⟧).
+    // Si ya salió, la consulta está resuelta con ESOS datos, aunque el jugador haya escrito mal el
+    // teléfono: la marca local nunca coincidía con lo declarado y la tarjeta quedaba en revisión para
+    // siempre (Juan, 2/11). Sale de la conversación, así que vale en cualquier PC.
+    (Array.isArray(th)?th:[]).forEach(function(m){
+      if(delJugador(m)) return;
+      const x=String((m&&(m.mensaje||m.texto||m.MENSAJE))||'').match(/⟦INGRESAR:([^|⟧]*)\|?([^⟧]*)⟧/);
+      if(x && x[1].trim()){ ingU=x[1].trim(); ingT=x[2].trim(); }
+    });
   }catch(_e){}
   const mU=txt.match(/usuario\s*[:\-]?\s*([A-Za-z0-9._-]{3,})/i);
   const mT=txt.match(/(?:tel|telefono|tel[eé]fono|cel|celular)\s*[:.\-]?\s*([\d\s().\-]{6,})/i);
-  const uDecl=mU?String(mU[1]).replace(/[.,;]+$/,''):String(ticket.usuario||'');
-  const tDecl=mT?String(mT[1]):String(ticket.telefono||ticket.TELEFONO||'');
+  let uDecl=mU?String(mU[1]).replace(/[.,;]+$/,''):String(ticket.usuario||'');
+  let tDecl=mT?String(mT[1]):String(ticket.telefono||ticket.TELEFONO||'');
+  if(ingU){
+    uDecl=ingU; tDecl=ingT||tDecl;
+    // Igual se confirma contra el padrón antes de pintar verde (_altaResuelto).
+    try{ const m=_altaResLeer(), k=_altaResKey(uDecl,tDecl); if(!m[k]){ m[k]={ usuario:ingU, telefono:ingT, cuando:Date.now() }; _altaResGuardar(m); } }catch(_e){}
+  }
   if(!uDecl && _altaNormTel(tDecl).length<6){ cont.innerHTML=''; return; }
   // Cache por ticket: no re-cotejar en cada repintado del chat (que ocurre en cada poll)
   const key=_altaNormU(uDecl)+'|'+_altaNormTel(tDecl);
@@ -10934,6 +11395,9 @@ window._altaCotejoConsulta = async function(ticket){
   // Lo DECLARADO, para que _altaMarcarResuelto sepa a qué consulta pertenece la validación.
   window.__altaCotejoDecl={ u:uDecl, t:tDecl };
   if(cont.dataset.key===key) return;
+  // Si los mensajes faltan un momento, el teléfono declarado no se olvida: la tarjeta se redibujaba
+  // y el botón de crear la cuenta se reemplazaba debajo del clic (Juan, 2/11: "no funciona").
+  if(!_altaNormTel(tDecl) && cont.dataset.key && cont.dataset.key.split("|")[0]===_altaNormU(uDecl) && cont.dataset.key.split("|")[1]) return;
   cont.dataset.key=key;
   cont.innerHTML='<div class="small" style="color:#8b949e">🔎 cotejando usuario y teléfono en la base…</div>';
   let r; try{ r=await window.altaCotejarDatos(uDecl,tDecl); }catch(_e){ cont.innerHTML=''; return; }
@@ -11323,8 +11787,15 @@ window._altaCrearDesdeCotejo = function(usuario, telefono){
     try{
       const dom = window.NodoDomain && window.NodoDomain.presencia;
       if(!dom) return null;
+      const V = window.V154P || {};
+      const pantalla = window._nodoPendientesPantalla;
       return dom.armar({
-        solicitudes: (window.V154P && window.V154P.solicitudes) || [],
+        solicitudes: V.solicitudes || [],
+        // Lo que muestra la lista de Inicio, tal cual. Si todavía no se dibujó, o la lista cambió
+        // después, se cuenta abajo con el mismo criterio.
+        pendientes: (pantalla && pantalla.lista === V.solicitudes && pantalla.largo === (V.solicitudes || []).length) ? pantalla.n : undefined,
+        // Si el último refresco falló, no se publica un número que puede ser viejo.
+        sinDatos: !!V.solicitudesErrorAt,
         version: window._versionApp || '',
         pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : '') || window.pcOperativa || '',
         // El MISMO criterio con el que la pantalla decide qué queda en la lista de pendientes. Un
@@ -11366,8 +11837,10 @@ window._altaCrearDesdeCotejo = function(usuario, telefono){
     }catch(_e){}
   };
 
-  // Cada minuto, aunque no haya cambiado nada: el "hace 3 min" tiene que envejecer solo.
-  try{ setInterval(function(){ window.actualizarPresenciaDiscord(); }, 60000); }catch(_e){}
+  // Cada minuto, aunque no haya cambiado nada: el "hace 3 min" tiene que envejecer solo, y main
+  // tiene que saber que el panel sigue vivo. Si deja de oírlo 5 minutos, borra la presencia en vez
+  // de dejar un número viejo a la vista.
+  try{ setInterval(function(){ window.actualizarPresenciaDiscord(true); }, 60000); }catch(_e){}
 })();
 const _RE_DIACRITICOS = new RegExp('[\\u0300-\\u036f]', 'g');
 const _RE_SEPARADORES = new RegExp('[\\s.,;:¿?¡!\\-_/\\\\]', 'g');
@@ -11947,6 +12420,9 @@ function _sondaAgenteOcupado(){
 async function _sondaSesionTick(){
   if(_sondaCorriendo) return;
   if(!window.ctrlElectron) return;                    // sólo en la app de escritorio
+  // Sin puesto elegido no hay sesión que cuidar: seis minutos en el login abrían Agentes y
+  // refrescaban el panel para ninguna oficina.
+  if(window.nodoOficinaLista && !window.nodoOficinaLista()) return;
   if(window._drexSinSesion) return;                   // ya está el login en pantalla
   if(_sondaAgenteOcupado()) return;                   // hay algo operando: eso ya prueba la sesión
 
@@ -11999,13 +12475,11 @@ try{ setInterval(_sondaSesionTick, SONDA_CADA_MS); }catch(_e){}
 // un operador, cada vez que se acredita una carga. Eso queda anotado en D-92, sin tocar.
 // El aviso va a la conversación que el jugador ve en el portal. notificarUsuarioEnChat (abajo)
 // escribe en chat_sesiones / chat_mensajes, la generación de chat que el portal ya no lee.
-//   crearSiNoHay:true  → si no tiene conversación abierta, se le abre una. Para lo que PIDIÓ por el
-//                        chat (la clave): el portal le promete "te avisamos por este mismo chat".
-//   crearSiNoHay:false → sólo si ya tiene conversación. Para los avisos que salen solos (un pago de
-//                        retiro), así no se llena la bandeja con un hilo nuevo por cada pago; para
-//                        ese caso el jugador igual recibe la notificación del celular.
+// Si no tiene conversación abierta se le abre una, también para los avisos automáticos. Antes se
+// frenaba para no llenar la bandeja y el aviso se perdía. Juan, 2/11: "no veo necesario trabar
+// una característica"; la bandeja ya tiene chats sin contestar que nadie cierra.
 async function avisarJugadorEnChat(usuario, texto, opts){
-  const crear = !!(opts && opts.crearSiNoHay);
+  const crear = true;
   try{
     if(crear && typeof window.nodoIniciarChat === 'function'){
       const r = await window.nodoIniciarChat(usuario, texto);
@@ -12041,6 +12515,7 @@ window._avisarClaveAlJugador = _avisarClaveAlJugador;
 // escribía antes. No se abre conversación nueva: eso llenaría la bandeja con un hilo por cada
 // aviso automático, que es lo que D-92 vino evitando. Para los avisos que el operador manda a
 // propósito está avisarJugadorEnChat(..., {crearSiNoHay:true}).
+// Desde el 2/11 también se abre conversación cuando no hay: ver avisarJugadorEnChat.
 //
 // _sinPortal lo usa avisarJugadorEnChat, que ya probó el portal antes de caer acá: sin esto se
 // intentaría dos veces.
@@ -12049,7 +12524,7 @@ async function notificarUsuarioEnChat(usuarioNombre, mensaje, _sinPortal){
 
   if(!_sinPortal && typeof window.nodoEnviarMensajePortal === 'function'){
     try{
-      const r = await window.nodoEnviarMensajePortal(usuarioNombre, mensaje, false);
+      const r = await (window.nodoIniciarChat || window.nodoEnviarMensajePortal)(usuarioNombre, mensaje, false);
       if(r && r.ok) return r;
       if(!(r && r.error === 'sin-ticket')) console.warn('[aviso] el hilo del portal fallo:', r && r.error);
     }catch(e){ console.warn('[aviso] el hilo del portal fallo:', e); }
@@ -12545,6 +13020,27 @@ async function ejecutarAutoRetiro(id){
   if(!usuario){ alert("La solicitud no tiene usuario asociado."); return; }
   if(!monto)  { alert("La solicitud no tiene monto válido."); return; }
 
+  // Las solicitudes nuevas se reconocen por la marca escrita por el RPC beta. Esta ruta de
+  // automatización también debe pasar la solicitud completa al mismo control que el pago manual.
+  let _retiroMeta = {};
+  try{
+    const _rawMeta = s.METADATA !== undefined ? s.METADATA : s.metadata;
+    _retiroMeta = typeof _rawMeta === 'string' ? JSON.parse(_rawMeta || '{}') : (_rawMeta || {});
+  }catch(_e){ _retiroMeta = {}; }
+  const _retiroInstrumento = _retiroMeta.retiro_instrumento_v1
+    && _retiroMeta.retiro_instrumento_v1.instrumento_id;
+  if(_retiroInstrumento){
+    if(typeof window.nodoRetiroCuentaValidada !== "function"){
+      try{ window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_VALIDADOR_NO_CARGADO'); }catch(_e){}
+      toast('No se cargó la validación de cuenta de este retiro. No se movió saldo.','red');
+      return;
+    }
+    const _cuenta = await window.nodoRetiroCuentaValidada(id, {
+      usuario, monto, destino:s.DESTINO || s.CBU || '', titular:s.TITULAR || s.titular || '', solicitud:s
+    });
+    if(!_cuenta || !_cuenta.seguir) return;
+  }
+
   // Política de 24hs — advertencia, el operador decide
   const check = await verificarRetiro24h(usuario);
   if(check.bloqueado){
@@ -12612,6 +13108,15 @@ async function ejecutarAutoRetiro(id){
   const r = await callDrex("retirarSaldo", monto);
   _autoHealth?.record('EFFECT', (r && r.ok === false) ? 'ERROR' : 'OK', (r && r.ok === false) ? 'AUTO_RETIRO_FAILED' : 'AUTO_RETIRO_OK');
 
+  // Una respuesta ambigua de Agentes no confirma el resultado. No cerrar ni permitir un segundo
+  // descuento beta hasta cotejar el historial.
+  if(_retiroInstrumento && (!r || (r.ok !== true && r.ok !== false))){
+    try{ window.NodoSalud?.begin('RETIROS')?.record('EFFECT','ERROR','RETIRO_PAGO_RESULTADO_AMBIGUO'); }catch(_e){}
+    toast('Agentes no confirmó el resultado del retiro. No lo vuelvas a pagar; cotejá el historial.','red');
+    await refrescarTodo(false);
+    return;
+  }
+
   if(r && r.ok === false){
     await actualizarSolicitudSupabase(id, {
       estado: "RECHAZADA",
@@ -12624,6 +13129,18 @@ async function ejecutarAutoRetiro(id){
     return;
   }
 
+  let _selloAuto = null;
+  if(_retiroInstrumento){
+    if(typeof window.nodoSellarRetiroAprobado === 'function'){
+      try{ _selloAuto = await window.nodoSellarRetiroAprobado(id,{solicitud:s,usuario,monto}); }
+      catch(_e){ _selloAuto = {ok:false}; }
+    }
+    if(!_selloAuto || !_selloAuto.ok){
+      try{ window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
+      toast('El retiro ya se ejecutó, pero no se guardó la hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red');
+    }
+  }
+
   await actualizarSolicitudSupabase(id, {
     estado: "PAGADA",
     operador_usuario: operador.usuario || operador.nombre || ""
@@ -12632,8 +13149,12 @@ async function ejecutarAutoRetiro(id){
   const bilRetiro = getBilleraLanding();
   if(bilRetiro) await ajustarSaldoBilletera(bilRetiro.ID_BILLETERA, -monto);
 
-  await notificarUsuarioEnChat(usuario,
-    `✅ Tu retiro de $${monto.toLocaleString("es-AR")} fue procesado. Lo transferimos a tu CBU/CVU.`);
+  const _hora = _selloAuto && _selloAuto.ok ? _selloAuto.horaExacta
+    : (_retiroInstrumento ? '' : (typeof window.nodoHoraExacta === "function" ? window.nodoHoraExacta(new Date()) : new Date().toLocaleTimeString("es-AR")));
+  const _mensajePago = _retiroInstrumento && !_hora
+    ? `Tu retiro de $${monto.toLocaleString("es-AR")} fue procesado. Estamos revisando el registro del horario; no vuelvas a enviar el retiro. Si tenés dudas, escribinos por este chat.`
+    : `✅ Tu retiro de $${monto.toLocaleString("es-AR")} fue procesado a las ${_hora} hs. Lo transferimos a tu CBU/CVU.`;
+  await notificarUsuarioEnChat(usuario,_mensajePago);
 
   toast(`Retiro automático completado · ${usuario} · ${monto.toLocaleString("es-AR")}`, "green");
   {
@@ -12781,7 +13302,8 @@ function cerrarSesion(){
 
 // ── Panel de verificaciones ───────────────────────────────────────────────────
 async function cargarVerificaciones(){
-  window.NodoSalud?.begin('VALIDACION')?.record('DATA','OK','VERIFICACIONES_LOAD');
+  // El OK se anota después de leer, y sólo con oficina: antes se anotaba antes de pedir nada.
+  const _verifSalud = window.NodoSalud?.begin('VALIDACION');
   const hoy = inicioDiaArgentina(); // medianoche AR, no del SO local
   const { data } = await supabaseClient
     .from("verificaciones")
@@ -12789,6 +13311,7 @@ async function cargarVerificaciones(){
     .eq("pc_codigo", pcOperativa)
     .order("created_at", { ascending: false })
     .limit(60);
+  _verifSalud?.record('DATA', !Array.isArray(data) ? 'ERROR' : pcOperativa ? 'OK' : 'UNKNOWN', !Array.isArray(data) ? 'VERIFICACIONES_LOAD_FAILED' : pcOperativa ? 'VERIFICACIONES_LOAD' : 'VALIDACION_SIN_OFICINA');
 
   if(!data){ setBox("tablaVerificaciones",'<div class="small" style="color:var(--muted);text-align:center;padding:20px">Error al cargar.</div>'); return; }
 
@@ -13092,22 +13615,29 @@ async function _chuniorConfirmarPuesto(value, text){
       }
     }catch(_e){}
 
-    // El historial pudo haberse cargado antes de resolver el puesto (pcOperativa vacío) →
-    // recargarlo ahora que la oficina está resuelta, así aparecen las operaciones manuales.
-    try{ if(typeof cargarHistorial==="function") setTimeout(function(){ cargarHistorial(); }, 500); }catch(_e){}
+    // En el primer ingreso, historial, titulares bloqueados y billeteras de Chunior los trae el
+    // arranque por etapas, de a uno y después de dibujar el Inicio (login-y-realtime.js). Antes
+    // salían acá juntos —el historial dos veces— con las solicitudes todavía en camino.
+    const _primerIngreso = !_nodoListo;
+    if(!_primerIngreso){
+      // El historial pudo haberse cargado antes de resolver el puesto (pcOperativa vacío) →
+      // recargarlo ahora que la oficina está resuelta, así aparecen las operaciones manuales.
+      try{ if(typeof cargarHistorial==="function") setTimeout(function(){ cargarHistorial(); }, 500); }catch(_e){}
 
-    // Los titulares bloqueados los pudo haber marcado OTRA PC: hasta ahora cada máquina sólo
-    // conocía los suyos. Se traen de la base ahora que la oficina está resuelta.
-    try{ if(typeof sincronizarTitularesBloqueados==="function") setTimeout(function(){ sincronizarTitularesBloqueados(); }, 800); }catch(_e){}
+      // Los titulares bloqueados los pudo haber marcado OTRA PC: hasta ahora cada máquina sólo
+      // conocía los suyos. Se traen de la base ahora que la oficina está resuelta.
+      try{ if(typeof sincronizarTitularesBloqueados==="function") setTimeout(function(){ sincronizarTitularesBloqueados(); }, 800); }catch(_e){}
+    }
 
     // 5. Si NODO todavía no se finalizó (primer login), hacerlo ahora
-    if(!_nodoListo){
+    if(_primerIngreso){
       finalizarLogin(true);
     }
 
     // 6. Sincronizar billeteras
     //    - Oficina nueva → sync silencioso pero completo (sube todas las que falten)
-    //    - Oficina existente → sync silencioso normal (avisa si hay nuevas en Chunior)
+    //    - Oficina existente → sync silencioso normal (avisa si hay nuevas en Chunior); en el
+    //      primer ingreso lo hace el arranque por etapas
     if(oficina.esNueva){
       toast('🏢 Oficina nueva detectada: '+text+' · Sincronizando billeteras...', 'blue');
       setTimeout(function(){
@@ -13115,7 +13645,7 @@ async function _chuniorConfirmarPuesto(value, text){
           console.warn('sync inicial oficina nueva:', e);
         });
       }, 2500);
-    } else {
+    } else if(!_primerIngreso){
       setTimeout(function(){
         sincronizarBilleterasChunior(true).catch(function(){});
       }, 2500);
@@ -13288,6 +13818,7 @@ let _bilPasivoFirma = '';
 async function _leerSaldosChuniorPasivo(){
   if(!window.chunior || !window.chunior.exec) return;
   if(!_nodoListo) return;
+  if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('billeterasChunior')) return; // espera su paso del arranque
   if(window._cotejoDeclarando) return;                                              // declaración ciega en curso
   if(typeof _watchdog!=='undefined' && _watchdog && _watchdog.busy>0) return;        // no pisar una operación
   if(window._drexCola && (window._drexCola.activo || window._drexCola.pendientes>0)) return;
@@ -16331,11 +16862,16 @@ async function procesarColaVerificacion(){
   }
 }
 
-// Arranca el procesador automático cuando hay Electron
+// Arranca el procesador automático cuando hay Electron. Los dos relojes esperan su paso del arranque
+// por etapas: sin oficina pedían pc_codigo=null cada 5 y 10 segundos desde la pantalla de login.
 if(window.ctrlElectron){
-  setInterval(procesarColaVerificacion, 5000);
+  setInterval(function(){
+    if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
+    return procesarColaVerificacion();
+  }, 5000);
   // Actualiza badge de pendientes cada 10s
   setInterval(async ()=>{
+    if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
     const { count } = await supabaseClient.from("verificaciones")
       .select("id", { count:"exact", head:true })
       .eq("pc_codigo", pcOperativa).eq("estado","PENDIENTE");

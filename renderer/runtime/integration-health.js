@@ -11,12 +11,16 @@
   const states=new Set(['OK','DEGRADED','ERROR','IDLE','UNKNOWN']);
   const FRESH_MS=300000;
   const samples=new Map(),dirty=new Map(),attempts=new Map();
+  // Cuándo empezó y terminó la última lectura completa de cada rama, por código. La usa la
+  // comprobación de llegada (llegada-datos.js) para saber si el panel pidió la lista DESPUÉS de que
+  // el servidor ya tenía lo nuevo. No viaja al servidor.
+  const lecturas=new Map();
   let scope='',epoch=0,flight=null,lastFlush=0,remote=[],remoteReadAt=null,remoteServerAt=null,
     transport='UNKNOWN',transportCode='',transportAt=null;
   const pc=()=>String(root.pcOperativa||root.__pcCodigo||'').trim().toUpperCase();
   function context(){
     if(scope!==pc()){
-      scope=pc();epoch++;samples.clear();dirty.clear();attempts.clear();remote=[];flight=null;lastFlush=0;
+      scope=pc();epoch++;samples.clear();dirty.clear();attempts.clear();lecturas.clear();remote=[];flight=null;lastFlush=0;
       transport='UNKNOWN';transportCode='';transportAt=null;remoteReadAt=null;remoteServerAt=null;
     }
     return scope;
@@ -31,7 +35,16 @@
       errors:Math.min(1000000,(previous?.errors||0)+(state==='ERROR'||state==='DEGRADED'?1:0)),
       duration_ms:bounded(details.duration_ms,86400000),code,
       observed_at:new Date(Math.max(Date.now(),Date.parse(previous?.observed_at||'')+1||0)).toISOString()};
-    samples.set(key,sample);dirty.set(key,sample);return true;
+    samples.set(key,sample);dirty.set(key,sample);
+    if(stage==='DATA'&&code&&(state==='OK'||state==='DEGRADED')){
+      const fin=Date.now();lecturas.set(integration+'|'+code,{inicio:fin-sample.duration_ms,fin});
+    }
+    return true;
+  }
+  function lectura(integration,codigos){
+    context();let ultima=null;
+    for(const codigo of codigos||[]){const l=lecturas.get(integration+'|'+codigo);if(l&&(!ultima||l.inicio>ultima.inicio))ultima=l;}
+    return ultima?{...ultima}:null;
   }
   function errorCode(error){
     // Classify locally; the raw error can contain SQL, URLs, player names or tokens.
@@ -59,12 +72,13 @@
     // record(), but must not cancel a valid legacy read or leave its UI loading.
     // A real context change still invalidates this attempt, including empty -> office.
     const current=()=>{context();return scope===office&&epoch===version&&attempts.get(integration)===attempt;};
-    const observe=(stage,state,code)=>current()&&record(integration,stage,state,{code,duration_ms:Date.now()-started});
+    const observe=(stage,state,code,durationMs)=>current()&&record(integration,stage,state,{code,
+      duration_ms:Number.isFinite(durationMs)?durationMs:Date.now()-started});
     // A newer request or another office must not inherit the outcome of this request.
-    return Object.freeze({current,record:observe,reply(error){
-      if(!error)return observe('CONNECTED','OK');
+    return Object.freeze({current,record:observe,reply(error,durationMs){
+      if(!error)return observe('CONNECTED','OK',null,durationMs);
       const code=errorCode(error);
-      return observe('CONNECTED',code==='NETWORK'||code==='CLIENT_UNAVAILABLE'?'ERROR':code==='RPC_FAILED'?'DEGRADED':'OK',code);
+      return observe('CONNECTED',code==='NETWORK'||code==='CLIENT_UNAVAILABLE'?'ERROR':code==='RPC_FAILED'?'DEGRADED':'OK',code,durationMs);
     },errorCode});
   }
   function snapshot(){
@@ -142,14 +156,63 @@
     CLIENT_UNAVAILABLE:'La aplicación no está conectada',NETWORK:'Sin conexión',FICHAS_SIN_SESION:'Se cayó la sesión de Agentes',
     FICHAS_ILEGIBLES:'El casino no devolvió el saldo',FICHAS_SIN_RESPUESTA:'El casino no contestó',AGENTE_OCUPADO:'El agente está ocupado',
     BILLETERAS_LOAD_FAILED:'No se pudieron leer las billeteras',BILLETERA_NO_MARCADA:'No se pudo cambiar la billetera',
-    BILLETERAS_SIN_SINCRONIZAR:'No se pudo sincronizar con Chunior'};
+    BILLETERAS_SIN_SINCRONIZAR:'No se pudo sincronizar con Chunior',RETIRO_RPC_LENTO:'El servidor tardó más de 3 segundos',
+    RETIRO_RPC_NO_CONFIRMADO:'El servidor no confirmó el estado de la cuenta',
+    RETIRO_RESPUESTA_INVALIDA:'El servidor devolvió una respuesta de retiro inválida',
+    RETIRO_ESTADO_NO_RECONOCIDO:'El servidor devolvió un estado de retiro desconocido',
+    RETIRO_DNI_FORMATO_INVALIDO:'El servidor no aceptó el formato del DNI/CUIL',
+    RETIRO_RECHAZO_NO_CONFIRMADO:'El servidor no confirmó el rechazo',
+    RETIRO_VALIDACION_MODAL_FALLO:'No se pudo mostrar la validación de titularidad',
+    RETIRO_VALIDADOR_NO_CARGADO:'Falta cargar la validación beta del retiro',
+    RETIRO_PAGO_RESULTADO_AMBIGUO:'Agentes no confirmó si el retiro se ejecutó',
+    RETIRO_SELLO_NO_CONFIRMADO:'El pago se hizo, pero no se guardó su hora en el servidor',
+    RETIRO_24H_MATCH_PARCIAL:'Se encontró un retiro, pero otra fuente no respondió',
+    RETIRO_24H_SIN_COMPROBAR:'No se pudo comprobar el límite de retiros',
+    RETIRO_PARCIAL_RESPUESTA_INVALIDA:'El servidor no confirmó el progreso del retiro',
+    NEXO_EXPORT_TRUNCATED:'Quedó incompleto',NEXO_LEGACY_TRUNCATED_8000:'Quedó incompleto'};
   const motivo=code=>MOTIVOS[code]||'No respondió bien';
+  // Lo que se le dice cuando el servidor tiene algo más nuevo que el panel y no termina de llegar.
+  const NO_LLEGA={BANDEJA:'No están llegando las solicitudes nuevas',CHAT:'No están llegando los mensajes nuevos',
+    HISTORIAL:'No aparecen las operaciones nuevas'};
+  const ETAPAS_POSITIVAS={CONEXION:['CONNECTED','DATA']};
+  const hace=ms=>{const min=Math.max(1,Math.floor(ms/60000));return min<120?'hace '+min+' min':'hace '+Math.floor(min/60)+' h';};
+  // 6/11: una muestra vieja no es "sin actividad". El snapshot la marca vencida (para el servidor y
+  // para "Probar ahora" no prueba nada), pero a una persona se le dice lo último que se vio y cuándo:
+  // lo que anduvo hace diez minutos es "anduvo hace 10 min", y una falla no se esconde por vieja —
+  // queda a la vista, con su hora, hasta que esa misma etapa vuelva a dar bien. Nexo anotaba
+  // DEGRADED 7 de cada 8 veces y a los 5 minutos se veía como "sin actividad".
+  // Si la comprobación de llegada (NodoLlegada) ya miró esa parte contra el servidor, manda ella:
+  // "al día" es lo único que se gana comparando datos de verdad, y un faltante es una falla.
   function resumen(){
-    const s=snapshot();
+    const s=snapshot(),ahora=Date.now();
+    const edad=stage=>Math.max(0,ahora-Date.parse(stage.observed_at));
     const partes=s.coverage.filter(branch=>NOMBRES[branch.integration]).map(branch=>{
-      const mala=branch.stages.find(stage=>stage.state==='ERROR'||stage.state==='DEGRADED');
-      return {nombre:NOMBRES[branch.integration],estado:mala?'falla':branch.stages.some(stage=>stage.state==='OK')?'anda':'sin_actividad',
-        detalle:mala?motivo(mala.code):''};
+      const vistas=branch.stages.filter(stage=>stage.evidence!=='NO_SAMPLE'&&stage.evidence!=='CLOCK_SKEW'&&Number.isFinite(Date.parse(stage.observed_at)));
+      const malas=vistas.filter(stage=>stage.reported_state==='ERROR'||stage.reported_state==='DEGRADED');
+      const mala=malas.find(stage=>edad(stage)<=FRESH_MS)||malas.sort((a,b)=>edad(a)-edad(b))[0];
+      const nombre=NOMBRES[branch.integration];let parte;
+      if(mala){
+        parte={nombre,estado:'falla',detalle:motivo(mala.code)};
+        if(edad(mala)>FRESH_MS){parte.hace=hace(edad(mala));parte.detalle+=' · '+parte.hace;}
+      }else{
+        // Un OK que la operación siguiente todavía no confirmó (AWAITING_EVIDENCE) cuenta como lo
+        // último que anduvo: si no, cada consulta en vuelo se vería un instante como "sin actividad".
+        const permitidas=ETAPAS_POSITIVAS[branch.integration]||['DATA','EFFECT','RENDER'];
+        const buenas=vistas.filter(stage=>permitidas.includes(stage.stage)
+          &&(stage.reported_state==='OK'||stage.code==='AWAITING_EVIDENCE'));
+        const ultima=buenas.length?Math.min(...buenas.map(edad)):null;
+        parte=ultima===null?{nombre,estado:'sin_actividad',detalle:''}:ultima<=FRESH_MS?{nombre,estado:'anda',detalle:''}
+          :{nombre,estado:'anduvo',detalle:'',hace:hace(ultima)};
+      }
+      const llegada=typeof root.NodoLlegada?.estado==='function'?root.NodoLlegada.estado(branch.integration):null;
+      if(llegada){
+        parte.llegada=llegada.veredicto;
+        if(llegada.veredicto==='no_llega'){
+          parte.estado='falla';parte.detalle=NO_LLEGA[branch.integration]||motivo(null);
+          if(Number.isFinite(llegada.desde)){parte.hace=hace(ahora-llegada.desde);parte.detalle+=' · desde '+parte.hace;}
+        }else if(llegada.veredicto==='llega'&&parte.estado!=='falla'){parte.estado='al_dia';delete parte.hace;}
+      }
+      return parte;
     });
     if(s.transport==='ERROR')partes.unshift({nombre:'Aviso al servidor',estado:'falla',detalle:'No se pudo enviar el estado'});
     return {oficina:s.pc,partes};
@@ -169,5 +232,5 @@
   async function refresh(){
     context();lastFlush=0;await flush();return show();
   }
-  return Object.freeze({record,begin,errorCode,flush,snapshot,show,refresh,resumen,motivo});
+  return Object.freeze({record,begin,errorCode,flush,snapshot,show,refresh,resumen,motivo,lectura});
 });

@@ -255,6 +255,8 @@
   },800);
 
   setInterval(function(){
+    // Los botones viven en el chat y en el chat chico del Inicio: si no se ve ninguno, no se buscan.
+    if(window.nodoSeVe && !window.nodoSeVe(document.getElementById("viewChat")) && !window.nodoSeVe(document.getElementById("v15Quickbar"))) return;
     try{ensureMacroButton()}catch(_e){}
   },3000);
 })();

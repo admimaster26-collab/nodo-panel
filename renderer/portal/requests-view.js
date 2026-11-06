@@ -55,6 +55,9 @@ const api = {};
     const parciales = _rep.parciales, tomadas = _rep.tomadas, pendientes = _rep.pendientes;
     deps.window._parcialesEnProceso = parciales;
     deps.window._tomadasEnProceso = tomadas;
+    // El número que ve el operador. Discord muestra ESTE, no uno contado aparte (Juan, 2/11).
+    // Va con la lista de la que salió, para no usarlo si la lista cambió y todavía no se redibujó.
+    deps.window._nodoPendientesPantalla = { n: pendientes.length, lista: deps.V154P.solicitudes, largo: all.length };
     const _enProceso = parciales.length + tomadas.length;
     try{
       const bp = deps.document.getElementById("btnParcialesEnProceso");

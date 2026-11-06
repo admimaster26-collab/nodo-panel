@@ -32,45 +32,54 @@ async function _nexoCargarOpsBeta(pc){
       const ctx = (rawCtx && rawCtx.beta) ? rawCtx.beta : rawCtx;
       if(!ctx || ctx.enabled !== true || (Array.isArray(ctx.offices) && !ctx.offices.includes(pc))) return null;
     }
-    if(window._nexoCapCache[pc] !== true){
+    if(!(Date.now() - window._nexoCapCache[pc] >= 0 && Date.now() - window._nexoCapCache[pc] < 60000)){
       const capRes = await window.panelAPI.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: pc, p_activate: false });
       const capData = capRes && capRes.data;
       const caps = (capData && Array.isArray(capData.capabilities)) ? capData.capabilities : [];
-      if(!capData || capData.ok !== true || capData.enabled !== true || !caps.includes('nexo.export.v1')) return null;
-      window._nexoCapCache[pc] = true;
+      if(capRes?.error || !capData || capData.ok !== true || capData.contract !== 'nodo.beta.v1' || capData.scope?.pc_codigo !== pc) throw new Error('NEXO_CAPABILITY_CONTRACT');
+      if(!caps.includes('nexo.export.v1')) return null;
+      window._nexoCapCache[pc] = Date.now();
     }
     let todas = [], cursor = null, paginas = 0, total = null, completo = true;
-    while(paginas < 16){
+    const cursors = new Set();
+    while(true){
       const r = await window.panelAPI.rpc('nodo_beta_nexo_export_v1', { p_pc_codigo: pc, p_limit: 500, p_cursor: cursor });
-      if(!r || r.error || !r.data || r.data.ok !== true || !Array.isArray(r.data.rows)) return null;
+      if(!r || r.error || !r.data || r.data.ok !== true || r.data.contract !== 'nodo.beta.v1' || r.data.scope?.pc_codigo !== pc || !Array.isArray(r.data.rows)) throw new Error('NEXO_INVALID_PAGE');
+      if(pc !== String(window.pcOperativa || pcOperativa || '').trim().toUpperCase()) throw new Error('NEXO_CONTEXT_CHANGED');
+      if(r.data.requiere_revision) throw new Error('NEXO_REVISION_REQUIRED');
       todas = todas.concat(r.data.rows);
       total = r.data.total != null ? Number(r.data.total) : total;
       paginas++;
-      if(!r.data.has_more || !r.data.next_cursor){ completo = true; break; }
+      if(r.data.has_more === false){ completo = true; break; }
+      const cursorKey = JSON.stringify(r.data.next_cursor);
+      if(r.data.has_more !== true || !r.data.rows.length || !r.data.next_cursor || cursors.has(cursorKey)) throw new Error('NEXO_INVALID_CURSOR');
+      cursors.add(cursorKey);
       cursor = r.data.next_cursor;
       completo = false;
     }
     const ult = todas.length ? todas[todas.length - 1] : null;
     window._nexoEstado = { mode: 'beta', completo: completo, analizadas: todas.length, total: total, corteFecha: ult ? ult.created_at : null };
     return todas;
-  }catch(_e){ return null; }
+  }catch(_e){ return {error:{code:/^NEXO_/.test(_e.message)?_e.message:'NEXO_READ_FAILED'}}; }
 }
 async function _nexoCargarOpsCompletas(force){
   const FRESH = 15*60*1000;
   const health = window.NodoSalud?.begin('NEXO');
   const pc = String((typeof pcOperativa!=='undefined' && pcOperativa) || window.pcOperativa || '').trim().toUpperCase();
-  if(!force && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
+  if(!force && window._nexoOpsCachePc===pc && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
   const betaRows = await _nexoCargarOpsBeta(pc);
+  if(betaRows?.error){ health?.record('DATA','ERROR',betaRows.error.code); throw Object.assign(new Error('No se pudo completar la exportación desde el servidor.'),betaRows.error); }
   if(Array.isArray(betaRows)){
     window._nexoOpsCache = betaRows;
+    window._nexoOpsCachePc = pc;
     window._nexoOpsCacheAt = Date.now();
     health?.reply(null);
     health?.record('DATA', window._nexoEstado.completo ? 'OK' : 'DEGRADED', window._nexoEstado.completo ? 'NEXO_EXPORT_COMPLETE' : 'NEXO_EXPORT_TRUNCATED');
     return betaRows;
   }
-  if(!force && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
+  if(!force && window._nexoOpsCachePc===pc && window._nexoOpsCache && (Date.now()-window._nexoOpsCacheAt) < FRESH) return window._nexoOpsCache;
   try{
-    if(typeof supabaseClient==='undefined' || !supabaseClient) return window._nexoOpsCache||[];
+    if(typeof supabaseClient==='undefined' || !supabaseClient) return window._nexoOpsCachePc===pc ? window._nexoOpsCache||[] : [];
     const pcs = (typeof pcAliasesHist==='function') ? pcAliasesHist() : [];
     let todas = [], desde = 0; const PAG = 1000, MAX = 8000;
     while(desde < MAX){
@@ -86,6 +95,7 @@ async function _nexoCargarOpsCompletas(force){
     }
     if(todas.length){
       window._nexoOpsCache = todas;
+      window._nexoOpsCachePc = pc;
       window._nexoOpsCacheAt = Date.now();
       const completo = todas.length < MAX;
       const ult = todas[todas.length - 1];
@@ -94,7 +104,7 @@ async function _nexoCargarOpsCompletas(force){
       health?.record('DATA', completo ? 'OK' : 'DEGRADED', completo ? 'NEXO_LEGACY_OK' : 'NEXO_LEGACY_TRUNCATED_8000');
     }
   }catch(_e){}
-  return window._nexoOpsCache || [];
+  return window._nexoOpsCachePc===pc ? window._nexoOpsCache || [] : [];
 }
 // opsExtra = historia completa de Supabase. Se mergea con el archivo local + movStore (dedup por id)
 // → el payload lleva TODO el historial, no solo lo de esta sesión.
@@ -354,11 +364,19 @@ window.nexo = async function(cmd){
 // Sync periódico → Nexo redibuja en cada uno (escribe siempre, aunque no cambien datos, así el mtime
 // se actualiza y Nexo relee). Configurable con window._nexoIntervaloMs (default 90s).
 window._nexoIntervaloMs = window._nexoIntervaloMs || 90000;
-try{ setInterval(function(){ nexoSync(false); }, window._nexoIntervaloMs); }catch(_e){}
-// Los pedidos de Nexo se revisan en el mismo ciclo. Arranca APAGADO (ver nexoPedidosActivar):
-// mientras el fix de panel_vincular_usuario no esté aplicado, aplicar pedidos duplica usuarios.
-try{ setInterval(function(){ _nexoProcesarPedidos(); }, window._nexoIntervaloMs); }catch(_e){}
-try{ setTimeout(function(){ nexoSync(true); }, 20000); }catch(_e){}   // primer envío (visible en consola/toast)
+// Arranca con la oficina ya elegida: lo llama el arranque por etapas (login-y-realtime.js), último.
+// Antes corría desde que abría la página y, en el login, bajaba la historia entera de la oficina
+// de la sesión anterior. Los tiempos son los de siempre, contados desde acá.
+let _nexoArrancado = false;
+window.nexoArrancar = function(){
+  if(_nexoArrancado) return;
+  _nexoArrancado = true;
+  try{ setInterval(function(){ nexoSync(false); }, window._nexoIntervaloMs); }catch(_e){}
+  // Los pedidos de Nexo se revisan en el mismo ciclo. Arranca APAGADO (ver nexoPedidosActivar):
+  // mientras el fix de panel_vincular_usuario no esté aplicado, aplicar pedidos duplica usuarios.
+  try{ setInterval(function(){ _nexoProcesarPedidos(); }, window._nexoIntervaloMs); }catch(_e){}
+  try{ setTimeout(function(){ nexoSync(true); }, 20000); }catch(_e){}   // primer envío (visible en consola/toast)
+};
 
 // ── Base local de JUGADORES (CRM-lite · portado de NexoBetaChan 1.0.85) ──────────
 // Modelo PAM (KYC-lite): por jugador guarda teléfonos (verificación), INSTRUMENTOS DE PAGO

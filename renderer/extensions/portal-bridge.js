@@ -157,16 +157,23 @@
     return chat.cargarChatPortalActual(false);
   };
   window.v15EnviarChatCompacto = chat.enviarChatPortal;
+  // La que pide la lista de chats al servidor. window.cargarChats la pisan más adelante con un
+  // repintado (chat-hilos.js), así que el reloj del panel llama a ésta por su nombre.
+  window.nodoCargarChatsPortal = chat.cargarChatsPortal;
 
-  function start(){
-    setTimeout(()=>requests.cargarSolicitudesPortal(true), 800);
-    setTimeout(()=>chat.cargarChatsPortal(true), 1200);
-    setInterval(()=>requests.cargarSolicitudesPortal(true), 60000);
-    setInterval(()=>chat.cargarChatsPortal(true), 15000);
-    setInterval(()=>{ if(V154P.chatActual) chat.cargarChatPortalActual(true); }, 5000);
-  }
-  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
-  else start();
+  // Acá había un reloj propio: solicitudes a los 0,8 s y cada 60 s, chats a los 1,2 s y cada 15 s,
+  // la conversación abierta cada 5 s. Arrancaba con la página, antes del login, y pedía para la
+  // oficina de la sesión anterior o para P1. Después del login repetía lo que ya pide NodoRealtime
+  // (login-y-realtime.js), que ahora es el único dueño de esas lecturas (Juan, 6/11).
+
+  // El pago parcial lee las billeteras en el momento. Si el operador lo abre recién elegido el
+  // puesto, antes de que lleguen, se esperan en vez de mostrar el cartel sin billeteras.
+  const _abrirModalRetiroV2 = window.abrirModalRetiroV2;
+  if(typeof _abrirModalRetiroV2 === 'function') window.abrirModalRetiroV2 = function(id, opts){
+    const espera = typeof window.nodoAsegurarBilleteras === 'function' ? window.nodoAsegurarBilleteras() : null;
+    if(espera) return espera.then(() => _abrirModalRetiroV2.call(this, id, opts));
+    return _abrirModalRetiroV2.call(this, id, opts);
+  };
 })();
 
 
@@ -220,6 +227,8 @@
     repararInputsOperacionManual();
     instalarFocoManual();
     setInterval(function(){
+      // Con la tarjeta fuera de la vista no hay nada que reparar: al tocar un campo se repara igual.
+      if(window.nodoSeVe && !window.nodoSeVe(document.getElementById('cardOperacionManual'))) return;
       repararInputsOperacionManual();
       instalarFocoManual();
     }, 2500);

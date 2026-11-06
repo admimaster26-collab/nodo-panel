@@ -40,3 +40,16 @@ test('estabiliza el cero durante 2,2 segundos y conserva el primer ticket por no
   const first = { usuario: 'Ana' }, other = { usuario: ' ANA ' };
   assert.equal(Metrics.snapshot([first, other], {}).byUser.get('ANA'), first);
 });
+
+// pepe, 6/11: "Recibimos tus datos…" sale con origen OPERADOR y auto:true. Antes contaba como que
+// el operador había leído y apagaba el aviso de una consulta que nadie había visto.
+test('una respuesta automática no marca como leído lo del jugador', () => {
+  const ticket = { usuario: 'pepe', masterId: 9, accepted: true, thread: [
+    { origen: 'USUARIO', fecha: '2026-11-06T16:06:51Z' },
+    { origen: 'OPERADOR', auto: true, operador: 'NODO', fecha: '2026-11-06T16:06:51.963Z' },
+    { origen: 'USUARIO', fecha: '2026-11-06T16:10:40Z' }
+  ] };
+  assert.equal(Metrics.unreadForTicket(ticket, {}), 2);
+  const conOperador = { ...ticket, thread: [...ticket.thread, { origen: 'OPERADOR', fecha: '2026-11-06T16:12:00Z' }] };
+  assert.equal(Metrics.unreadForTicket(conOperador, {}), 0, 'una respuesta de una persona sí lo apaga');
+});

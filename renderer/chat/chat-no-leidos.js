@@ -308,6 +308,9 @@
   let _firmaNoLeidos = '';
   setInterval(function(){
     try{
+      // Este sí corre con el chat minimizado o la ventana abajo: es el contador y el aviso de
+      // mensaje nuevo. Lo único que espera es el puesto: antes no hay chats de ninguna oficina.
+      if(window.nodoOficinaLista && !window.nodoOficinaLista()) return;
       notifyNewMessages();
       const puestos = (document.querySelectorAll('.wq2-unread-final')||[]).length;
       // Entran también los que esperan: ahora su fila muestra el número que trae el servidor.

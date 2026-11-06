@@ -354,6 +354,8 @@
   // (con el tab Interno muerto y datos de otro módulo).
   setInterval(function(){
     const box=document.getElementById("chatList") || document.getElementById("v15ChatList");
+    // Leer innerHTML arma de nuevo el texto de toda la lista: con la lista fuera de la vista, no.
+    if(window.nodoSeVe && !window.nodoSeVe(box)) return;
     if(box && !box.innerHTML.includes("wq2-wrap")){
       if(typeof renderChatListStep2Final === "function") renderChatListStep2Final();
       else renderChatListStep2();

@@ -36,6 +36,7 @@
      "runtime/desconexiones-estaticas.js",
      "runtime/integration-health.js",
      "runtime/pruebas-sistema.js",
+     "runtime/llegada-datos.js",
      "chat/message-model.js",
      "chat/metrics.js",
      "chat/beta-chat.js"
@@ -98,6 +99,7 @@
    "sources": [
     "portal/data.js",
     "portal/withdrawal-alerts.js",
+    "portal/withdrawal-instrument.js",
     "portal/requests-view.js",
     "portal/requests.js",
     "portal/rejections.js",

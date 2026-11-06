@@ -1,7 +1,24 @@
 'use strict';
+const fs = require('node:fs');
 const path = require('node:path');
 
-function createPanelWindow({ BrowserWindow, rootDir, icon }) {
+const ESPERA_TRABADA_MS = 60 * 1000;
+const TOPE_LOG_BYTES = 512 * 1024;
+
+// Una línea por evento, con fecha. Si el archivo pasa el tope se empieza de nuevo.
+function anotarFalla(logPath, texto) {
+  const linea = new Date().toISOString() + ' ' + texto + '\n';
+  console.warn('[main] ' + texto);
+  if (!logPath) return;
+  try {
+    let tam = 0;
+    try { tam = fs.statSync(logPath).size; } catch (_) {}
+    if (tam > TOPE_LOG_BYTES) fs.writeFileSync(logPath, linea);
+    else fs.appendFileSync(logPath, linea);
+  } catch (_) {}
+}
+
+function createPanelWindow({ BrowserWindow, rootDir, icon, logPath }) {
   let mainWindow = null;
   function createMainWindow() {
     mainWindow = new BrowserWindow({
@@ -24,18 +41,31 @@ function createPanelWindow({ BrowserWindow, rootDir, icon }) {
     mainWindow.loadFile('NODO · OPERATIVO LITE.htm');
     mainWindow.on('closed', () => { mainWindow = null; });
 
-    // Recovery: si el renderer se cuelga / crashea (esto causa la pantalla blanca)
+    // Recovery: si el renderer se muere (pantalla blanca) se recarga. Si sólo se traba, se espera:
+    // antes se recargaba al primer "no responde", y un arranque pesado (el login de Chunior carga
+    // todo junto) terminaba en recarga, que volvía a cargar todo. Era el "se traba, se reinicia y
+    // seguimos" de la PC de Sánchez (6/11). Todo queda en nodo-fallas.log para poder mirarlo.
+    let trabadoTimer = null;
     mainWindow.webContents.on('render-process-gone', (_e, details) => {
-      console.error('[main] render-process-gone:', details);
+      anotarFalla(logPath, 'se cerro la pantalla: ' + JSON.stringify(details));
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.reload();
       }
     });
     mainWindow.webContents.on('unresponsive', () => {
-      console.warn('[main] renderer unresponsive — forcing reload');
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.reload();
-      }
+      anotarFalla(logPath, 'pantalla trabada');
+      if (trabadoTimer) return;
+      trabadoTimer = setTimeout(() => {
+        trabadoTimer = null;
+        anotarFalla(logPath, 'sigue trabada despues de ' + (ESPERA_TRABADA_MS / 1000) + ' s: se recarga');
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload();
+      }, ESPERA_TRABADA_MS);
+    });
+    mainWindow.webContents.on('responsive', () => {
+      if (!trabadoTimer) return;
+      clearTimeout(trabadoTimer);
+      trabadoTimer = null;
+      anotarFalla(logPath, 'se destrabo sola');
     });
 
     // Zoom Ctrl+= / Ctrl+- / Ctrl+0 (teclado)
@@ -74,4 +104,4 @@ function createPanelWindow({ BrowserWindow, rootDir, icon }) {
   return { create: createMainWindow, get current() { return mainWindow; }, refocus };
 }
 
-module.exports = { createPanelWindow };
+module.exports = { createPanelWindow, anotarFalla };

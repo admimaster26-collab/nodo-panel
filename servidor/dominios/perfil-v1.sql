@@ -47,6 +47,33 @@ begin
  return v_aliases;
 end $$;
 
+-- Autoridad compartida de vigencia: evaluar la pareja antes de aplicar filtros
+-- de pantalla/paginacion. Una reversa no representa una nueva carga o retiro.
+-- La misma oficina (incluidos aliases) y el mismo usuario delimitan la pareja.
+create or replace function operaciones.historial_evaluado_v1(p_pc_codigos text[],p_usuario text default null)
+returns table(fila public.historial_ops,vigente boolean,requiere_revision boolean)
+language sql stable security invoker set search_path='' as $$
+ with scoped as materialized (
+   select h fila,lower(btrim(h.usuario)) usuario_key from public.historial_ops h
+   where upper(btrim(h.pc_codigo))=any(p_pc_codigos)
+     and (p_usuario is null or lower(btrim(h.usuario))=lower(btrim(p_usuario)))
+ ), reversas as (
+   select (s.fila).reversion_de id,s.usuario_key,count(*) n from scoped s
+   where (s.fila).reversion_de is not null group by (s.fila).reversion_de,s.usuario_key
+ )
+ select s.fila,
+   ((s.fila).reversion_de is null and r.n is null and operaciones.estado_confirmado_v1((s.fila).estado)),
+   (((s.fila).reversion_de is not null and not coalesce(
+      (b.fila).id is not null and (b.fila).reversion_de is null and upper(btrim((b.fila).estado))='REVERTIDA'
+      and operaciones.estado_confirmado_v1((s.fila).estado) and abs((s.fila).monto)=abs((b.fila).monto)
+      and ((upper((s.fila).tipo)='CARGA' and upper((b.fila).tipo)='RETIRO')
+        or (upper((s.fila).tipo)='RETIRO' and upper((b.fila).tipo)='CARGA')),false))
+    or (upper(btrim(coalesce((s.fila).estado,'')))='REVERTIDA' and coalesce(r.n,0)<>1))
+ from scoped s
+ left join reversas r on r.id=(s.fila).id and r.usuario_key is not distinct from s.usuario_key
+ left join scoped b on (b.fila).id=(s.fila).reversion_de and b.usuario_key is not distinct from s.usuario_key;
+$$;
+
 create or replace function identidad.perfil_v1(p_pc_codigo text,p_usuario text)
 returns jsonb language plpgsql stable security invoker set search_path='' as $$
 declare v_pc text:=upper(btrim(p_pc_codigo)); v_u text:=lower(btrim(p_usuario)); v_pcs text[];
@@ -56,19 +83,8 @@ begin
    raise exception using errcode='22023',message='BETA_INVALID_USER';
  end if;
  v_pcs:=acceso.oficinas_autorizadas(v_pc);
- with scoped as materialized (
-   select h.* from public.historial_ops h
-   where upper(btrim(h.pc_codigo))=any(v_pcs) and lower(btrim(h.usuario))=v_u
- ), reversas as (
-   select reversion_de id,count(*) n from scoped where reversion_de is not null group by reversion_de
- ), evaluadas as (
-   select h.*, (h.reversion_de is null and r.n is null and operaciones.estado_confirmado_v1(h.estado)) vigente,
-     ((h.reversion_de is not null and not coalesce(
-       base.id is not null and base.reversion_de is null and upper(btrim(base.estado))='REVERTIDA'
-       and operaciones.estado_confirmado_v1(h.estado) and abs(h.monto)=abs(base.monto)
-       and ((upper(h.tipo)='CARGA' and upper(base.tipo)='RETIRO') or (upper(h.tipo)='RETIRO' and upper(base.tipo)='CARGA')),false))
-       or (upper(btrim(coalesce(h.estado,'')))='REVERTIDA' and coalesce(r.n,0)<>1)) requiere_revision
-   from scoped h left join reversas r on r.id=h.id left join scoped base on base.id=h.reversion_de
+ with evaluadas as (
+   select (e.fila).*,e.vigente,e.requiere_revision from operaciones.historial_evaluado_v1(v_pcs,v_u) e
  )
  select count(*) total_ops,
    count(*) filter(where upper(coalesce(h.tipo,''))='CARGA' and h.vigente) cargas,
@@ -208,7 +224,7 @@ begin
  perform acceso.autorizar(p_token,p_pc_codigo);
  return operaciones.perfil_detalle_v1(p_pc_codigo,p_usuario,p_limit,p_cursor);
 end $$;
-revoke all on function operaciones.estado_confirmado_v1(text),acceso.oficinas_autorizadas(text),identidad.perfil_v1(text,text),
+revoke all on function operaciones.estado_confirmado_v1(text),operaciones.historial_evaluado_v1(text[],text),acceso.oficinas_autorizadas(text),identidad.perfil_v1(text,text),
  operaciones.perfil_detalle_v1(text,text,integer,jsonb) from public,anon,authenticated;
 revoke all on function public.nodo_beta_perfil_v1(text,text,text),
  public.nodo_beta_perfil_detalle_v1(text,text,text,integer,jsonb) from public,anon,authenticated;

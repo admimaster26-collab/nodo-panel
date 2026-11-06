@@ -92,7 +92,7 @@ function _agentesBadgePintar(){
     el.style.display='flex';
   }catch(_e){}
 }
-try{ setInterval(_agentesBadgePintar, 1000); }catch(_e){}
+try{ setInterval(function(){ if(!document.hidden) _agentesBadgePintar(); }, 1000); }catch(_e){}   // con la ventana abajo no se pinta
 
 window.estadoAgentes = function(){
   const b = window._drexGlobalBusy;

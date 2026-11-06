@@ -191,3 +191,45 @@ test('Discord y la lista coinciden: la tomada que está en la cola sigue contand
   const p = presenciaDe([S(1, 'CARGA', 'EN_REVISION')], { _colaCargaEstado: { '1': { estado: 'espera', pos: 1, cid: 'c' } } });
   assert.equal(p.pendientes, 1, 'en la lista principal se ve; Discord tiene que contarla igual');
 });
+
+// Juan, 2/11: Discord decía "8 solicitudes pendientes" y la lista de Inicio "No hay solicitudes".
+// Discord publica el número que dibujó la lista, no uno contado aparte.
+test('Discord publica el mismo número que dibujó la lista de Inicio', () => {
+  // CERRADO: la lista no lo tiene entre los estados cerrados y lo muestra; la cuenta propia de
+  // Discord sí lo descartaba. Dos criterios, dos números.
+  const lista = [S(1, 'CARGA', 'PENDIENTE'), S(2, 'CARGA', 'CERRADO')];
+  const r = armarLista(lista);
+  assert.equal(r.nodos.statPendientes.textContent, '2');
+  assert.equal(presenciaDe(lista).pendientes, 1, 'sin el número de la pantalla, Discord opinaba distinto');
+  const p = presenciaDe(lista, { _nodoPendientesPantalla: r.window._nodoPendientesPantalla });
+  assert.equal(p.details, '2 solicitudes pendientes', 'manda lo que se ve en pantalla');
+});
+
+test('si la lista cambió y todavía no se dibujó, Discord cuenta con el mismo criterio', () => {
+  const lista = [S(1, 'CARGA', 'PENDIENTE')];
+  const r = armarLista(lista);
+  assert.equal(r.window._nodoPendientesPantalla.n, 1);
+  lista.push(S(2, 'CARGA', 'PENDIENTE'));
+  const p = presenciaDe(lista, { _nodoPendientesPantalla: r.window._nodoPendientesPantalla });
+  assert.equal(p.pendientes, 2, 'el número guardado es de una lista más corta: no se usa');
+});
+
+test('si no se pudo consultar, Discord no publica un número que puede ser viejo', () => {
+  const lista = [S(1, 'CARGA', 'PENDIENTE')];
+  const enviados = [];
+  const window = {
+    NodoDomain: { parciales, presencia }, V154P: { solicitudes: lista, solicitudesErrorAt: Date.now() },
+    _retiroParcialInfo: () => ({ hasProg: false }), _colaCargaEstado: {},
+    ctrlElectron: { discordPresencia: (p) => { enviados.push(p); return Promise.resolve(); } }
+  };
+  const ctx = { window, setInterval: () => 0, Promise, Date, String, console };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'renderer', 'core', 'discord-presencia.js'), 'utf8'), ctx);
+  window.actualizarPresenciaDiscord(true);
+  assert.equal(enviados[0].details, 'Sin datos: no se pudo consultar');
+});
+
+test('cada minuto le avisa a main que el panel sigue vivo, aunque nada haya cambiado', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'core', 'discord-presencia.js'), 'utf8');
+  assert.match(src, /setInterval\(function\(\)\{ window\.actualizarPresenciaDiscord\(true\); \}, 60000\)/);
+});

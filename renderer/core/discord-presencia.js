@@ -15,8 +15,15 @@
     try{
       const dom = window.NodoDomain && window.NodoDomain.presencia;
       if(!dom) return null;
+      const V = window.V154P || {};
+      const pantalla = window._nodoPendientesPantalla;
       return dom.armar({
-        solicitudes: (window.V154P && window.V154P.solicitudes) || [],
+        solicitudes: V.solicitudes || [],
+        // Lo que muestra la lista de Inicio, tal cual. Si todavía no se dibujó, o la lista cambió
+        // después, se cuenta abajo con el mismo criterio.
+        pendientes: (pantalla && pantalla.lista === V.solicitudes && pantalla.largo === (V.solicitudes || []).length) ? pantalla.n : undefined,
+        // Si el último refresco falló, no se publica un número que puede ser viejo.
+        sinDatos: !!V.solicitudesErrorAt,
         version: window._versionApp || '',
         pc: (typeof pcOperativa !== 'undefined' ? pcOperativa : '') || window.pcOperativa || '',
         // El MISMO criterio con el que la pantalla decide qué queda en la lista de pendientes. Un
@@ -58,6 +65,8 @@
     }catch(_e){}
   };
 
-  // Cada minuto, aunque no haya cambiado nada: el "hace 3 min" tiene que envejecer solo.
-  try{ setInterval(function(){ window.actualizarPresenciaDiscord(); }, 60000); }catch(_e){}
+  // Cada minuto, aunque no haya cambiado nada: el "hace 3 min" tiene que envejecer solo, y main
+  // tiene que saber que el panel sigue vivo. Si deja de oírlo 5 minutos, borra la presencia en vez
+  // de dejar un número viejo a la vista.
+  try{ setInterval(function(){ window.actualizarPresenciaDiscord(true); }, 60000); }catch(_e){}
 })();

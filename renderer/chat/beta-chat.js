@@ -150,7 +150,8 @@
         if(String(result.chat_id) !== String(chatId) || !Array.isArray(result.rows) ||
           result.rows.some(row=>!validId(row.id)) || !Number.isSafeInteger(result.counts?.unread) || result.counts.unread < 0) throw new Error('BETA_INVALID_MESSAGES');
         if((countRevisions.get(String(chatId))||0)<=countVersion)setCount(chatId,Number(result.counts?.unread));
-        if(!options.beforeId)observeLegacy(chatId,result.legacy_thread);
+        // Las copias del hilo viejo ya llegaron con su número en rows: no son mensajes sin identificar.
+        if(!options.beforeId)observeLegacy(chatId,root.NodoChatMessage?.sinCopias?.(result.legacy_thread,result.rows)??result.legacy_thread);
         publish('READY'); return result;
       } catch(e) { if(current(version,requestedPc))publish('ERROR',e.message); throw e; }
       finally { if(pages.get(key)===pending)pages.delete(key); }

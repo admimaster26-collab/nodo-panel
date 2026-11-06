@@ -4,6 +4,7 @@
 })(globalThis, function(){
   'use strict';
   const upper = value => String(value ?? '').trim().toUpperCase();
+  const COPIA_SEGUNDOS = 10, CHAT_VIGENTE_MS = 3 * 24 * 60 * 60 * 1000;
   function sourceType(m){
     const explicit = m.origen || m.tipo_emisor || m.TIPO_EMISOR || m.emisor_tipo;
     if(explicit) return upper(explicit);
@@ -65,6 +66,56 @@
     const m = normalize(message);
     return role(m) === 'USUARIO' && !m.imagen_url && FILLER.test(m.mensaje.trim());
   }
+  // El chat se guarda en dos lados: la tabla nueva y una copia en el hilo de la solicitud, que es lo
+  // único que leen los NODO sin actualizar. Por el canal nuevo llegan las dos cosas: si esta oficina
+  // ya anda por ahí, la copia sobra. Mismo lado, mismo texto y mismo segundo. Lo que existe sólo en
+  // el hilo sigue saliendo.
+  function sinCopias(hilo, filas){
+    const segundo = v => { const t = Date.parse(String(v || '').slice(0, 19) + 'Z'); return Number.isFinite(t) ? t / 1000 : null; };
+    const lado = m => (role(m) === 'USUARIO' ? 'U|' : 'O|') + String(m.mensaje ?? '').trim();
+    const ya = new Map();
+    for(const f of filas || []){
+      const s = segundo(f.created_at || f.fecha);
+      if(s !== null) ya.set(lado(f), (ya.get(lado(f)) || []).concat(s));
+    }
+    return (hilo || []).filter(m => {
+      const s = segundo(m.fecha);
+      return !(s !== null && (ya.get(lado(m)) || []).some(x => Math.abs(x - s) <= COPIA_SEGUNDOS));
+    });
+  }
+  // El chat que el jugador está leyendo es el último que abrió, si sigue abierto y con movimiento.
+  // Uno abierto de hace meses no lo lee nadie: escribir ahí dejaba el mensaje donde nadie mira y NODO
+  // igual decía "enviado". Sin chat vigente, el mensaje va al hilo que el Portal lee por usuario.
+  function chatVigente(sesiones, usuario, ahora){
+    const u = upper(usuario);
+    const propias = (sesiones || []).filter(s => u && upper(s.usuario || s.USUARIO) === u);
+    if(!propias.length) return '';
+    const ultima = propias.reduce((a, b) => Number(b.sesion_id || b.id || 0) > Number(a.sesion_id || a.id || 0) ? b : a);
+    if(['CERRADO','RESUELTA'].includes(upper(ultima.estado))) return '';
+    const cuando = Date.parse(ultima.updated_at || ultima.fecha_ultimo || ultima.created_at || '');
+    return Number.isFinite(cuando) && ahora - cuando <= CHAT_VIGENTE_MS ? String(ultima.chat_id || '') : '';
+  }
+  // Una conversación, un solo escritor. Todo chat abierto desde el Portal tiene una solicitud puente
+  // para las PCs viejas. Si el puente decidía, el mensaje siempre iba al hilo viejo y el canal nuevo
+  // no escribía nunca. Con NODO en el canal nuevo y el chat abierto escribe el canal nuevo. El estado
+  // de la bandeja se sigue guardando aparte, sin el mensaje.
+  function escritor(ticket, hayMensaje){
+    const t = ticket || {};
+    if(!t._canalNuevo) return 'HILO';
+    if(!t._legacyOwner) return 'CANAL';
+    return hayMensaje && t._beta === true && !t.cerrado ? 'CANAL' : 'HILO';
+  }
+  // Cerrar una consulta es cerrar al jugador, no una sesión suelta. Quedan chats abiertos de meses
+  // atrás del mismo usuario y cada uno es una fila: al cerrar uno aparecía el siguiente con el mismo
+  // nombre, y parecía que el botón no andaba. 107 jugadores tenían más de uno abierto el 1/11.
+  function chatsDeLaConsulta(ticket, abiertos){
+    if(!ticket?._chatId) return [];
+    const usuario = upper(ticket.usuario), porChat = new Map([[String(ticket._chatId), ticket]]);
+    for(const t of abiertos || []){
+      if(t?._chatId && usuario && upper(t.usuario) === usuario && !porChat.has(String(t._chatId))) porChat.set(String(t._chatId), t);
+    }
+    return [...porChat.values()];
+  }
   function merge(existing, incoming){
     const result = Object.assign({}, existing);
     for(const [name,value] of Object.entries(incoming || {})){
@@ -79,5 +130,5 @@
     return text.replace(/⟦AYUDA:inicio⟧/g, '[Botón: Ver opciones de ayuda]')
       .replace(/⟦AYUDA:revisar_envio⟧/g, '[Botón: Revisar una transferencia enviada]');
   }
-  return Object.freeze({ role, normalize, author, className, key, isFiller, merge, visibleText });
+  return Object.freeze({ role, normalize, author, className, key, isFiller, sinCopias, chatVigente, escritor, chatsDeLaConsulta, merge, visibleText });
 });

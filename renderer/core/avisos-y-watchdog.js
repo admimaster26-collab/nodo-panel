@@ -190,14 +190,18 @@ function nodoPintarEstadoSistema(probando){
   const abierto = !!box.querySelector("details")?.open;
   r.partes.forEach(function(p){
     const prueba = window.NodoPruebas?.vigente(p.nombre);
-    if(prueba){ p.estado = prueba.ok ? "probada" : "falla"; p.detalle = prueba.detalle || ""; }
+    // Una prueba que dio bien no tapa que lo nuevo del servidor no está llegando (la prueba lee la
+    // lista; la llegada compara contra el servidor).
+    if(prueba && !(prueba.ok && p.llegada === "no_llega")){ p.estado = prueba.ok ? "probada" : "falla"; p.detalle = prueba.detalle || ""; }
   });
   const fallas = r.partes.filter(function(p){ return p.estado === "falla"; });
   const probadas = r.partes.filter(function(p){ return p.estado === "probada"; });
-  const andan = r.partes.filter(function(p){ return p.estado === "anda"; });
+  // "Al día" = comparado contra el servidor; "Anduvo hace N min" = lo último que se vio, ya viejo.
+  const andan = r.partes.filter(function(p){ return p.estado === "anda" || p.estado === "al_dia" || p.estado === "anduvo"; });
   const fila = function(p){
-    const color = p.estado === "falla" ? "#f87171" : p.estado === "probada" ? "#22c55e" : p.estado === "anda" ? "#94a3b8" : "#64748b";
-    const texto = p.estado === "falla" ? p.detalle : p.estado === "probada" ? "Funciona · recién probado" : p.estado === "anda" ? "Sin fallas" : "Sin actividad todavía";
+    const color = p.estado === "falla" ? "#f87171" : p.estado === "probada" || p.estado === "al_dia" ? "#22c55e" : p.estado === "anda" ? "#94a3b8" : "#64748b";
+    const texto = p.estado === "falla" ? p.detalle : p.estado === "probada" ? "Funciona · recién probado" : p.estado === "al_dia" ? "Al día"
+      : p.estado === "anda" ? "Sin fallas" : p.estado === "anduvo" ? "Anduvo " + (p.hace || "hace un rato") : "Sin actividad todavía";
     return '<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0">'
       + '<span style="color:#cbd5e1">' + escapeHtml(p.nombre) + '</span>'
       + '<span style="color:' + color + '">' + escapeHtml(texto) + '</span></div>';

@@ -17,4 +17,12 @@ Confundimos infraestructura disponible con integración terminada, inventario co
 - **Contexto suficiente y reutilizable.** Empezar por continuidad y símbolos; ampliar ante una dependencia concreta. Delegar preguntas y archivos delimitados. Guardar evidencia consultable, evitando repetir el mismo contexto completo o mantener manualmente otro índice enorme.
 - **Cerrar con límites explícitos.** Separar fuente local, pruebas aisladas, conexión remota, despliegue y funcionamiento observado. Los fallos del corte completo deben informarse aunque estén fuera del cambio propio. Una corrección parcial se identifica como parcial.
 
-Este documento recoge criterios y causas observadas durante el trabajo. No declara terminada la integración completa ni sustituye la retrospectiva final solicitada por Juan.
+## Coste observado y cómo razonar con menos contexto
+
+1. **Explorar sin una pregunta comprobable** hizo crecer las lecturas antes que los resultados. Un recorrido útil termina en una hipótesis, una prueba y un consumidor concreto.
+2. **Dar por buenos resúmenes anteriores** obligó a reabrir trabajo supuestamente terminado. La continuidad conserva evidencia y dudas; no reemplaza el contrato ni la ejecución.
+3. **Delegar contexto completo repetidamente** duplicó comprensión y dejó entregas a medias al agotarse la cuota. Cada encargo necesita límites, dependencias y una prueba de salida; el coordinador conserva la visión global.
+4. **Validar copias incompletas o de momentos diferentes** produjo fallos artificiales y repeticiones. El corte debe incluir sus dependencias y hashes antes de atribuir un fallo al producto.
+5. **Volcar salidas largas y usar comandos frágiles** gastó contexto en ruido y reparaciones. Consultas acotadas, artefactos legibles y resultados breves preservan capacidad para analizar causas.
+
+Estas son causas observadas del trabajo, no una medición del coste facturado. Este documento no declara terminada la integración completa.

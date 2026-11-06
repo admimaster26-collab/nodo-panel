@@ -24,16 +24,29 @@
     if(mala) return { ok:false, detalle:salud().motivo(mala.code) };
     return stages.some(s => s.stage === 'DATA' && s.state === 'OK') ? { ok:true } : { ok:false, detalle:'No respondió' };
   }
+  // 6/11: ver la página de Agentes abierta no prueba que se lean fichas. Antes daba OK con sólo
+  // mirar la página; ahora OK es haber leído el saldo del agente, con número.
   async function agentes(){
     if(root._drexGlobalBusy) return { ok:false, detalle:salud().motivo('AGENTE_OCUPADO') };
     const health = salud().begin('RETIROS');
+    const falla = (estado, codigo) => { health.record('DATA', estado, codigo); return { ok:false, detalle:salud().motivo(codigo) }; };
     const estado = await root.callDrex('estadoPagina');
     health.reply(null);
-    if(estado?.needsLogin || estado?.pageError){
-      health.record('DATA', 'ERROR', 'FICHAS_SIN_SESION');
-      return { ok:false, detalle:salud().motivo('FICHAS_SIN_SESION') };
-    }
-    health.record('DATA', 'OK');
+    if(estado?.needsLogin || estado?.pageError) return falla('ERROR', 'FICHAS_SIN_SESION');
+    // Leer el saldo navega la ventana en algunos casinos: con el mismo candado que el widget de saldo,
+    // para no meterse en el medio de una carga o un retiro.
+    const candado = typeof root._drexGlobalLock === 'function' && typeof root._drexGlobalUnlock === 'function';
+    if(candado && !root._drexGlobalLock('prueba de lectura de fichas')) return { ok:false, detalle:salud().motivo('AGENTE_OCUPADO') };
+    let lectura;
+    try{ lectura = await root.callDrex('obtenerSaldoAgente'); }
+    catch(_e){ return falla('ERROR', 'FICHAS_SIN_RESPUESTA'); }
+    finally{ if(candado) root._drexGlobalUnlock(); }
+    if(!lectura) return falla('ERROR', 'FICHAS_SIN_RESPUESTA');
+    if(lectura.needsLogin || lectura.pageError) return falla('ERROR', 'FICHAS_SIN_SESION');
+    const raw = String(lectura.balance?.raw || '').trim();
+    if(typeof lectura.balance?.value !== 'number' || !Number.isFinite(lectura.balance.value) || !/\d/.test(raw))
+      return falla('DEGRADED', 'FICHAS_ILEGIBLES');
+    health.record('DATA', 'OK', 'FICHAS_SALDO_LEIDO');
     return { ok:true };
   }
   async function controlDeFichas(){
@@ -73,6 +86,8 @@
     enCurso = (async () => {
       // De a una: comparten el agente y la conexión, y así se ve cuál se cortó.
       for(const prueba of PRUEBAS) if(prueba.hay()) await correrUna(prueba, alCambiar);
+      // Con las listas recién leídas, se vuelve a mirar si lo nuevo del servidor está en el panel.
+      try{ await root.NodoLlegada?.comprobar?.(); }catch(_e){}
       return resultados;
     })().finally(() => { enCurso = null; alCambiar(null); });
     return enCurso;

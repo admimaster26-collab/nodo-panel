@@ -796,7 +796,11 @@
       pendientes++;
     }
 
-    const details = pendientes === 0 ? 'Sin solicitudes pendientes'
+    // El número de la lista de Inicio manda: Discord no puede decir 8 cuando la pantalla dice 0.
+    if(Number.isInteger(o.pendientes) && o.pendientes >= 0) pendientes = o.pendientes;
+
+    const details = o.sinDatos ? 'Sin datos: no se pudo consultar'
+      : pendientes === 0 ? 'Sin solicitudes pendientes'
       : pendientes === 1 ? '1 solicitud pendiente'
       : pendientes + ' solicitudes pendientes';
 
@@ -1116,12 +1120,12 @@
     const a=timestamp(row.fecha),b=timestamp(cursor.fecha);
     return a<b || (a===b && row.id < cursor.id);
   }
-  let scope = '', epoch = 0, mode = 'pending', legacyReason = '', identityCapable = false, negotiation = null;
+  let scope = '', epoch = 0, mode = 'pending', legacyReason = '', identityCapable = false, negotiation = null, capabilitiesAt = null;
   const entries = new Map();
   function fail(code){ const error = new Error(code); error.code = code; return error; }
   function sync(){
     if(scope !== pc()){
-      scope = pc(); epoch++; mode = 'pending'; legacyReason = ''; identityCapable = false; negotiation = null; entries.clear();
+      scope = pc(); epoch++; mode = 'pending'; legacyReason = ''; identityCapable = false; negotiation = null; capabilitiesAt = null; entries.clear();
     }
     return scope;
   }
@@ -1135,8 +1139,8 @@
   }
   async function ready(){
     sync();
-    if(mode === 'beta') return true;
-    if(mode === 'legacy' && legacyReason !== 'config') return false;
+    const age=capabilitiesAt===null?Infinity:Date.now()-capabilitiesAt;
+    if(age>=0 && age<TTL && (mode==='beta' || legacyReason==='capabilities')) return mode==='beta';
     if(negotiation) return negotiation;
     const version = epoch, requestedPc = scope;
     const pending = (async()=>{
@@ -1162,6 +1166,7 @@
       mode = ['perfil.summary.v1','perfil.detail.v1'].every(c=>result.capabilities.includes(c)) ? 'beta' : 'legacy';
       legacyReason = mode === 'legacy' ? 'capabilities' : '';
       identityCapable = mode === 'beta' && result.capabilities.includes('perfil.identity.v1');
+      capabilitiesAt = Date.now();
       return mode === 'beta';
     })();
     negotiation = pending;
@@ -1313,7 +1318,7 @@
     const entry = getEntry(usuario);
     if(mode === 'beta' && entry.loaded && entry.resumen && !entry.error && !entry.loading) entry.health?.record('RENDER','OK','PERFIL_VISIBLE');
   }
-  function invalidate(){ epoch++; entries.clear(); negotiation = null; mode = 'pending'; legacyReason = ''; identityCapable = false; }
+  function invalidate(){ epoch++; entries.clear(); negotiation = null; mode = 'pending'; legacyReason = ''; identityCapable = false; capabilitiesAt=null; }
   return Object.freeze({ready,load,snapshot,rendered,invalidate});
 });
 (function(root, factory){
@@ -1327,7 +1332,7 @@
   const SYNC_FN = 'nodo_beta_persistencia_sync_v1';
   const READ_FN = 'nodo_beta_persistencia_leer_v1';
   const REQUIRED_CAP = 'persistence.local.v1';
-  const ACK_PREFIX = 'nodo_persistencia_ack_v1_';
+  const ACK_PREFIX = 'nodo_persistencia_cas_v1_';
   const INST_KEY = 'nodo_persistencia_instalacion_v1';
 
   function normText(value, max){
@@ -1398,7 +1403,7 @@
 
     const capabilityByOffice = new Map();
 
-    function readAckStore(pc){
+    function readState(pc){
       const storage = getStorage();
       const office = normOffice(pc);
       if(!storage || !office) return { jugadores: {}, movimientos: {}, cotejos: {}, colas: {} };
@@ -1411,13 +1416,18 @@
       };
     }
 
-    function writeAckStore(pc, ackStore){
+    function readAckStore(pc){
+      const state=readState(pc), ack={jugadores:{},movimientos:{},cotejos:{},colas:{}};
+      for(const family of Object.keys(ack)) for(const [id,item] of Object.entries(state[family])){
+        if(item && typeof item==='object' && item.revision && item.signature) ack[family][id]=item.signature;
+      }
+      return ack;
+    }
+    function writeState(pc, ackStore){
       const storage = getStorage();
       const office = normOffice(pc);
-      if(!storage || !office || !ackStore) return;
-      try{
-        storage.setItem(ACK_PREFIX + office, JSON.stringify(ackStore));
-      }catch(_e){}
+      if(!storage || !office || !ackStore) throw new Error('PERSISTENCIA_STORAGE_REQUIRED');
+      storage.setItem(ACK_PREFIX + office, JSON.stringify(ackStore));
     }
 
     function signatureOf(item){
@@ -1513,7 +1523,7 @@
         });
 
         if(Array.isArray(j.bonos)){
-          j.bonos.slice(0, 10).forEach(function(b, idx){
+          j.bonos.forEach(function(b, idx){
             if(!b || typeof b !== 'object') return;
             const fecha = normText(b.fecha || j.creado || '', 40) || null;
             const pct = Number(b.pct) || 0;
@@ -1657,7 +1667,8 @@
       const colas = [];
       const chuPend = safeJsonParse(storage.getItem('nodo_chu_pendientes'), []);
       if(Array.isArray(chuPend)){
-        chuPend.slice(0, 25).forEach(function(entry, idx){
+        chuPend.forEach(function(entry, idx){
+          if(colas.length>=25)return;
           const itemId = 'chu:' + normText(entry && (entry.id || entry.solicitudId || entry.historialId || (entry.usuario + '_' + (entry.ts || idx))), 120);
           const item = {
             cola_tipo: 'CHUNIOR_PENDIENTE',
@@ -1677,7 +1688,8 @@
 
       const outboxRaw = safeJsonParse(storage.getItem('nodo_chat_outbox_v1'), []);
       const outboxList = Array.isArray(outboxRaw) ? outboxRaw : Object.values(outboxRaw || {});
-      outboxList.slice(0, 25).forEach(function(entry, idx){
+      outboxList.forEach(function(entry, idx){
+        if(colas.length>=50)return;
         if(!entry || typeof entry !== 'object') return;
         const itemId = 'outbox:' + normText(entry.clientMsgId || entry.id || idx, 120);
         const item = {
@@ -1711,7 +1723,8 @@
         return { mode: 'legacy', reason: 'no_transport' };
       }
       const cached = capabilityByOffice.get(office);
-      if(cached && cached.mode === 'beta') return cached;
+      const now=(cfg.now || Date.now)();
+      if(cached && now-cached.at>=0 && now-cached.at<60000) return cached;
 
       let build = 'renderer';
       if(typeof panelAPI.getContext === 'function'){
@@ -1734,24 +1747,35 @@
       });
       const { data, error } = unwrapRpc(raw);
       capHealth?.reply?.(error);
-      if(error || !data || data.ok !== true || data.enabled !== true){
+      if(error || !data || data.ok !== true || data.contract !== 'nodo.beta.v1' || normOffice(data.scope?.pc_codigo)!==office){
         capHealth?.record?.('DATA', error ? 'ERROR' : 'UNKNOWN', error ? (error.code || 'CAPACIDADES_ERROR') : 'CAPACIDADES_DISABLED');
-        return { mode: 'legacy', reason: error ? (error.code || 'rpc_error') : 'disabled', error };
+        return { mode: 'error', reason:'contract', error:error || {code:'PERSISTENCIA_CAPABILITY_CONTRACT'} };
       }
       const caps = Array.isArray(data.capabilities) ? data.capabilities : [];
       capHealth?.record?.('DATA', 'OK', 'CAPACIDADES_PERSISTENCIA_OK');
       if(!caps.includes(REQUIRED_CAP)){
-        return { mode: 'legacy', reason: 'capability_missing', capabilities: caps };
+        const state={mode:'legacy',reason:'capability_missing',capabilities:caps,at:now};
+        capabilityByOffice.set(office,state);return state;
       }
-      const state = { mode: 'beta', capabilities: caps, office, build };
+      const state = { mode: 'beta', capabilities: caps, office, build, at:now };
       capabilityByOffice.set(office, state);
       return state;
     }
 
-    async function sync(options){
+    const flights=new Map();
+    function sync(options){
+      const pc=getOffice(options?.pc);
+      if(flights.has(pc))return flights.get(pc);
+      const flight=syncOnce(options).catch(error=>{
+        getHealth()?.begin?.('PERSISTENCIA')?.record?.('EFFECT','ERROR','PERSISTENCIA_SYNC_FAILED');
+        return {mode:'beta',synced:false,error:{code:'PERSISTENCIA_SYNC_FAILED'}};
+      }).finally(()=>flights.delete(pc));
+      flights.set(pc,flight);return flight;
+    }
+    async function syncOnce(options){
       const opts = options || {};
       const pc = getOffice(opts.pc);
-      const health = getHealth()?.begin?.('CONCILIACION');
+      const health = getHealth()?.begin?.('PERSISTENCIA');
       if(!pc){
         health?.record?.('DATA', 'UNKNOWN', 'PERSISTENCIA_NO_OFFICE');
         return { mode: 'legacy', synced: false, reason: 'no_office' };
@@ -1759,46 +1783,70 @@
       const cap = await ensureCapability(pc);
       if(cap.mode !== 'beta'){
         health?.record?.('CONNECTED', cap.reason === 'rpc_error' ? 'ERROR' : 'UNKNOWN', 'PERSISTENCIA_LEGACY_' + String(cap.reason || 'MODE').toUpperCase());
-        return { mode: 'legacy', synced: false, reason: cap.reason };
+        return { mode: cap.mode, synced: false, reason: cap.reason, error:cap.error };
       }
       const batch = collectPending(pc);
-      if(batch.total === 0 && !opts.forceEmpty){
-        health?.record?.('DATA', 'OK', 'PERSISTENCIA_UP_TO_DATE');
-        return { mode: 'beta', synced: true, empty: true, acceptedTotal: 0 };
+      const state=readState(pc), installation=getInstallation(pc), blocked=[];
+      const itemId=(family,item)=>String(family==='jugadores'?item.source_id:family==='movimientos'?item.movimiento_key:family==='cotejos'?item.cotejo_key:item.item_id);
+      const itemKey=(family,item)=>family==='jugadores'?[item.source_id,item.campo]:family==='colas'?[installation,item.cola_tipo,item.item_id]:[itemId(family,item)];
+      for(const family of Object.keys(batch.payload)){
+        const pending=[];
+        for(const item of batch.payload[family]){
+          const id=itemId(family,item), entry=state[family][id] || {revision:'0'};
+          if(entry.conflict){blocked.push({family,id,code:entry.conflict.code});continue;}
+          if(!entry.pending){
+            const mutation=cfg.mutationId?.() || getWindow().crypto?.randomUUID?.() || Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+            entry.pending={signature:batch.signatures[family][id],item:{...item,_sync:{base_revision:entry.revision,mutation_id:mutation}}};
+          }
+          state[family][id]=entry;pending.push(entry.pending.item);
+        }
+        batch.payload[family]=pending;
       }
+      batch.total=Object.values(batch.payload).reduce((n,rows)=>n+rows.length,0);
+      if(batch.total === 0 && !opts.forceEmpty){
+        health?.record?.('DATA', blocked.length?'DEGRADED':'OK', blocked.length?'PERSISTENCIA_CONFLICT':'PERSISTENCIA_UP_TO_DATE');
+        return { mode: 'beta', synced: !blocked.length, empty: true, acceptedTotal: 0,conflicts:blocked };
+      }
+      // Persist the exact mutation before sending: a lost ACK retries the same write.
+      writeState(pc,state);
 
       const panelAPI = getPanelApi();
       const raw = await panelAPI.rpc(SYNC_FN, {
         p_pc_codigo: pc,
-        p_instalacion: getInstallation(pc),
+        p_instalacion: installation,
         p_version: normText(cfg.version || cap.build || 'beta-persistencia-v1', 64),
         p_lote: batch.payload
       });
       const { data, error } = unwrapRpc(raw);
       health?.reply?.(error);
-      if(error || !data || data.ok !== true || normOffice(data.scope && data.scope.pc_codigo) !== pc){
+      if(error || !data || data.ok !== true || data.contract!=='nodo.beta.v1' || data.protocol!=='persistence.cas.v1' ||
+        data.scope?.instalacion!==installation || normOffice(data.scope?.pc_codigo)!==pc || !Array.isArray(data.receipts) || !Array.isArray(data.conflicts)){
         health?.record?.('EFFECT', 'ERROR', error ? (error.code || 'PERSISTENCIA_SYNC_FAILED') : 'PERSISTENCIA_INVALID_ACK');
         return { mode: 'beta', synced: false, error: error || { code: 'PERSISTENCIA_INVALID_ACK', message: 'El servidor no confirmó la recepción.' } };
       }
 
-      const acked = (data.acknowledged && typeof data.acknowledged === 'object') ? data.acknowledged : {};
-      const store = readAckStore(pc);
-      ['jugadores', 'movimientos', 'cotejos', 'colas'].forEach(function(cat){
-        const ids = Array.isArray(acked[cat]) ? acked[cat] : [];
-        ids.forEach(function(id){
-          const key = normText(id, 256);
-          if(key && batch.signatures[cat] && batch.signatures[cat][key]){
-            store[cat][key] = batch.signatures[cat][key];
-          }
-        });
-      });
-      writeAckStore(pc, store);
+      const acked={jugadores:[],movimientos:[],cotejos:[],colas:[]},results=[...data.receipts,...data.conflicts],seen=new Set();
+      for(const result of results){
+        const sent=batch.payload[result.family]?.find(item=>itemId(result.family,item)===result.id && JSON.stringify(itemKey(result.family,item))===JSON.stringify(result.key));
+        const key=JSON.stringify([result.family,result.key]);
+        if(!sent || seen.has(key) || result.mutation_id!==sent._sync.mutation_id || !/^(0|[1-9][0-9]{0,18})$/.test(result.revision||'') ||
+          (data.receipts.includes(result) ? result.accepted!==true || BigInt(result.revision)!==BigInt(sent._sync.base_revision)+1n : result.accepted!==false || !['REVISION_CONFLICT','MUTATION_REUSED'].includes(result.code))) throw new Error('PERSISTENCIA_INVALID_RECEIPT');
+        seen.add(key);
+      }
+      if(seen.size!==batch.total)throw new Error('PERSISTENCIA_INCOMPLETE_ACK');
+      for(const result of results){
+        const entry=state[result.family][result.id];
+        if(result.accepted){entry.revision=result.revision;entry.signature=entry.pending.signature;delete entry.pending;acked[result.family].push(result.id);}
+        else{entry.conflict={code:result.code,serverRevision:result.revision};}
+      }
+      writeState(pc,state);
       health?.record?.('DATA', 'OK', 'PERSISTENCIA_PAYLOAD_VALID');
-      health?.record?.('EFFECT', 'OK', 'PERSISTENCIA_SYNC_ACK');
+      health?.record?.('EFFECT', data.conflicts.length||blocked.length?'DEGRADED':'OK', data.conflicts.length||blocked.length?'PERSISTENCIA_CONFLICT':'PERSISTENCIA_SYNC_ACK');
       return {
         mode: 'beta',
-        synced: true,
-        acceptedTotal: Number(data.accepted_total) || 0,
+        synced: data.conflicts.length===0 && blocked.length===0,
+        acceptedTotal: data.receipts.length,
+        conflicts:[...blocked,...data.conflicts],
         acknowledged: acked
       };
     }
@@ -1806,7 +1854,7 @@
     async function hydrate(options){
       const opts = options || {};
       const pc = getOffice(opts.pc);
-      const health = getHealth()?.begin?.('CONCILIACION');
+      const health = getHealth()?.begin?.('PERSISTENCIA');
       if(!pc) return { mode: 'legacy', hydrated: false, reason: 'no_office' };
       const cap = await ensureCapability(pc);
       if(cap.mode !== 'beta') return { mode: 'legacy', hydrated: false, reason: cap.reason };
@@ -1817,11 +1865,13 @@
         p_usuario: opts.usuario ? normUser(opts.usuario) : null,
         p_referencia_id: opts.referenciaId ? normText(opts.referenciaId, 120) : null,
         p_tipo: normText(opts.tipo || 'TODO', 32).toUpperCase(),
-        p_limit: Number(opts.limit) > 0 ? Math.min(Number(opts.limit), 200) : 100
+        p_limit: Number(opts.limit) > 0 ? Math.min(Number(opts.limit), 200) : 100,
+        p_cursor: opts.cursor || null
       });
       const { data, error } = unwrapRpc(raw);
       health?.reply?.(error);
-      if(error || !data || data.ok !== true || normOffice(data.scope && data.scope.pc_codigo) !== pc){
+      if(error || !data || data.ok !== true || data.contract!=='nodo.beta.v1' || data.protocol!=='persistence.cas.v1' || normOffice(data.scope?.pc_codigo)!==pc ||
+        typeof data.has_more!=='boolean' || (data.has_more ? !data.next_cursor || JSON.stringify(data.next_cursor)===JSON.stringify(opts.cursor) : data.next_cursor!==null)){
         health?.record?.('DATA', 'ERROR', error ? (error.code || 'PERSISTENCIA_READ_FAILED') : 'PERSISTENCIA_INVALID_READ');
         return { mode: 'beta', hydrated: false, error: error || { code: 'PERSISTENCIA_INVALID_READ' } };
       }
@@ -1936,6 +1986,7 @@
       return {
         mode: 'beta',
         hydrated: true,
+        hasMore:data.has_more,nextCursor:data.next_cursor,
         merged: { jugadores: mergedJugadores, movimientos: mergedMovimientos, cotejos: mergedCotejos },
         colasObservadas: Array.isArray(data.colas_observadas) ? data.colas_observadas : []
       };
@@ -1949,7 +2000,9 @@
       if(syncTimer){ try{ clearTimer(syncTimer); }catch(_e){} }
       syncTimer = setTimer(function(){
         syncTimer = null;
-        try{ void sync(); }catch(_e){}
+        void sync().then(result=>{
+          if(result.acceptedTotal>0 && collectPending().total>0)scheduleSync();
+        }).catch(()=>{});
       }, Number(delayMs) > 0 ? Number(delayMs) : 4000);
     }
 
@@ -2106,14 +2159,16 @@
       if(stopped || intervals.length) return;
       intervals.push(timers.setInterval(() => reads.request('requests'), 60000));
       intervals.push(timers.setInterval(() => reads.request('wallets'), 20000));
+      // La conversación abierta y la lista de chats las pedía también el puente del portal, con su
+      // propio reloj (5 s y 15 s): cada cosa se bajaba dos veces. Ahora este es el único reloj y
+      // toma esos tiempos, que eran los que de verdad traían datos (Juan, 6/11).
       intervals.push(timers.setInterval(() => {
         if(hasOpenChat()) reads.request('conversation');
-      }, 3500));
+      }, 5000));
       // La lista de chats era la única sin reloj propio: se repintaba sólo cuando llegaba un aviso
       // por el canal `nodo:chat`. Si ese aviso no salía, la bandeja de consultas quedaba con el
       // orden y los contadores de hacía rato aunque los datos ya estuvieran en memoria (Juan, 2/10).
-      // Repintar es barato: sale de lo que ya se trajo, no pide nada al servidor.
-      intervals.push(timers.setInterval(() => reads.request('chats'), 20000));
+      intervals.push(timers.setInterval(() => reads.request('chats'), 15000));
 
       // Una solicitud tardaba hasta 60 s en aparecer, y aparecía de golpe. Bajar ese reloj a 10 s
       // costaría ~700 MB por turno en la oficina más cargada —más de lo que acabamos de sacar—
@@ -2177,12 +2232,16 @@
   const states=new Set(['OK','DEGRADED','ERROR','IDLE','UNKNOWN']);
   const FRESH_MS=300000;
   const samples=new Map(),dirty=new Map(),attempts=new Map();
+  // Cuándo empezó y terminó la última lectura completa de cada rama, por código. La usa la
+  // comprobación de llegada (llegada-datos.js) para saber si el panel pidió la lista DESPUÉS de que
+  // el servidor ya tenía lo nuevo. No viaja al servidor.
+  const lecturas=new Map();
   let scope='',epoch=0,flight=null,lastFlush=0,remote=[],remoteReadAt=null,remoteServerAt=null,
     transport='UNKNOWN',transportCode='',transportAt=null;
   const pc=()=>String(root.pcOperativa||root.__pcCodigo||'').trim().toUpperCase();
   function context(){
     if(scope!==pc()){
-      scope=pc();epoch++;samples.clear();dirty.clear();attempts.clear();remote=[];flight=null;lastFlush=0;
+      scope=pc();epoch++;samples.clear();dirty.clear();attempts.clear();lecturas.clear();remote=[];flight=null;lastFlush=0;
       transport='UNKNOWN';transportCode='';transportAt=null;remoteReadAt=null;remoteServerAt=null;
     }
     return scope;
@@ -2197,7 +2256,16 @@
       errors:Math.min(1000000,(previous?.errors||0)+(state==='ERROR'||state==='DEGRADED'?1:0)),
       duration_ms:bounded(details.duration_ms,86400000),code,
       observed_at:new Date(Math.max(Date.now(),Date.parse(previous?.observed_at||'')+1||0)).toISOString()};
-    samples.set(key,sample);dirty.set(key,sample);return true;
+    samples.set(key,sample);dirty.set(key,sample);
+    if(stage==='DATA'&&code&&(state==='OK'||state==='DEGRADED')){
+      const fin=Date.now();lecturas.set(integration+'|'+code,{inicio:fin-sample.duration_ms,fin});
+    }
+    return true;
+  }
+  function lectura(integration,codigos){
+    context();let ultima=null;
+    for(const codigo of codigos||[]){const l=lecturas.get(integration+'|'+codigo);if(l&&(!ultima||l.inicio>ultima.inicio))ultima=l;}
+    return ultima?{...ultima}:null;
   }
   function errorCode(error){
     // Classify locally; the raw error can contain SQL, URLs, player names or tokens.
@@ -2225,12 +2293,13 @@
     // record(), but must not cancel a valid legacy read or leave its UI loading.
     // A real context change still invalidates this attempt, including empty -> office.
     const current=()=>{context();return scope===office&&epoch===version&&attempts.get(integration)===attempt;};
-    const observe=(stage,state,code)=>current()&&record(integration,stage,state,{code,duration_ms:Date.now()-started});
+    const observe=(stage,state,code,durationMs)=>current()&&record(integration,stage,state,{code,
+      duration_ms:Number.isFinite(durationMs)?durationMs:Date.now()-started});
     // A newer request or another office must not inherit the outcome of this request.
-    return Object.freeze({current,record:observe,reply(error){
-      if(!error)return observe('CONNECTED','OK');
+    return Object.freeze({current,record:observe,reply(error,durationMs){
+      if(!error)return observe('CONNECTED','OK',null,durationMs);
       const code=errorCode(error);
-      return observe('CONNECTED',code==='NETWORK'||code==='CLIENT_UNAVAILABLE'?'ERROR':code==='RPC_FAILED'?'DEGRADED':'OK',code);
+      return observe('CONNECTED',code==='NETWORK'||code==='CLIENT_UNAVAILABLE'?'ERROR':code==='RPC_FAILED'?'DEGRADED':'OK',code,durationMs);
     },errorCode});
   }
   function snapshot(){
@@ -2308,14 +2377,63 @@
     CLIENT_UNAVAILABLE:'La aplicación no está conectada',NETWORK:'Sin conexión',FICHAS_SIN_SESION:'Se cayó la sesión de Agentes',
     FICHAS_ILEGIBLES:'El casino no devolvió el saldo',FICHAS_SIN_RESPUESTA:'El casino no contestó',AGENTE_OCUPADO:'El agente está ocupado',
     BILLETERAS_LOAD_FAILED:'No se pudieron leer las billeteras',BILLETERA_NO_MARCADA:'No se pudo cambiar la billetera',
-    BILLETERAS_SIN_SINCRONIZAR:'No se pudo sincronizar con Chunior'};
+    BILLETERAS_SIN_SINCRONIZAR:'No se pudo sincronizar con Chunior',RETIRO_RPC_LENTO:'El servidor tardó más de 3 segundos',
+    RETIRO_RPC_NO_CONFIRMADO:'El servidor no confirmó el estado de la cuenta',
+    RETIRO_RESPUESTA_INVALIDA:'El servidor devolvió una respuesta de retiro inválida',
+    RETIRO_ESTADO_NO_RECONOCIDO:'El servidor devolvió un estado de retiro desconocido',
+    RETIRO_DNI_FORMATO_INVALIDO:'El servidor no aceptó el formato del DNI/CUIL',
+    RETIRO_RECHAZO_NO_CONFIRMADO:'El servidor no confirmó el rechazo',
+    RETIRO_VALIDACION_MODAL_FALLO:'No se pudo mostrar la validación de titularidad',
+    RETIRO_VALIDADOR_NO_CARGADO:'Falta cargar la validación beta del retiro',
+    RETIRO_PAGO_RESULTADO_AMBIGUO:'Agentes no confirmó si el retiro se ejecutó',
+    RETIRO_SELLO_NO_CONFIRMADO:'El pago se hizo, pero no se guardó su hora en el servidor',
+    RETIRO_24H_MATCH_PARCIAL:'Se encontró un retiro, pero otra fuente no respondió',
+    RETIRO_24H_SIN_COMPROBAR:'No se pudo comprobar el límite de retiros',
+    RETIRO_PARCIAL_RESPUESTA_INVALIDA:'El servidor no confirmó el progreso del retiro',
+    NEXO_EXPORT_TRUNCATED:'Quedó incompleto',NEXO_LEGACY_TRUNCATED_8000:'Quedó incompleto'};
   const motivo=code=>MOTIVOS[code]||'No respondió bien';
+  // Lo que se le dice cuando el servidor tiene algo más nuevo que el panel y no termina de llegar.
+  const NO_LLEGA={BANDEJA:'No están llegando las solicitudes nuevas',CHAT:'No están llegando los mensajes nuevos',
+    HISTORIAL:'No aparecen las operaciones nuevas'};
+  const ETAPAS_POSITIVAS={CONEXION:['CONNECTED','DATA']};
+  const hace=ms=>{const min=Math.max(1,Math.floor(ms/60000));return min<120?'hace '+min+' min':'hace '+Math.floor(min/60)+' h';};
+  // 6/11: una muestra vieja no es "sin actividad". El snapshot la marca vencida (para el servidor y
+  // para "Probar ahora" no prueba nada), pero a una persona se le dice lo último que se vio y cuándo:
+  // lo que anduvo hace diez minutos es "anduvo hace 10 min", y una falla no se esconde por vieja —
+  // queda a la vista, con su hora, hasta que esa misma etapa vuelva a dar bien. Nexo anotaba
+  // DEGRADED 7 de cada 8 veces y a los 5 minutos se veía como "sin actividad".
+  // Si la comprobación de llegada (NodoLlegada) ya miró esa parte contra el servidor, manda ella:
+  // "al día" es lo único que se gana comparando datos de verdad, y un faltante es una falla.
   function resumen(){
-    const s=snapshot();
+    const s=snapshot(),ahora=Date.now();
+    const edad=stage=>Math.max(0,ahora-Date.parse(stage.observed_at));
     const partes=s.coverage.filter(branch=>NOMBRES[branch.integration]).map(branch=>{
-      const mala=branch.stages.find(stage=>stage.state==='ERROR'||stage.state==='DEGRADED');
-      return {nombre:NOMBRES[branch.integration],estado:mala?'falla':branch.stages.some(stage=>stage.state==='OK')?'anda':'sin_actividad',
-        detalle:mala?motivo(mala.code):''};
+      const vistas=branch.stages.filter(stage=>stage.evidence!=='NO_SAMPLE'&&stage.evidence!=='CLOCK_SKEW'&&Number.isFinite(Date.parse(stage.observed_at)));
+      const malas=vistas.filter(stage=>stage.reported_state==='ERROR'||stage.reported_state==='DEGRADED');
+      const mala=malas.find(stage=>edad(stage)<=FRESH_MS)||malas.sort((a,b)=>edad(a)-edad(b))[0];
+      const nombre=NOMBRES[branch.integration];let parte;
+      if(mala){
+        parte={nombre,estado:'falla',detalle:motivo(mala.code)};
+        if(edad(mala)>FRESH_MS){parte.hace=hace(edad(mala));parte.detalle+=' · '+parte.hace;}
+      }else{
+        // Un OK que la operación siguiente todavía no confirmó (AWAITING_EVIDENCE) cuenta como lo
+        // último que anduvo: si no, cada consulta en vuelo se vería un instante como "sin actividad".
+        const permitidas=ETAPAS_POSITIVAS[branch.integration]||['DATA','EFFECT','RENDER'];
+        const buenas=vistas.filter(stage=>permitidas.includes(stage.stage)
+          &&(stage.reported_state==='OK'||stage.code==='AWAITING_EVIDENCE'));
+        const ultima=buenas.length?Math.min(...buenas.map(edad)):null;
+        parte=ultima===null?{nombre,estado:'sin_actividad',detalle:''}:ultima<=FRESH_MS?{nombre,estado:'anda',detalle:''}
+          :{nombre,estado:'anduvo',detalle:'',hace:hace(ultima)};
+      }
+      const llegada=typeof root.NodoLlegada?.estado==='function'?root.NodoLlegada.estado(branch.integration):null;
+      if(llegada){
+        parte.llegada=llegada.veredicto;
+        if(llegada.veredicto==='no_llega'){
+          parte.estado='falla';parte.detalle=NO_LLEGA[branch.integration]||motivo(null);
+          if(Number.isFinite(llegada.desde)){parte.hace=hace(ahora-llegada.desde);parte.detalle+=' · desde '+parte.hace;}
+        }else if(llegada.veredicto==='llega'&&parte.estado!=='falla'){parte.estado='al_dia';delete parte.hace;}
+      }
+      return parte;
     });
     if(s.transport==='ERROR')partes.unshift({nombre:'Aviso al servidor',estado:'falla',detalle:'No se pudo enviar el estado'});
     return {oficina:s.pc,partes};
@@ -2335,7 +2453,7 @@
   async function refresh(){
     context();lastFlush=0;await flush();return show();
   }
-  return Object.freeze({record,begin,errorCode,flush,snapshot,show,refresh,resumen,motivo});
+  return Object.freeze({record,begin,errorCode,flush,snapshot,show,refresh,resumen,motivo,lectura});
 });
 // "Probar ahora" de Estado del sistema: consulta de verdad cada parte y dice cuál se cortó.
 //
@@ -2363,16 +2481,29 @@
     if(mala) return { ok:false, detalle:salud().motivo(mala.code) };
     return stages.some(s => s.stage === 'DATA' && s.state === 'OK') ? { ok:true } : { ok:false, detalle:'No respondió' };
   }
+  // 6/11: ver la página de Agentes abierta no prueba que se lean fichas. Antes daba OK con sólo
+  // mirar la página; ahora OK es haber leído el saldo del agente, con número.
   async function agentes(){
     if(root._drexGlobalBusy) return { ok:false, detalle:salud().motivo('AGENTE_OCUPADO') };
     const health = salud().begin('RETIROS');
+    const falla = (estado, codigo) => { health.record('DATA', estado, codigo); return { ok:false, detalle:salud().motivo(codigo) }; };
     const estado = await root.callDrex('estadoPagina');
     health.reply(null);
-    if(estado?.needsLogin || estado?.pageError){
-      health.record('DATA', 'ERROR', 'FICHAS_SIN_SESION');
-      return { ok:false, detalle:salud().motivo('FICHAS_SIN_SESION') };
-    }
-    health.record('DATA', 'OK');
+    if(estado?.needsLogin || estado?.pageError) return falla('ERROR', 'FICHAS_SIN_SESION');
+    // Leer el saldo navega la ventana en algunos casinos: con el mismo candado que el widget de saldo,
+    // para no meterse en el medio de una carga o un retiro.
+    const candado = typeof root._drexGlobalLock === 'function' && typeof root._drexGlobalUnlock === 'function';
+    if(candado && !root._drexGlobalLock('prueba de lectura de fichas')) return { ok:false, detalle:salud().motivo('AGENTE_OCUPADO') };
+    let lectura;
+    try{ lectura = await root.callDrex('obtenerSaldoAgente'); }
+    catch(_e){ return falla('ERROR', 'FICHAS_SIN_RESPUESTA'); }
+    finally{ if(candado) root._drexGlobalUnlock(); }
+    if(!lectura) return falla('ERROR', 'FICHAS_SIN_RESPUESTA');
+    if(lectura.needsLogin || lectura.pageError) return falla('ERROR', 'FICHAS_SIN_SESION');
+    const raw = String(lectura.balance?.raw || '').trim();
+    if(typeof lectura.balance?.value !== 'number' || !Number.isFinite(lectura.balance.value) || !/\d/.test(raw))
+      return falla('DEGRADED', 'FICHAS_ILEGIBLES');
+    health.record('DATA', 'OK', 'FICHAS_SALDO_LEIDO');
     return { ok:true };
   }
   async function controlDeFichas(){
@@ -2412,6 +2543,8 @@
     enCurso = (async () => {
       // De a una: comparten el agente y la conexión, y así se ve cuál se cortó.
       for(const prueba of PRUEBAS) if(prueba.hay()) await correrUna(prueba, alCambiar);
+      // Con las listas recién leídas, se vuelve a mirar si lo nuevo del servidor está en el panel.
+      try{ await root.NodoLlegada?.comprobar?.(); }catch(_e){}
       return resultados;
     })().finally(() => { enCurso = null; alCambiar(null); });
     return enCurso;
@@ -2422,12 +2555,210 @@
   }
   return Object.freeze({ correr, vigente, ocupado:() => !!enCurso });
 });
+// ¿Está llegando lo nuevo? Compara lo más nuevo que tiene el servidor contra lo más nuevo que tiene
+// el panel, en las tres partes que importan: Solicitudes, Chat e Historial.
+//
+// Juan, 6/11: una luz que dice "anda" porque el servidor contestó no comprueba nada. Tiene que
+// mirar contra los datos de verdad lo que dice. Ese día se cotejó a mano en P4: la bandeja estaba al
+// día (la solicitud más nueva del panel era la del servidor), el chat también aunque el semáforo
+// decía "sin actividad", y nada avisaba si una de las dos se quedaba atrás.
+//
+// Cómo decide, por parte:
+//   · el panel tiene lo más nuevo del servidor (o algo más nuevo todavía) → llega.
+//   · el servidor tiene algo más nuevo → se anota desde cuándo se lo vio faltar. Las listas se piden
+//     solas cada pocos segundos, así que se da un margen (GRACIA_MS). Si pasado el margen sigue
+//     faltando → no llega. El Historial no se pide solo (se recarga al operar o al abrirlo): ahí sólo
+//     es "no llega" si el panel lo pidió DESPUÉS de que el servidor ya lo tenía y no vino; si nadie
+//     lo pidió todavía, no se puede decir nada.
+//   · la consulta falla, el servidor no tiene la función, la lista está filtrada o es la del canal
+//     nuevo → sin comprobar. Nunca "llega" sin haber comparado.
+//
+// Una consulta liviana por minuto como mucho (panel_ultima_llegada), sólo con la sesión iniciada y
+// sin operaciones de Agentes en curso. Sólo lee.
+(function(root, factory){
+  if(typeof module === 'object' && module.exports) module.exports = { create: factory };
+  else { root.NodoLlegada = factory(root); root.NodoLlegada.arrancar(); }
+})(globalThis, function(root, opciones){
+  'use strict';
+  const CADA_MS = 60000, GRACIA_MS = 90000, VIGENTE_MS = 300000, SIN_FUNCION_MS = 600000;
+  const RAMAS = ['BANDEJA', 'CHAT', 'HISTORIAL'];
+  // Las que el panel vuelve a pedir solo (bandeja cada 60 s y en vivo, chat cada 15 s).
+  const SE_PIDEN_SOLAS = new Set(['BANDEJA', 'CHAT']);
+  // Las lecturas completas de cada lista, como las anota NodoSalud.
+  const LECTURAS = { BANDEJA:['BANDEJA_LIST_VALID'], CHAT:['CHAT_LIST_VALID', 'CHAT_LIST_FALLBACK'],
+    HISTORIAL:['HISTORIAL_LIST_VALID', 'HISTORIAL_REVISION_REQUIRED'] };
+  const op = opciones || {};
+  const estados = new Map();
+  let oficinaVista = '', enCurso = null, noAntesDe = 0, reloj = null;
+
+  // `supabaseClient` y `pcOperativa` son `const`/`let` del script principal: no viven en window.
+  function cliente(){
+    if(op.cliente) return op.cliente();
+    try{ if(typeof supabaseClient !== 'undefined' && supabaseClient) return supabaseClient; }catch(_e){}
+    return root.supabaseClient || null;
+  }
+  // La oficina de la sesión iniciada. window.pcOperativa puede venir de una sesión anterior
+  // guardada antes de entrar (validacion-pc.js la repone desde localStorage).
+  function oficina(){
+    let sesion = '';
+    if(op.sesion) sesion = op.sesion();
+    else { try{ sesion = typeof pcOperativa !== 'undefined' ? pcOperativa : ''; }catch(_e){} }
+    const canal = String(root.pcOperativa || root.landingPcCodigo || '').trim().toUpperCase();
+    return sesion && canal ? canal : '';
+  }
+  function ocupado(){
+    if(op.ocupado) return op.ocupado();
+    const cola = root._drexCola;
+    return !!(root._drexGlobalBusy || (cola && (cola.activo || cola.pendientes > 0)));
+  }
+
+  // ── Lo que tiene el panel ────────────────────────────────────────────────────────────────
+  const maximo = valores => { let m = null; for(const v of valores) if(Number.isFinite(v) && (m === null || v > m)) m = v; return m; };
+  function panelDe(rama){
+    if(rama === 'BANDEJA'){
+      const lista = root.V154P?.solicitudes;
+      if(!Array.isArray(lista)) return null;
+      return { clave:maximo(lista.map(s => Number(s?.ID ?? s?.SOLICITUD_ID))) };
+    }
+    if(rama === 'CHAT'){
+      // El canal nuevo arma la lista con otro contrato: no se compara contra éste.
+      if(root.NodoBetaChat?.active?.() === true) return null;
+      const lista = root.V154P?.chats;
+      if(!Array.isArray(lista)) return null;
+      return { clave:maximo(lista.map(c => Date.parse(c?.FECHA_ULTIMO || ''))) };
+    }
+    if(rama === 'HISTORIAL'){
+      const lista = root._historialData;
+      if(!Array.isArray(lista)) return null;
+      let desde = null;
+      try{
+        // Con un filtro puesto (tipo, usuario, fechas) lo más nuevo puede no estar en pantalla a
+        // propósito: no se compara.
+        if(typeof root._histFiltrosActivos !== 'function' || typeof root._histVentana !== 'function') return null;
+        const filtros = root._histFiltrosActivos(), ventana = root._histVentana();
+        if(Object.keys(filtros).some(k => k !== 'periodo' && k !== 'desde') || filtros.desde !== ventana.desde) return null;
+        desde = Date.parse(ventana.desde);
+      }catch(_e){ return null; }
+      return { clave:maximo(lista.map(h => Number(h?.id))), desde:Number.isFinite(desde) ? desde : null };
+    }
+    return null;
+  }
+  function servidorDe(rama, datos){
+    const fila = rama === 'BANDEJA' ? datos.solicitudes : rama === 'CHAT' ? datos.chat : datos.historial;
+    if(!fila || typeof fila !== 'object') return null;
+    const at = Date.parse(fila.at || '');
+    const clave = rama === 'CHAT' ? at : Number(fila.id);
+    return Number.isFinite(clave) ? { clave, at:Number.isFinite(at) ? at : null } : null;
+  }
+
+  // ── La decisión (pura: se prueba sin reloj ni red) ───────────────────────────────────────
+  function decidir({ rama, servidor, panel, lectura, ahora, previo }){
+    const hecho = { comprobado:ahora };
+    if(!servidor) return { ...hecho, veredicto:'sin_comprobar', motivo:'SERVIDOR_SIN_DATO' };
+    if(!panel) return { ...hecho, veredicto:'sin_comprobar', motivo:'PANEL_NO_COMPARABLE' };
+    if(panel.desde != null && servidor.at != null && servidor.at < panel.desde)
+      return { ...hecho, veredicto:'sin_comprobar', motivo:'FUERA_DE_LA_VENTANA' };
+    const tiene = clave => panel.clave != null && panel.clave >= clave;
+    if(tiene(servidor.clave))
+      return { ...hecho, veredicto:'llega', motivo:'IGUAL_AL_SERVIDOR', desde:previo?.veredicto === 'llega' ? previo.desde : ahora };
+    // El panel está atrás. Se cuenta desde la primera vez que se vio faltar ESO: si mientras tanto
+    // llegó lo que faltaba y apareció algo más nuevo, el reloj arranca de nuevo.
+    let pendiente = previo?.pendiente || null, llegoLoAnterior = false;
+    if(pendiente && tiene(pendiente.clave)){ pendiente = null; llegoLoAnterior = true; }
+    if(!pendiente) pendiente = { clave:servidor.clave, visto:ahora };
+    const espera = ahora - pendiente.visto;
+    const loPidioDespues = lectura?.inicio != null && lectura.inicio > pendiente.visto;
+    if(espera >= GRACIA_MS && (SE_PIDEN_SOLAS.has(rama) || loPidioDespues))
+      return { ...hecho, veredicto:'no_llega', motivo:loPidioDespues ? 'PEDIDO_Y_NO_VINO' : 'NO_SE_ACTUALIZA', desde:pendiente.visto, pendiente };
+    if(espera >= GRACIA_MS) return { ...hecho, veredicto:'sin_comprobar', motivo:'SIN_RECARGAR', pendiente };
+    // Dentro del margen normal: sigue valiendo lo último que se comprobó.
+    const sigue = llegoLoAnterior ? 'llega' : previo?.veredicto === 'llega' || previo?.veredicto === 'no_llega' ? previo.veredicto : 'sin_comprobar';
+    return { ...hecho, veredicto:sigue, motivo:'EN_ESPERA', desde:sigue === 'sin_comprobar' ? undefined : sigue === previo?.veredicto ? previo.desde : ahora, pendiente };
+  }
+
+  function anotarTodas(motivo){
+    const ahora = Date.now();
+    for(const rama of RAMAS){
+      const previo = estados.get(rama);
+      // Si no se pudo comparar, una falla ya vista no se borra: queda hasta que se compruebe lo contrario.
+      if(previo?.veredicto === 'no_llega') continue;
+      estados.set(rama, { comprobado:ahora, veredicto:'sin_comprobar', motivo });
+    }
+  }
+  function codigoDeError(error){
+    const code = String(error?.code || '').toUpperCase(), texto = String(error?.message || error || '').toLowerCase();
+    if(code === 'PGRST202' || code === '42883' || /could not find the function/.test(texto)) return 'RPC_MISSING';
+    if(/no-auth/.test(texto)) return 'UNAUTHORIZED';
+    return 'RPC_FAILED';
+  }
+
+  async function comprobar(){
+    if(enCurso) return enCurso;
+    enCurso = (async () => {
+      const pc = oficina();
+      if(pc !== oficinaVista){ estados.clear(); oficinaVista = pc; noAntesDe = 0; }
+      if(!pc) return null;
+      const db = cliente(), secreto = root.PANEL_DATA_SECRET;
+      if(!db?.rpc || !secreto){ anotarTodas('SIN_CLIENTE'); return null; }
+      let r;
+      try{
+        const hist = typeof root.pcAliasesHist === 'function' ? root.pcAliasesHist() : null;
+        r = await db.rpc('panel_ultima_llegada', { p_secret:secreto, p_pc_codigo:pc, p_hist_pcs:Array.isArray(hist) && hist.length ? hist : null });
+      }catch(e){ r = { error:e }; }
+      if(oficina() !== pc) return null;           // cambió la oficina en el medio: no se usa
+      let datos = r?.data;
+      if(typeof datos === 'string'){ try{ datos = JSON.parse(datos); }catch(_e){ datos = null; } }
+      if(r?.error || datos?.ok !== true){
+        const motivo = r?.error ? codigoDeError(r.error) : 'RESPUESTA_INVALIDA';
+        // Mientras el servidor no tenga la función, no se insiste cada minuto.
+        if(motivo === 'RPC_MISSING') noAntesDe = Date.now() + SIN_FUNCION_MS;
+        anotarTodas(motivo);
+        return null;
+      }
+      const ahora = Date.now();
+      for(const rama of RAMAS){
+        let panel = null;
+        try{ panel = panelDe(rama); }catch(_e){}
+        estados.set(rama, decidir({ rama, servidor:servidorDe(rama, datos), panel, ahora, previo:estados.get(rama),
+          lectura:root.NodoSalud?.lectura?.(rama, LECTURAS[rama]) || null }));
+      }
+      return estados;
+    })().finally(() => { enCurso = null; });
+    return enCurso;
+  }
+
+  async function vuelta(){
+    try{
+      if(!oficina()) { if(oficinaVista){ estados.clear(); oficinaVista = ''; } return; }
+      // Con Agentes trabajando las listas pueden quedar quietas a propósito: se deja pasar la vuelta
+      // y los márgenes arrancan de nuevo, para no culpar a la llegada de una pausa del panel.
+      if(ocupado()){ for(const e of estados.values()) if(e.veredicto !== 'no_llega') delete e.pendiente; return; }
+      if(Date.now() < noAntesDe) return;
+      await comprobar();
+    }catch(_e){}
+  }
+
+  // Lo que lee el semáforo. Un "llega" viejo ya no vale; un "no llega" queda a la vista con su hora.
+  function estado(rama){
+    const e = estados.get(rama);
+    if(!e) return null;
+    if(e.veredicto === 'llega' && Date.now() - e.comprobado > VIGENTE_MS)
+      return { veredicto:'sin_comprobar', motivo:'SIN_COMPROBAR_RECIENTE', comprobado:e.comprobado };
+    return { veredicto:e.veredicto, motivo:e.motivo, desde:e.desde, comprobado:e.comprobado };
+  }
+  function arrancar(){
+    if(reloj || typeof root.setInterval !== 'function') return;
+    reloj = root.setInterval(vuelta, CADA_MS);
+  }
+  return Object.freeze({ comprobar, vuelta, estado, decidir, arrancar, GRACIA_MS });
+});
 (function(root, factory){
   if(typeof module === 'object' && module.exports) module.exports = factory();
   else root.NodoChatMessage = factory();
 })(globalThis, function(){
   'use strict';
   const upper = value => String(value ?? '').trim().toUpperCase();
+  const COPIA_SEGUNDOS = 10, CHAT_VIGENTE_MS = 3 * 24 * 60 * 60 * 1000;
   function sourceType(m){
     const explicit = m.origen || m.tipo_emisor || m.TIPO_EMISOR || m.emisor_tipo;
     if(explicit) return upper(explicit);
@@ -2489,6 +2820,56 @@
     const m = normalize(message);
     return role(m) === 'USUARIO' && !m.imagen_url && FILLER.test(m.mensaje.trim());
   }
+  // El chat se guarda en dos lados: la tabla nueva y una copia en el hilo de la solicitud, que es lo
+  // único que leen los NODO sin actualizar. Por el canal nuevo llegan las dos cosas: si esta oficina
+  // ya anda por ahí, la copia sobra. Mismo lado, mismo texto y mismo segundo. Lo que existe sólo en
+  // el hilo sigue saliendo.
+  function sinCopias(hilo, filas){
+    const segundo = v => { const t = Date.parse(String(v || '').slice(0, 19) + 'Z'); return Number.isFinite(t) ? t / 1000 : null; };
+    const lado = m => (role(m) === 'USUARIO' ? 'U|' : 'O|') + String(m.mensaje ?? '').trim();
+    const ya = new Map();
+    for(const f of filas || []){
+      const s = segundo(f.created_at || f.fecha);
+      if(s !== null) ya.set(lado(f), (ya.get(lado(f)) || []).concat(s));
+    }
+    return (hilo || []).filter(m => {
+      const s = segundo(m.fecha);
+      return !(s !== null && (ya.get(lado(m)) || []).some(x => Math.abs(x - s) <= COPIA_SEGUNDOS));
+    });
+  }
+  // El chat que el jugador está leyendo es el último que abrió, si sigue abierto y con movimiento.
+  // Uno abierto de hace meses no lo lee nadie: escribir ahí dejaba el mensaje donde nadie mira y NODO
+  // igual decía "enviado". Sin chat vigente, el mensaje va al hilo que el Portal lee por usuario.
+  function chatVigente(sesiones, usuario, ahora){
+    const u = upper(usuario);
+    const propias = (sesiones || []).filter(s => u && upper(s.usuario || s.USUARIO) === u);
+    if(!propias.length) return '';
+    const ultima = propias.reduce((a, b) => Number(b.sesion_id || b.id || 0) > Number(a.sesion_id || a.id || 0) ? b : a);
+    if(['CERRADO','RESUELTA'].includes(upper(ultima.estado))) return '';
+    const cuando = Date.parse(ultima.updated_at || ultima.fecha_ultimo || ultima.created_at || '');
+    return Number.isFinite(cuando) && ahora - cuando <= CHAT_VIGENTE_MS ? String(ultima.chat_id || '') : '';
+  }
+  // Una conversación, un solo escritor. Todo chat abierto desde el Portal tiene una solicitud puente
+  // para las PCs viejas. Si el puente decidía, el mensaje siempre iba al hilo viejo y el canal nuevo
+  // no escribía nunca. Con NODO en el canal nuevo y el chat abierto escribe el canal nuevo. El estado
+  // de la bandeja se sigue guardando aparte, sin el mensaje.
+  function escritor(ticket, hayMensaje){
+    const t = ticket || {};
+    if(!t._canalNuevo) return 'HILO';
+    if(!t._legacyOwner) return 'CANAL';
+    return hayMensaje && t._beta === true && !t.cerrado ? 'CANAL' : 'HILO';
+  }
+  // Cerrar una consulta es cerrar al jugador, no una sesión suelta. Quedan chats abiertos de meses
+  // atrás del mismo usuario y cada uno es una fila: al cerrar uno aparecía el siguiente con el mismo
+  // nombre, y parecía que el botón no andaba. 107 jugadores tenían más de uno abierto el 1/11.
+  function chatsDeLaConsulta(ticket, abiertos){
+    if(!ticket?._chatId) return [];
+    const usuario = upper(ticket.usuario), porChat = new Map([[String(ticket._chatId), ticket]]);
+    for(const t of abiertos || []){
+      if(t?._chatId && usuario && upper(t.usuario) === usuario && !porChat.has(String(t._chatId))) porChat.set(String(t._chatId), t);
+    }
+    return [...porChat.values()];
+  }
   function merge(existing, incoming){
     const result = Object.assign({}, existing);
     for(const [name,value] of Object.entries(incoming || {})){
@@ -2503,7 +2884,7 @@
     return text.replace(/⟦AYUDA:inicio⟧/g, '[Botón: Ver opciones de ayuda]')
       .replace(/⟦AYUDA:revisar_envio⟧/g, '[Botón: Revisar una transferencia enviada]');
   }
-  return Object.freeze({ role, normalize, author, className, key, isFiller, merge, visibleText });
+  return Object.freeze({ role, normalize, author, className, key, isFiller, sinCopias, chatVigente, escritor, chatsDeLaConsulta, merge, visibleText });
 });
 (function(root, factory){
   if(typeof module === 'object' && module.exports) module.exports = factory();
@@ -2518,10 +2899,16 @@
   }
   // Contrato legacy: una respuesta OPERADOR también corta los pendientes locales.
   // No acredita un recibo remoto de visto. La beta puede entregar el total ya resuelto.
+  // Una respuesta automática ("Recibimos tus datos…") no es un operador que leyó: sale con
+  // origen OPERADOR y auto:true, y antes apagaba el aviso de una consulta que nadie había visto (6/11).
+  function automatico(message) {
+    const a = message?.auto ?? message?.AUTO ?? message?.metadata?.auto;
+    return a === true || a === 'true';
+  }
   function readCutoff(ticket, marks = {}) {
     let cutoff = date(marks?.[chatKey(ticket)]);
     for(const message of ticket?.thread || []) {
-      if(upper(message.origen) === 'OPERADOR') cutoff = Math.max(cutoff, date(message.fecha));
+      if(upper(message.origen) === 'OPERADOR' && !automatico(message)) cutoff = Math.max(cutoff, date(message.fecha));
     }
     return cutoff;
   }
@@ -2719,7 +3106,8 @@
         if(String(result.chat_id) !== String(chatId) || !Array.isArray(result.rows) ||
           result.rows.some(row=>!validId(row.id)) || !Number.isSafeInteger(result.counts?.unread) || result.counts.unread < 0) throw new Error('BETA_INVALID_MESSAGES');
         if((countRevisions.get(String(chatId))||0)<=countVersion)setCount(chatId,Number(result.counts?.unread));
-        if(!options.beforeId)observeLegacy(chatId,result.legacy_thread);
+        // Las copias del hilo viejo ya llegaron con su número en rows: no son mensajes sin identificar.
+        if(!options.beforeId)observeLegacy(chatId,root.NodoChatMessage?.sinCopias?.(result.legacy_thread,result.rows)??result.legacy_thread);
         publish('READY'); return result;
       } catch(e) { if(current(version,requestedPc))publish('ERROR',e.message); throw e; }
       finally { if(pages.get(key)===pending)pages.delete(key); }

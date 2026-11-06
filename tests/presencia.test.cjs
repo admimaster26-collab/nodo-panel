@@ -72,3 +72,16 @@ test('sin datos no explota', () => {
   assert.equal(presencia.armar({ solicitudes: [{}, null] }).pendientes, 2,
     'una solicitud sin estado sigue estando pendiente de alguien');
 });
+
+test('el número de la lista de Inicio manda sobre la cuenta propia', () => {
+  const tres = [1, 2, 3].map(() => ({ TIPO: 'CARGA', ESTADO: 'PENDIENTE', FECHA_CREACION: hace(1) }));
+  assert.equal(armar(tres, { pendientes: 0 }).details, 'Sin solicitudes pendientes');
+  assert.equal(armar(tres, { pendientes: 2 }).details, '2 solicitudes pendientes');
+  assert.equal(armar(tres).details, '3 solicitudes pendientes', 'sin número de la pantalla, cuenta');
+  assert.equal(armar(tres, { pendientes: 'x' }).details, '3 solicitudes pendientes');
+});
+
+test('sin datos frescos lo dice, en vez de dar un número', () => {
+  const r = armar([{ TIPO: 'CARGA', ESTADO: 'PENDIENTE', FECHA_CREACION: hace(1) }], { sinDatos: true });
+  assert.equal(r.details, 'Sin datos: no se pudo consultar');
+});

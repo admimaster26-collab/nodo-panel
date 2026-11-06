@@ -114,6 +114,24 @@ create table if not exists operaciones.colas_observadas_locales (
 create index if not exists colas_observadas_pc_ref_idx
   on operaciones.colas_observadas_locales (upper(btrim(pc_codigo)), referencia_id);
 
+-- Server revision is independent of operation dates. Receipts keep hashes, never private bodies.
+create table if not exists operaciones.persistencia_recibos (
+ pc_codigo text not null, instalacion text not null, familia text not null,
+ item_key jsonb not null, mutation_id text not null, payload_hash text not null,
+ revision bigint not null, accepted_at timestamptz not null default now(),
+ primary key(pc_codigo,instalacion,familia,item_key,mutation_id)
+);
+revoke all on operaciones.persistencia_recibos from public,anon,authenticated;
+alter table operaciones.persistencia_recibos enable row level security;
+alter table identidad.jugadores_locales add column if not exists revision bigint not null default 1;
+alter table identidad.jugadores_locales enable row level security;
+alter table operaciones.movimientos_locales add column if not exists revision bigint not null default 1;
+alter table operaciones.movimientos_locales enable row level security;
+alter table operaciones.cotejos_locales add column if not exists revision bigint not null default 1;
+alter table operaciones.cotejos_locales enable row level security;
+alter table operaciones.colas_observadas_locales add column if not exists revision bigint not null default 1;
+alter table operaciones.colas_observadas_locales enable row level security;
+
 -- Vista canónica consumida automáticamente por identidad.observaciones_v1(p_pc_codigo, p_usuario).
 -- Proyecta las observaciones locales con fuente, estado y fecha sin mezclar usuarios ni fabricar historia.
 create or replace view identidad.observaciones_locales as
@@ -172,6 +190,36 @@ revoke all on table
   identidad.observaciones_locales
 from public,anon,authenticated;
 
+-- Caller holds the per-key lock across decision, row write and receipt in one transaction.
+create or replace function operaciones.persistencia_decidir_v1(
+ p_pc text,p_inst text,p_familia text,p_key jsonb,p_item jsonb,p_actual bigint
+) returns jsonb language plpgsql security invoker set search_path='' as $$
+declare v_meta jsonb:=p_item->'_sync'; v_base bigint; v_id text; v_hash text:=md5((p_item-'_sync')::text);
+ v_prev operaciones.persistencia_recibos%rowtype;
+begin
+ if v_meta is null then
+   v_base:=0; v_id:='legacy-'||v_hash;
+ elsif jsonb_typeof(v_meta)<>'object' or coalesce(v_meta->>'base_revision','') !~ '^(0|[1-9][0-9]{0,17})$'
+    or length(coalesce(v_meta->>'mutation_id','')) not between 1 and 128 then
+   raise exception using errcode='22023',message='BETA_INVALID_PERSISTENCE_REVISION';
+ else v_base:=(v_meta->>'base_revision')::bigint;v_id:=v_meta->>'mutation_id'; end if;
+ select * into v_prev from operaciones.persistencia_recibos where pc_codigo=p_pc and instalacion=p_inst
+   and familia=p_familia and item_key=p_key and mutation_id=v_id;
+ if found then
+   if v_prev.payload_hash<>v_hash then
+     return jsonb_build_object('accepted',false,'code','MUTATION_REUSED','revision',coalesce(p_actual,0)::text,'mutation_id',v_id);
+   end if;
+   return jsonb_build_object('accepted',true,'replay',true,'revision',v_prev.revision::text,'mutation_id',v_id);
+ end if;
+ if v_base<>coalesce(p_actual,0) then
+   return jsonb_build_object('accepted',false,'code','REVISION_CONFLICT','revision',coalesce(p_actual,0)::text,'mutation_id',v_id);
+ end if;
+ insert into operaciones.persistencia_recibos(pc_codigo,instalacion,familia,item_key,mutation_id,payload_hash,revision)
+ values(p_pc,p_inst,p_familia,p_key,v_id,v_hash,coalesce(p_actual,0)+1);
+ return jsonb_build_object('accepted',true,'replay',false,'revision',(coalesce(p_actual,0)+1)::text,'mutation_id',v_id);
+end $$;
+revoke all on function operaciones.persistencia_decidir_v1(text,text,text,jsonb,jsonb,bigint) from public,anon,authenticated;
+
 create or replace function operaciones.persistencia_sync_v1(
   p_client_id uuid,
   p_pc_codigo text,
@@ -199,6 +247,8 @@ declare
   v_valor text;
   v_hist_id bigint;
   v_sol_id bigint;
+  v_actual bigint; v_decision jsonb; v_key jsonb;
+  v_receipts jsonb:='[]'::jsonb; v_conflicts jsonb:='[]'::jsonb;
 begin
   if length(v_inst) not between 1 and 128 or v_inst ~ '[[:space:]]' then
     raise exception using errcode='22023', message='BETA_INVALID_INSTALLATION';
@@ -227,7 +277,7 @@ begin
   end if;
 
   -- 1. Jugadores / atributos de identidad / titulares rechazados locales
-  for v_item in select value from jsonb_array_elements(v_jug) loop
+  for v_item in select value from jsonb_array_elements(v_jug) order by value->>'source_id',value->>'campo' loop
     if jsonb_typeof(v_item) <> 'object' then
       raise exception using errcode='22023', message='BETA_INVALID_PERSISTENCE_ITEM';
     end if;
@@ -242,6 +292,15 @@ begin
       raise exception using errcode='22023', message='BETA_INVALID_PERSISTENCE_ITEM';
     end if;
 
+    v_key:=jsonb_build_array(v_sid,v_campo);
+    perform pg_advisory_xact_lock(hashtextextended(v_pc||':jugadores:'||v_key::text,0));
+    select revision into v_actual from identidad.jugadores_locales where pc_codigo=v_pc and source_id=v_sid and campo=v_campo;
+    v_decision:=operaciones.persistencia_decidir_v1(v_pc,v_inst,'jugadores',v_key,v_item,v_actual);
+    v_decision:=v_decision||jsonb_build_object('family','jugadores','key',v_key,'id',v_sid);
+    if not (v_decision->>'accepted')::boolean then
+      v_conflicts:=v_conflicts||jsonb_build_array(v_decision);continue;
+    end if;
+    if not (v_decision->>'replay')::boolean then
     insert into identidad.jugadores_locales (
       pc_codigo, source_id, campo, usuario, atributo, valor, fuente, estado,
       veces, verificado, titular_asociado, primera_fecha, ultima_fecha, detalle,
@@ -281,13 +340,16 @@ begin
       client_id = excluded.client_id,
       instalacion = excluded.instalacion,
       version = excluded.version,
-      updated_at = now();
+      updated_at = now(),
+      revision = identidad.jugadores_locales.revision + 1;
+    end if;
+    v_receipts:=v_receipts||jsonb_build_array(v_decision);
 
     v_ack_jug := array_append(v_ack_jug, v_sid);
   end loop;
 
   -- 2. Atributos locales de movimientos y trazas paso a paso
-  for v_item in select value from jsonb_array_elements(v_mov) loop
+  for v_item in select value from jsonb_array_elements(v_mov) order by value->>'movimiento_key' loop
     if jsonb_typeof(v_item) <> 'object' then
       raise exception using errcode='22023', message='BETA_INVALID_PERSISTENCE_ITEM';
     end if;
@@ -299,6 +361,15 @@ begin
     v_hist_id := case when coalesce(v_item->>'historial_id','') ~ '^[1-9][0-9]{0,18}$' then (v_item->>'historial_id')::bigint else null end;
     v_sol_id := case when coalesce(v_item->>'solicitud_id','') ~ '^[1-9][0-9]{0,18}$' then (v_item->>'solicitud_id')::bigint else null end;
 
+    v_key:=jsonb_build_array(v_sid);
+    perform pg_advisory_xact_lock(hashtextextended(v_pc||':movimientos:'||v_key::text,0));
+    select revision into v_actual from operaciones.movimientos_locales where pc_codigo=v_pc and movimiento_key=v_sid;
+    v_decision:=operaciones.persistencia_decidir_v1(v_pc,v_inst,'movimientos',v_key,v_item,v_actual);
+    v_decision:=v_decision||jsonb_build_object('family','movimientos','key',v_key,'id',v_sid);
+    if not (v_decision->>'accepted')::boolean then
+      v_conflicts:=v_conflicts||jsonb_build_array(v_decision);continue;
+    end if;
+    if not (v_decision->>'replay')::boolean then
     insert into operaciones.movimientos_locales (
       pc_codigo, movimiento_key, historial_id, solicitud_id, chunior_id, usuario,
       tipo, monto, estado, titular, destino, cbu, obs, saldo_pre, saldo_post,
@@ -356,13 +427,16 @@ begin
       client_id = excluded.client_id,
       instalacion = excluded.instalacion,
       version = excluded.version,
-      updated_at = now();
+      updated_at = now(),
+      revision = operaciones.movimientos_locales.revision + 1;
+    end if;
+    v_receipts:=v_receipts||jsonb_build_array(v_decision);
 
     v_ack_mov := array_append(v_ack_mov, v_sid);
   end loop;
 
   -- 3. Cotejos por alta y por turno
-  for v_item in select value from jsonb_array_elements(v_cot) loop
+  for v_item in select value from jsonb_array_elements(v_cot) order by value->>'cotejo_key' loop
     if jsonb_typeof(v_item) <> 'object' then
       raise exception using errcode='22023', message='BETA_INVALID_PERSISTENCE_ITEM';
     end if;
@@ -372,6 +446,15 @@ begin
       raise exception using errcode='22023', message='BETA_INVALID_PERSISTENCE_ITEM';
     end if;
 
+    v_key:=jsonb_build_array(v_sid);
+    perform pg_advisory_xact_lock(hashtextextended(v_pc||':cotejos:'||v_key::text,0));
+    select revision into v_actual from operaciones.cotejos_locales where pc_codigo=v_pc and cotejo_key=v_sid;
+    v_decision:=operaciones.persistencia_decidir_v1(v_pc,v_inst,'cotejos',v_key,v_item,v_actual);
+    v_decision:=v_decision||jsonb_build_object('family','cotejos','key',v_key,'id',v_sid);
+    if not (v_decision->>'accepted')::boolean then
+      v_conflicts:=v_conflicts||jsonb_build_array(v_decision);continue;
+    end if;
+    if not (v_decision->>'replay')::boolean then
     insert into operaciones.cotejos_locales (
       pc_codigo, cotejo_key, tipo_cotejo, turno_id, usuario, telefono,
       usuario_declarado, telefono_declarado, referencia_id, estado, detalle, fecha,
@@ -407,13 +490,16 @@ begin
       client_id = excluded.client_id,
       instalacion = excluded.instalacion,
       version = excluded.version,
-      updated_at = now();
+      updated_at = now(),
+      revision = operaciones.cotejos_locales.revision + 1;
+    end if;
+    v_receipts:=v_receipts||jsonb_build_array(v_decision);
 
     v_ack_cot := array_append(v_ack_cot, v_sid);
   end loop;
 
   -- 4. Colas locales observadas (diagnóstico / recibos de lectura; nunca re-ejecutan efectos)
-  for v_item in select value from jsonb_array_elements(v_col) loop
+  for v_item in select value from jsonb_array_elements(v_col) order by value->>'cola_tipo',value->>'item_id' loop
     if jsonb_typeof(v_item) <> 'object' then
       raise exception using errcode='22023', message='BETA_INVALID_PERSISTENCE_ITEM';
     end if;
@@ -424,6 +510,15 @@ begin
       raise exception using errcode='22023', message='BETA_INVALID_PERSISTENCE_ITEM';
     end if;
 
+    v_key:=jsonb_build_array(v_inst,v_campo,v_sid);
+    perform pg_advisory_xact_lock(hashtextextended(v_pc||':colas:'||v_key::text,0));
+    select revision into v_actual from operaciones.colas_observadas_locales where pc_codigo=v_pc and instalacion=v_inst and cola_tipo=v_campo and item_id=v_sid;
+    v_decision:=operaciones.persistencia_decidir_v1(v_pc,v_inst,'colas',v_key,v_item,v_actual);
+    v_decision:=v_decision||jsonb_build_object('family','colas','key',v_key,'id',v_sid);
+    if not (v_decision->>'accepted')::boolean then
+      v_conflicts:=v_conflicts||jsonb_build_array(v_decision);continue;
+    end if;
+    if not (v_decision->>'replay')::boolean then
     insert into operaciones.colas_observadas_locales (
       pc_codigo, instalacion, cola_tipo, item_id, usuario, referencia_id,
       estado, motivo, fecha, client_id, version, updated_at
@@ -449,7 +544,10 @@ begin
       fecha = coalesce(excluded.fecha, operaciones.colas_observadas_locales.fecha),
       client_id = excluded.client_id,
       version = excluded.version,
-      updated_at = now();
+      updated_at = now(),
+      revision = operaciones.colas_observadas_locales.revision + 1;
+    end if;
+    v_receipts:=v_receipts||jsonb_build_array(v_decision);
 
     v_ack_col := array_append(v_ack_col, v_sid);
   end loop;
@@ -458,6 +556,8 @@ begin
     'ok', true,
     'contract', 'nodo.beta.v1',
     'scope', jsonb_build_object('pc_codigo', v_pc, 'instalacion', v_inst, 'version', v_ver),
+    'protocol','persistence.cas.v1',
+    'receipts',v_receipts,'conflicts',v_conflicts,
     'acknowledged', jsonb_build_object(
       'jugadores', to_jsonb(v_ack_jug),
       'movimientos', to_jsonb(v_ack_mov),
@@ -487,6 +587,7 @@ declare
   v_mov jsonb := '[]'::jsonb;
   v_cot jsonb := '[]'::jsonb;
   v_col jsonb := '[]'::jsonb;
+  v_scope jsonb; v_pos jsonb; v_next jsonb; v_more boolean:=false; v_last jsonb; v_family text; v_len int;
 begin
   if p_limit is null or p_limit not between 1 and 200 then
     raise exception using errcode='22023', message='BETA_INVALID_LIMIT';
@@ -495,75 +596,141 @@ begin
     raise exception using errcode='22023', message='BETA_INVALID_PERSISTENCE_TYPE';
   end if;
   v_pcs := acceso.oficinas_autorizadas(v_pc);
+  v_scope:=jsonb_build_object('pc_codigo',v_pc,'pc_codigos',v_pcs,'usuario',v_u,'referencia_id',v_ref,'tipo',v_tipo);
+  if p_cursor is not null and (jsonb_typeof(p_cursor)<>'object' or p_cursor->>'version' is distinct from '1'
+    or p_cursor->'scope' is distinct from v_scope or jsonb_typeof(p_cursor->'positions') is distinct from 'object'
+    or jsonb_typeof(p_cursor->'done') is distinct from 'object') then
+    raise exception using errcode='22023',message='BETA_INVALID_PERSISTENCE_CURSOR';
+  end if;
+  v_next:=coalesce(p_cursor,jsonb_build_object('version',1,'scope',v_scope,'positions','{}'::jsonb,'done','{}'::jsonb));
+  for v_family,v_len in select * from (values ('jugadores',3),('movimientos',2),('cotejos',2),('colas',4)) f(family,n) loop
+    v_pos:=p_cursor->'positions'->v_family;
+    if v_pos is not null and (jsonb_typeof(v_pos)<>'array') then
+      raise exception using errcode='22023',message='BETA_INVALID_PERSISTENCE_CURSOR';
+    end if;
+    if v_pos is not null and (jsonb_array_length(v_pos)<>v_len
+      or exists(select 1 from jsonb_array_elements(v_pos) x where jsonb_typeof(x)<>'string')
+      or not ((v_pos->>0)=any(v_pcs))) then
+      raise exception using errcode='22023',message='BETA_INVALID_PERSISTENCE_CURSOR';
+    end if;
+    if p_cursor->'done' ? v_family and jsonb_typeof(p_cursor->'done'->v_family)<>'boolean' then
+      raise exception using errcode='22023',message='BETA_INVALID_PERSISTENCE_CURSOR';
+    end if;
+  end loop;
 
-  if v_tipo in ('TODO','JUGADORES') then
-    select coalesce(jsonb_agg(to_jsonb(x) order by x.ultima_fecha desc nulls last, x.source_id asc), '[]'::jsonb)
+  if v_tipo in ('TODO','JUGADORES') and not coalesce((v_next->'done'->>'jugadores')::boolean,false) then
+    v_pos:=v_next->'positions'->'jugadores';
+    select coalesce(jsonb_agg(to_jsonb(x) order by x.pc_codigo, x.source_id, x.campo), '[]'::jsonb)
     into v_jug
     from (
       select j.pc_codigo, j.source_id, j.campo, j.usuario, j.atributo, j.valor, j.fuente, j.estado,
              j.veces, j.verificado, j.titular_asociado, j.primera_fecha, j.ultima_fecha, j.detalle,
-             j.instalacion, j.version, j.updated_at
+             j.instalacion, j.version, j.updated_at, j.revision::text as revision
       from identidad.jugadores_locales j
       where upper(btrim(j.pc_codigo)) = any(v_pcs)
         and (v_u is null or lower(btrim(j.usuario)) = v_u or j.usuario = '*')
         and (v_ref is null or j.source_id = v_ref or j.valor = v_ref)
-      order by j.ultima_fecha desc nulls last, j.source_id asc
-      limit p_limit
+      and (v_pos is null or (j.pc_codigo, j.source_id, j.campo) > (v_pos->>0, v_pos->>1, v_pos->>2))
+      order by j.pc_codigo, j.source_id, j.campo
+      limit p_limit+1
     ) x;
+
+    if jsonb_array_length(v_jug)>p_limit then
+      select jsonb_agg(value order by ord) into v_jug from jsonb_array_elements(v_jug) with ordinality e(value,ord) where ord<=p_limit;
+      v_more:=true;
+      v_last:=v_jug->(jsonb_array_length(v_jug)-1);
+      v_next:=jsonb_set(v_next,array['positions','jugadores'],jsonb_build_array(v_last->'pc_codigo', v_last->'source_id', v_last->'campo'));
+    else
+      v_next:=jsonb_set(v_next,array['done','jugadores'],'true'::jsonb);
+    end if;
   end if;
 
-  if v_tipo in ('TODO','MOVIMIENTOS') then
-    select coalesce(jsonb_agg(to_jsonb(x) order by x.fecha desc nulls last, x.movimiento_key asc), '[]'::jsonb)
+  if v_tipo in ('TODO','MOVIMIENTOS') and not coalesce((v_next->'done'->>'movimientos')::boolean,false) then
+    v_pos:=v_next->'positions'->'movimientos';
+    select coalesce(jsonb_agg(to_jsonb(x) order by x.pc_codigo, x.movimiento_key), '[]'::jsonb)
     into v_mov
     from (
       select m.pc_codigo, m.movimiento_key, m.historial_id::text as historial_id, m.solicitud_id::text as solicitud_id,
              m.chunior_id, m.usuario, m.tipo, m.monto, m.estado, m.titular, m.destino, m.cbu, m.obs,
              m.saldo_pre, m.saldo_post, m.billetera_nombre, m.operador, m.bono_pct, m.origen, m.notas,
-             m.traza, m.fecha, m.instalacion, m.version, m.updated_at
+             m.traza, m.fecha, m.instalacion, m.version, m.updated_at, m.revision::text as revision
       from operaciones.movimientos_locales m
       where upper(btrim(m.pc_codigo)) = any(v_pcs)
         and (v_u is null or lower(btrim(m.usuario)) = v_u)
         and (v_ref is null or m.movimiento_key = v_ref or m.historial_id::text = v_ref or m.solicitud_id::text = v_ref or m.chunior_id = v_ref)
-      order by m.fecha desc nulls last, m.movimiento_key asc
-      limit p_limit
+      and (v_pos is null or (m.pc_codigo, m.movimiento_key) > (v_pos->>0, v_pos->>1))
+      order by m.pc_codigo, m.movimiento_key
+      limit p_limit+1
     ) x;
+
+    if jsonb_array_length(v_mov)>p_limit then
+      select jsonb_agg(value order by ord) into v_mov from jsonb_array_elements(v_mov) with ordinality e(value,ord) where ord<=p_limit;
+      v_more:=true;
+      v_last:=v_mov->(jsonb_array_length(v_mov)-1);
+      v_next:=jsonb_set(v_next,array['positions','movimientos'],jsonb_build_array(v_last->'pc_codigo', v_last->'movimiento_key'));
+    else
+      v_next:=jsonb_set(v_next,array['done','movimientos'],'true'::jsonb);
+    end if;
   end if;
 
-  if v_tipo in ('TODO','COTEJOS') then
-    select coalesce(jsonb_agg(to_jsonb(x) order by x.fecha desc nulls last, x.cotejo_key asc), '[]'::jsonb)
+  if v_tipo in ('TODO','COTEJOS') and not coalesce((v_next->'done'->>'cotejos')::boolean,false) then
+    v_pos:=v_next->'positions'->'cotejos';
+    select coalesce(jsonb_agg(to_jsonb(x) order by x.pc_codigo, x.cotejo_key), '[]'::jsonb)
     into v_cot
     from (
       select c.pc_codigo, c.cotejo_key, c.tipo_cotejo, c.turno_id, c.usuario, c.telefono,
              c.usuario_declarado, c.telefono_declarado, c.referencia_id, c.estado, c.detalle,
-             c.fecha, c.instalacion, c.version, c.updated_at
+             c.fecha, c.instalacion, c.version, c.updated_at, c.revision::text as revision
       from operaciones.cotejos_locales c
       where upper(btrim(c.pc_codigo)) = any(v_pcs)
         and (v_u is null or lower(btrim(coalesce(c.usuario,''))) = v_u or lower(btrim(coalesce(c.usuario_declarado,''))) = v_u)
         and (v_ref is null or c.cotejo_key = v_ref or c.turno_id = v_ref or c.referencia_id = v_ref)
-      order by c.fecha desc nulls last, c.cotejo_key asc
-      limit p_limit
+      and (v_pos is null or (c.pc_codigo, c.cotejo_key) > (v_pos->>0, v_pos->>1))
+      order by c.pc_codigo, c.cotejo_key
+      limit p_limit+1
     ) x;
+
+    if jsonb_array_length(v_cot)>p_limit then
+      select jsonb_agg(value order by ord) into v_cot from jsonb_array_elements(v_cot) with ordinality e(value,ord) where ord<=p_limit;
+      v_more:=true;
+      v_last:=v_cot->(jsonb_array_length(v_cot)-1);
+      v_next:=jsonb_set(v_next,array['positions','cotejos'],jsonb_build_array(v_last->'pc_codigo', v_last->'cotejo_key'));
+    else
+      v_next:=jsonb_set(v_next,array['done','cotejos'],'true'::jsonb);
+    end if;
   end if;
 
-  if v_tipo in ('TODO','COLAS') then
-    select coalesce(jsonb_agg(to_jsonb(x) || jsonb_build_object('re_ejecutar', false) order by x.fecha desc nulls last, x.item_id asc), '[]'::jsonb)
+  if v_tipo in ('TODO','COLAS') and not coalesce((v_next->'done'->>'colas')::boolean,false) then
+    v_pos:=v_next->'positions'->'colas';
+    select coalesce(jsonb_agg(to_jsonb(x) || jsonb_build_object('re_ejecutar', false) order by x.pc_codigo, x.instalacion, x.cola_tipo, x.item_id), '[]'::jsonb)
     into v_col
     from (
       select q.pc_codigo, q.instalacion, q.cola_tipo, q.item_id, q.usuario, q.referencia_id,
-             q.estado, q.motivo, q.fecha, q.version, q.updated_at
+             q.estado, q.motivo, q.fecha, q.version, q.updated_at, q.revision::text as revision
       from operaciones.colas_observadas_locales q
       where upper(btrim(q.pc_codigo)) = any(v_pcs)
         and (v_u is null or lower(btrim(coalesce(q.usuario,''))) = v_u)
         and (v_ref is null or q.item_id = v_ref or q.referencia_id = v_ref)
-      order by q.fecha desc nulls last, q.item_id asc
-      limit p_limit
+      and (v_pos is null or (q.pc_codigo, q.instalacion, q.cola_tipo, q.item_id) > (v_pos->>0, v_pos->>1, v_pos->>2, v_pos->>3))
+      order by q.pc_codigo, q.instalacion, q.cola_tipo, q.item_id
+      limit p_limit+1
     ) x;
+
+    if jsonb_array_length(v_col)>p_limit then
+      select jsonb_agg(value order by ord) into v_col from jsonb_array_elements(v_col) with ordinality e(value,ord) where ord<=p_limit;
+      v_more:=true;
+      v_last:=v_col->(jsonb_array_length(v_col)-1);
+      v_next:=jsonb_set(v_next,array['positions','colas'],jsonb_build_array(v_last->'pc_codigo', v_last->'instalacion', v_last->'cola_tipo', v_last->'item_id'));
+    else
+      v_next:=jsonb_set(v_next,array['done','colas'],'true'::jsonb);
+    end if;
   end if;
 
   return jsonb_build_object(
     'ok', true,
     'contract', 'nodo.beta.v1',
-    'scope', jsonb_build_object('pc_codigo', v_pc, 'pc_codigos', v_pcs, 'usuario', v_u, 'referencia_id', v_ref, 'tipo', v_tipo),
+    'scope', v_scope, 'protocol','persistence.cas.v1',
+    'has_more',v_more,'next_cursor',case when v_more then v_next else null end,
     'jugadores', v_jug,
     'movimientos', v_mov,
     'cotejos', v_cot,

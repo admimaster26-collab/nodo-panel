@@ -185,7 +185,10 @@ test('beta IPC: recarga en caliente de connection.json y allowlist de RPCs de do
     ['nodo_beta_persistencia_leer_v1', { p_usuario: 'demo', p_tipo: 'TODO', p_limit: 50 }],
     ['nodo_beta_historial_v1', { p_filtros: { tipo: 'CARGA' }, p_limit: 50, p_cursor: null }],
     ['nodo_beta_bandeja_v1', { p_filtros: {}, p_limit: 50, p_cursor: null }],
-    ['nodo_beta_nexo_export_v1', { p_limit: 500, p_cursor: null }]
+    ['nodo_beta_nexo_export_v1', { p_limit: 500, p_cursor: null }],
+    ['nodo_beta_retiro_validar_v1', { p_solicitud_id: 42, p_dni_banco: '38495012', p_operador: 'op-test' }],
+    ['nodo_beta_retiro_rechazar_v1', { p_solicitud_id: 42, p_operador: 'op-test' }],
+    ['nodo_beta_retiro_pagar_v1', { p_solicitud_id: 42, p_operador: 'op-test' }]
   ];
   for (const [fn, params] of newRpcs) {
     const res = await invoke('panel:rpc', fn, { p_pc_codigo: 'P1', ...params });

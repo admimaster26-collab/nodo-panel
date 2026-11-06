@@ -13,7 +13,8 @@ function cerrarSesion(){
 
 // ── Panel de verificaciones ───────────────────────────────────────────────────
 async function cargarVerificaciones(){
-  window.NodoSalud?.begin('VALIDACION')?.record('DATA','OK','VERIFICACIONES_LOAD');
+  // El OK se anota después de leer, y sólo con oficina: antes se anotaba antes de pedir nada.
+  const _verifSalud = window.NodoSalud?.begin('VALIDACION');
   const hoy = inicioDiaArgentina(); // medianoche AR, no del SO local
   const { data } = await supabaseClient
     .from("verificaciones")
@@ -21,6 +22,7 @@ async function cargarVerificaciones(){
     .eq("pc_codigo", pcOperativa)
     .order("created_at", { ascending: false })
     .limit(60);
+  _verifSalud?.record('DATA', !Array.isArray(data) ? 'ERROR' : pcOperativa ? 'OK' : 'UNKNOWN', !Array.isArray(data) ? 'VERIFICACIONES_LOAD_FAILED' : pcOperativa ? 'VERIFICACIONES_LOAD' : 'VALIDACION_SIN_OFICINA');
 
   if(!data){ setBox("tablaVerificaciones",'<div class="small" style="color:var(--muted);text-align:center;padding:20px">Error al cargar.</div>'); return; }
 

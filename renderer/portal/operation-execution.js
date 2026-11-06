@@ -205,6 +205,31 @@ async function _ejecutarSolicitudAhora(ctx){
     // registrarCarga/RetiroEnChunior() y ajustarSaldoBilletera() ya probadas.
     if(_portalSolicitudOperacionEnCurso){ deps.toast('Hay una operación portal en curso. Esperá que termine.', 'yellow'); return; }
     if(!deps.window.ctrlElectron){ deps.alert('La automatización solo funciona en la app de escritorio.'); return; }
+    // Sólo las solicitudes que el servidor marcó como retiro.instrumentos.v1 usan la validación
+    // nueva. Los retiros viejos y WhatsApp conservan su recorrido. Una solicitud beta no continúa
+    // si falta el consumidor o falla el RPC: el corte ocurre antes de EN_PROCESO y de Agentes.
+    let _retiroMeta = {};
+    try{
+      const _rawMeta = ctx.solicitud && (ctx.solicitud.METADATA !== undefined ? ctx.solicitud.METADATA : ctx.solicitud.metadata);
+      _retiroMeta = typeof _rawMeta === 'string' ? JSON.parse(_rawMeta || '{}') : (_rawMeta || {});
+    }catch(_e){ _retiroMeta = {}; }
+    const _retiroInstrumento = String(ctx.tipo||'').toUpperCase()==='RETIRO'
+      && _retiroMeta.retiro_instrumento_v1 && _retiroMeta.retiro_instrumento_v1.instrumento_id;
+    if(_retiroInstrumento){
+      if(typeof deps.window.nodoRetiroCuentaValidada !== 'function'){
+        try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_VALIDADOR_NO_CARGADO'); }catch(_e){}
+        deps.toast('No se cargó la validación de cuenta de este retiro. No se movió saldo.','red');
+        return;
+      }
+      const _cuenta = await deps.window.nodoRetiroCuentaValidada(ctx.id, {
+        usuario:ctx.usuario, monto:ctx.montoAprobado, destino:ctx.destino, titular:ctx.titular,
+        solicitud:ctx.solicitud
+      });
+      if(!_cuenta || !_cuenta.seguir){
+        if(_cuenta && _cuenta.cerrar){ try{ deps.cerrarPortalJobModal(); }catch(_e){} }
+        return;
+      }
+    }
     if(!deps._drexGlobalLock('portal')){
       deps.toast('Hay otra operación corriendo en Agentes ahora mismo (manual u otra). Esperá a que termine.', 'yellow');
       return;
@@ -371,7 +396,9 @@ async function _ejecutarSolicitudAhora(ctx){
         deps._wdUnlock();
       }
 
-      const ok = resultado && resultado.ok !== false;
+      // ok confirma que respondió la automatización; exito:false es el rechazo expreso del
+      // casino. No se debe registrar, debitar la billetera ni cerrar como PAGADA en ese caso.
+      const ok = resultado && resultado.ok !== false && resultado.exito !== false;
       const saldoPreCasino = (typeof resultado?.previousBalance?.value === 'number' && !resultado?.previousBalance?.unchanged) ? resultado.previousBalance.value : null;
       const saldoPostCasino = (typeof resultado?.newBalance?.value === 'number' && !resultado?.newBalance?.unchanged) ? resultado.newBalance.value : null;
       let saldoPre = saldoPreCasino !== null ? saldoPreCasino : ((typeof busqueda.balance?.value === 'number') ? busqueda.balance.value : null);
@@ -435,7 +462,29 @@ async function _ejecutarSolicitudAhora(ctx){
         }
         if(bil && bil.ID_BILLETERA) await deps.ajustarSaldoBilletera(bil.ID_BILLETERA, tipo === 'CARGA' ? montoAbs : -montoAbs);
         const estadoFinal = tipo === 'RETIRO' ? 'PAGADA' : 'ACREDITADA';
+        // La beta estampa la hora de aprobación en servidor después de que el pago ocurrió.
+        // Si falla el sello no se repite la operación: se conserva PAGADA y la auditoría pendiente
+        // queda visible para resolverla sin duplicar el retiro.
+        const _ahoraFin = new Date();
+        let _selloRetiro = null;
+        if(tipo === 'RETIRO' && _retiroInstrumento){
+          if(typeof deps.window.nodoSellarRetiroAprobado === 'function'){
+            try{ _selloRetiro = await deps.window.nodoSellarRetiroAprobado(id,{solicitud:ctx.solicitud,usuario:usuario,monto:montoAbs}); }
+            catch(_e){ _selloRetiro = {ok:false}; }
+          }else _selloRetiro = {ok:false};
+          if(!_selloRetiro || !_selloRetiro.ok){
+            try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
+            deps.toast('El retiro ya se ejecutó, pero faltó guardar su hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red');
+          }
+        }
+        const _horaExactaRetiro = _selloRetiro && _selloRetiro.ok
+          ? _selloRetiro.horaExacta
+          : (typeof deps.window.nodoHoraExacta === 'function' ? deps.window.nodoHoraExacta(_ahoraFin) : _ahoraFin.toLocaleTimeString('es-AR'));
         await deps.actualizarSolicitudPortal(id, estadoFinal, {
+          aprobado_at: (_selloRetiro && _selloRetiro.ok && _selloRetiro.aprobadoAt) || _ahoraFin.toISOString(),
+          aprobado_hora: _horaExactaRetiro,
+          ...(tipo === 'RETIRO' ? { retiro_aprobado_hora_exacta:_horaExactaRetiro, retiro_aprobado_servidor:!!(_selloRetiro && _selloRetiro.ok) } : {}),
+          ...(tipo === 'RETIRO' ? { observacion:'Retiro transferido a las '+_horaExactaRetiro+' hs.' } : {}),
           etapa:'PORTAL_COMPLETADA_PANEL',
           monto_aprobado:montoAbs,
           historial_id:filaHist?.id||null,
@@ -445,8 +494,22 @@ async function _ejecutarSolicitudAhora(ctx){
           billetera_id: bil?bil.ID_BILLETERA:null,
           billetera_nombre: bil?bil.NOMBRE_VISIBLE:null
         });
-        if(res) res.innerHTML = '<div class="ok-box" style="padding:8px 10px">✅ '+tipo+' portal de '+deps.money(montoAbs)+' completada. Historial: LANDING.</div>';
-        deps.toast(tipo+' portal OK: '+usuario+' · '+deps.money(montoAbs), 'green');
+        if(tipo==='RETIRO'){
+          if(filaHist && filaHist.id){
+            try{
+              await deps.supabaseClient.from('historial_ops').update({
+                notas:String(notas||'').trim()+' · Transferido a las '+_horaExactaRetiro+' hs.'
+              }).eq('id',filaHist.id);
+            }catch(_e){}
+          }
+          const _avisoRetiro='✅ Tu retiro de '+deps.money(montoAbs)+' fue transferido a las '+_horaExactaRetiro+' hs.';
+          try{
+            if(typeof deps.window.avisarJugadorEnChat==='function') await deps.window.avisarJugadorEnChat(usuario,_avisoRetiro);
+            else if(typeof deps.window.notificarUsuarioEnChat==='function') await deps.window.notificarUsuarioEnChat(usuario,_avisoRetiro,id,estadoFinal);
+          }catch(_e){}
+        }
+        if(res) res.innerHTML = '<div class="ok-box" style="padding:8px 10px">✅ '+tipo+' portal de '+deps.money(montoAbs)+' completada.'+(tipo==='RETIRO'?' · '+_horaExactaRetiro+' hs':'')+'. Historial: LANDING.</div>';
+        deps.toast(tipo+' portal OK: '+usuario+' · '+deps.money(montoAbs)+(tipo==='RETIRO'?' · '+_horaExactaRetiro+' hs':''), 'green');
         deps._trazaPaso((tipo==='CARGA'?'Carga':'Retiro')+' aplicado en Agentes'+(saldoPost!=null?(' · saldo '+deps.money(saldoPost)):''), 'ok'); deps._trazaFin('ok', filaHist&&filaHist.id);
 
         // Chunior en background, igual que manual: no bloquea el flujo ni la próxima operación.
@@ -556,15 +619,30 @@ async function _ejecutarSolicitudAhora(ctx){
                 try{ if(deps.window.jugadorRegistrarDato) deps.window.jugadorRegistrarDato(usuario, { bono:{estado:'APLICADO', pct:ctx.bonoPct, monto:bonoMonto} }); }catch(_e){}
                 deps.toast('🎁 Bono '+ctx.bonoPct+'% acreditado: '+deps.money(bonoMonto), 'green');
                 if(bilPromo.CHUNIOR_UID){
+                  // Igual que la carga del jugador. Antes, al llegar el N° no se volvía a dibujar el
+                  // historial y el bono seguía con el botón de Chunior hasta la próxima recarga; y si
+                  // la anotación fallaba no quedaba en ninguna cola: el botón no se iba más (Juan, 2/11).
+                  const _bonoPendiente = function(motivo){
+                    try{ deps.window.chuniorPendienteAdd({ tipo:'CARGA', uid:bilPromo.CHUNIOR_UID, monto:bonoMonto, usuario:usuario, histId:filaBono?.id||null, motivo:motivo }); }catch(_e){}
+                  };
                   deps.registrarCargaEnChunior(bilPromo.CHUNIOR_UID, bonoMonto, usuario).then(async function(rChu){
                     if(rChu && rChu.ok && rChu.movimientoId && filaBono && filaBono.id){
-                      try{ await deps.supabaseClient.from('historial_ops').update({chunior_movimiento_id:rChu.movimientoId}).eq('id', filaBono.id); }catch(_e){}
+                      try{
+                        await deps.supabaseClient.from('historial_ops').update({chunior_movimiento_id:rChu.movimientoId}).eq('id', filaBono.id);
+                        if(typeof deps.cargarHistorial === 'function') await deps.cargarHistorial();
+                      }catch(_e){}
                     } else if(rChu && rChu.ok && !rChu.movimientoId && filaBono && filaBono.id){
                       // Chunior aceptó el bono pero no pudimos leer el N° → marcar [CHUNIOR_OK_SIN_N] para que el
                       // historial NO lo muestre como "no registrado" (mismo criterio que la carga del jugador).
-                      try{ await deps.supabaseClient.from('historial_ops').update({notas:_notaBono+' [CHUNIOR_OK_SIN_N]'}).eq('id', filaBono.id); }catch(_e){}
+                      try{
+                        await deps.supabaseClient.from('historial_ops').update({notas:_notaBono+' [CHUNIOR_OK_SIN_N]'}).eq('id', filaBono.id);
+                        if(typeof deps.cargarHistorial === 'function') await deps.cargarHistorial();
+                      }catch(_e){}
+                    } else if(rChu && rChu.error){
+                      deps.toast('⚠️ Bono OK en Agentes pero falló Chunior: '+rChu.error, 'red');
+                      _bonoPendiente(rChu.error);
                     }
-                  }).catch(function(){});
+                  }).catch(function(e){ _bonoPendiente((e && e.message) || 'excepción'); });
                 }
               } else {
                 deps.toast('⚠️ El bono no se cargó en Agentes: '+((rb&&rb.message)||'sin detalle')+' — cargalo a mano.', 'red');
@@ -586,7 +664,11 @@ async function _ejecutarSolicitudAhora(ctx){
         }, 450);
       }else{
         await deps.actualizarSolicitudPortal(id, 'ERROR_OPERATIVO', {etapa:'PORTAL_ERROR_AGENTES', monto_aprobado:montoAbs, historial_id:filaHist?.id||null, error:resultado?.message||'error'});
-        try{ if(typeof deps.colaPendientesAdd==='function') deps.colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', titular:ctx.titular||'', destino:ctx.destino||'', cbu:ctx.cbu||'', obs:ctx.obs||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
+        // La cola de reintentos vuelve a ejecutar cargarSaldo; no debe recibir retiros ni rechazos
+        // explícitos del casino, porque convertiría una falla de retiro en una carga repetible.
+        if(tipo==='CARGA'&&resultado?.exito!==false){
+          try{ if(typeof deps.colaPendientesAdd==='function') deps.colaPendientesAdd({ clase:'CARGA', usuario, monto:montoAbs, motivo:resultado?.message||'error', solicitudId:id, billeteraNombre:(bil&&(bil.NOMBRE_VISIBLE||bil.NOMBRE))||'', titular:ctx.titular||'', destino:ctx.destino||'', cbu:ctx.cbu||'', obs:ctx.obs||'', posibleAplicada:/timeout|tard[oó] demasiado/i.test(String(resultado?.message||'')) }); }catch(_e){}
+        }
         if(res) res.innerHTML = '<div class="err-box" style="padding:8px 10px">Error en Agentes: '+deps.esc(resultado?.message||'sin detalle')+'</div>';
         deps._trazaPaso('Agentes: no se pudo aplicar · '+(resultado?.message||'error'),'err'); deps._trazaFin('err', filaHist&&filaHist.id);
         deps.toast('Portal con error · revisar', 'red');

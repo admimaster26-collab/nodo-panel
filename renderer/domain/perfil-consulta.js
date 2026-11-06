@@ -30,12 +30,12 @@
     const a=timestamp(row.fecha),b=timestamp(cursor.fecha);
     return a<b || (a===b && row.id < cursor.id);
   }
-  let scope = '', epoch = 0, mode = 'pending', legacyReason = '', identityCapable = false, negotiation = null;
+  let scope = '', epoch = 0, mode = 'pending', legacyReason = '', identityCapable = false, negotiation = null, capabilitiesAt = null;
   const entries = new Map();
   function fail(code){ const error = new Error(code); error.code = code; return error; }
   function sync(){
     if(scope !== pc()){
-      scope = pc(); epoch++; mode = 'pending'; legacyReason = ''; identityCapable = false; negotiation = null; entries.clear();
+      scope = pc(); epoch++; mode = 'pending'; legacyReason = ''; identityCapable = false; negotiation = null; capabilitiesAt = null; entries.clear();
     }
     return scope;
   }
@@ -49,8 +49,8 @@
   }
   async function ready(){
     sync();
-    if(mode === 'beta') return true;
-    if(mode === 'legacy' && legacyReason !== 'config') return false;
+    const age=capabilitiesAt===null?Infinity:Date.now()-capabilitiesAt;
+    if(age>=0 && age<TTL && (mode==='beta' || legacyReason==='capabilities')) return mode==='beta';
     if(negotiation) return negotiation;
     const version = epoch, requestedPc = scope;
     const pending = (async()=>{
@@ -76,6 +76,7 @@
       mode = ['perfil.summary.v1','perfil.detail.v1'].every(c=>result.capabilities.includes(c)) ? 'beta' : 'legacy';
       legacyReason = mode === 'legacy' ? 'capabilities' : '';
       identityCapable = mode === 'beta' && result.capabilities.includes('perfil.identity.v1');
+      capabilitiesAt = Date.now();
       return mode === 'beta';
     })();
     negotiation = pending;
@@ -227,6 +228,6 @@
     const entry = getEntry(usuario);
     if(mode === 'beta' && entry.loaded && entry.resumen && !entry.error && !entry.loading) entry.health?.record('RENDER','OK','PERFIL_VISIBLE');
   }
-  function invalidate(){ epoch++; entries.clear(); negotiation = null; mode = 'pending'; legacyReason = ''; identityCapable = false; }
+  function invalidate(){ epoch++; entries.clear(); negotiation = null; mode = 'pending'; legacyReason = ''; identityCapable = false; capabilitiesAt=null; }
   return Object.freeze({ready,load,snapshot,rendered,invalidate});
 });

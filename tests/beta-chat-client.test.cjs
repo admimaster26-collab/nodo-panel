@@ -275,3 +275,55 @@ test('lista y página iniciadas antes del ACK no restauran un contador ya confir
   assert.equal(h.api.count('A'),8,'un refresco posterior al ACK sí puede incorporar nuevos mensajes');
   assert.equal(h.api.total(),25);
 });
+test('el modelo de mensajes saca del hilo sólo las copias de lo que ya llegó por el canal nuevo',()=>{
+  const {sinCopias}=require('../renderer/chat/message-model.js');
+  const filas=[{id:'1',tipo_emisor:'USUARIO',mensaje:'hola',created_at:'2026-11-01T20:03:59.461861+00:00'},{id:'2',tipo_emisor:'OPERADOR',emisor:'NODO',mensaje:'recibido',created_at:'2026-11-01T20:03:59.484+00:00'}];
+  const hilo=[{origen:'USUARIO',mensaje:'hola',fecha:'2026-11-01T20:03:59Z'},{origen:'OPERADOR',operador:'NODO',auto:true,mensaje:'recibido',fecha:'2026-11-01T20:03:59.484Z'},{origen:'OPERADOR',operador:'Ana',mensaje:'hola',fecha:'2026-11-01T20:03:59Z'},{origen:'OPERADOR',operador:'Ana',mensaje:'validado',fecha:'2026-11-01T20:04:10Z'},{origen:'USUARIO',mensaje:'hola',fecha:'2026-11-01T20:30:00Z'},{origen:'OPERADOR',mensaje:'sin fecha'}];
+  assert.deepEqual(sinCopias(hilo,filas).map(m=>m.mensaje+'/'+(m.fecha||'-').slice(11,16)),['hola/20:03','validado/20:04','hola/20:30','sin fecha/']);
+  assert.deepEqual(sinCopias(null,filas),[]);assert.equal(sinCopias(hilo,null).length,hilo.length);
+});
+// Todo chat del Portal tiene su solicitud puente. Si el puente decidía, el canal nuevo no escribía
+// nunca: una sola vez en 24 horas el 1/11, y los avisos de validación y rechazo iban al hilo viejo.
+test('con NODO en el canal nuevo escribe ese canal aunque el chat tenga solicitud puente',()=>{
+  const {escritor}=require('../renderer/chat/message-model.js');
+  assert.equal(escritor({_canalNuevo:true,_beta:true,_legacyOwner:true},true),'CANAL','el caso de todos los días');
+  assert.equal(escritor({_canalNuevo:true,_beta:true},true),'CANAL');
+  assert.equal(escritor({_canalNuevo:true,_beta:true,_legacyOwner:true,cerrado:true},true),'HILO','cerrado: el hilo igual le llega');
+  assert.equal(escritor({_canalNuevo:true,_beta:true,_legacyOwner:true},false),'HILO','aceptar un chat no es un mensaje: guarda el estado');
+  assert.equal(escritor({_canalNuevo:true,_legacyOwner:true},true),'HILO','oficina sin canal nuevo: como siempre');
+  assert.equal(escritor({_legacyOwner:true},true),'HILO');assert.equal(escritor({},true),'HILO');assert.equal(escritor(null,true),'HILO');
+});
+// Juan, 1/11: «tampoco puedo cerrar consultas». Cerraba: quedaban chats de mayo del mismo jugador y
+// al irse uno aparecía el siguiente con el mismo nombre.
+test('cerrar una consulta incluye todos los chats abiertos de ese jugador, sin tocar los de otro',()=>{
+  const {chatsDeLaConsulta}=require('../renderer/chat/message-model.js');
+  const actual={usuario:'pruebaxx',_chatId:'A',solicitudId:'1'};
+  const abiertos=[{usuario:'PruebaXX',_chatId:'B',solicitudId:'62'},{usuario:'pruebaxx',_chatId:'A'},{usuario:'otro',_chatId:'C'},{usuario:'pruebaxx'}];
+  assert.deepEqual(chatsDeLaConsulta(actual,abiertos).map(t=>t._chatId),['A','B']);
+  assert.deepEqual(chatsDeLaConsulta(actual,undefined).map(t=>t._chatId),['A']);
+  assert.deepEqual(chatsDeLaConsulta({usuario:'x'},abiertos),[]);
+});
+test('el botón de cerrar sólo toca solicitudes puente, nunca una carga o un retiro',()=>{
+  const src=require('node:fs').readFileSync(require('node:path').join(__dirname,'..','renderer/chat/chat-hilos.js'),'utf8');
+  const f=src.slice(src.indexOf('window.cerrarConsultaWq2='),src.indexOf('window.reabrirConsultaWq2='));
+  assert.ok(f.includes('soporteRows(true).some(s=>Number(idSol(s))===sid)) await actualizarSolicitudPortal(sid,"CERRADO"'));
+  assert.ok(!/sidPuente/.test(f),'sin el camino que cerraba cualquier solicitud atada al chat');
+});
+
+// Juan, 1/11: NODO dijo «Mensaje enviado» y fue a parar a un chat del 17 de mayo que nadie lee.
+test('sólo cuenta como vigente el último chat del jugador, abierto y con movimiento',()=>{
+  const {chatVigente}=require('../renderer/chat/message-model.js');
+  const ahora=Date.parse('2026-11-01T21:00:00Z'),s=(id,chat,estado,fecha,usuario='pruebaxx')=>({sesion_id:String(id),chat_id:chat,estado,updated_at:fecha,usuario});
+  const viejos=[s(24,'mayo','ABIERTO','2026-05-24T13:58:00Z'),s(23,'mayo2','ABIERTO','2026-05-17T21:06:00Z')];
+  assert.equal(chatVigente(viejos,'pruebaxx',ahora),'','un chat de mayo abierto no se lee: el caso real');
+  assert.equal(chatVigente([...viejos,s(1242223,'hoy','CERRADO','2026-11-01T20:52:00Z')],'PruebaXX',ahora),'','el último está cerrado: no se cae a uno viejo');
+  assert.equal(chatVigente([...viejos,s(1242231,'nuevo','ABIERTO','2026-11-01T20:52:00Z')],'pruebaxx',ahora),'nuevo');
+  assert.equal(chatVigente([s(1242231,'nuevo','ABIERTO','2026-11-01T20:52:00Z','otro')],'pruebaxx',ahora),'','de otro jugador nunca');
+  assert.equal(chatVigente(null,'pruebaxx',ahora),'');
+});
+test('la copia con unos segundos de diferencia se reconoce; el mismo texto más tarde es otro mensaje',()=>{
+  const {sinCopias}=require('../renderer/chat/message-model.js');
+  const filas=[{tipo_emisor:'OPERADOR',emisor:'Ana',mensaje:'ya te ayudo',created_at:'2026-11-01T20:03:59.461861+00:00'}];
+  assert.equal(sinCopias([{origen:'OPERADOR',mensaje:'ya te ayudo',fecha:'2026-11-01T20:04:01.900Z'}],filas).length,0);
+  assert.equal(sinCopias([{origen:'OPERADOR',mensaje:'ya te ayudo',fecha:'2026-11-01T20:05:00.000Z'}],filas).length,1);
+});

@@ -65,9 +65,8 @@ const api = {};
         // Iba a notificarUsuarioEnChat, que escribe en la generación de chat que el portal ya no
         // lee: el mensaje moría ahí. Además se llamaba con cuatro argumentos a una función de dos,
         // así que el id y 'RECHAZADA' nunca se usaron — señal de que nadie lo había revisado.
-        // crearSiNoHay en FALSE a propósito: esto es automático y abrir un hilo por cada rechazo
-        // llenaría la bandeja (D-92). Si ya tiene conversación, le llega ahí y con push; si no, el
-        // motivo igual lo ve en la pantalla de Estado del portal, que es donde lo va a buscar.
+        // Si no tiene conversación se le abre una (Juan, 2/11): antes se frenaba por D-92 y el
+        // motivo del rechazo no le llegaba.
         try{ await deps.window.avisarJugadorEnChat(s.USUARIO, '❌ '+r.texto, { crearSiNoHay:false }); }catch(_e){}
         // Detalle completo: por qué se rechazó, qué había declarado y qué se le respondió. Sin esto
         // el historial dice "RECHAZADA" y nadie puede reconstruir el caso cuando el cliente vuelve.
