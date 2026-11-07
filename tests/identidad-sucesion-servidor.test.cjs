@@ -7,7 +7,7 @@ const path = require('node:path');
 // Cambio de número y cambio de usuario como transición registrada, no como borrado. El SQL real,
 // en una base en memoria (PGlite), con las tablas de vínculos recortadas a lo que usa.
 //
-// Juan, 6/11: edga300x perdió su número y pidió con otro; la tarjeta dijo "no hay cuenta con este
+// Juan, 6/11: jugador01 perdió su número y pidió con otro; la tarjeta dijo "no hay cuenta con este
 // usuario". Y: "cuidado, este usuario es viejo y anteriormente lo usaba este número, actualmente
 // este número usa este usuario" — sigue siendo criterio del operador, pero con los datos a la vista.
 
@@ -53,51 +53,51 @@ const t = PGlite ? test : test.skip;
 
 t('mismo usuario con número nuevo: la tarjeta lo dice y al validar queda anotado el cambio', async () => {
   const b = await base();
-  await b.alta('edga300x', '3735528639');
-  const c = await b.cotejo('edga300x', '+54 9 3735 639528');
+  await b.alta('jugador01', '1100000001');
+  const c = await b.cotejo('jugador01', '+54 9 1100 000002');
   assert.equal(c.veredicto, 'CAMBIO_TELEFONO');
-  assert.equal(c.usuario.telefono, '3735528639');
+  assert.equal(c.usuario.telefono, '1100000001');
   assert.equal(c.telefono.dueno, null);
-  const r = await b.vincular('edga300x', '5493735639528', false, 'perdió el número');
+  const r = await b.vincular('jugador01', '5491100000002', false, 'perdió el número');
   assert.equal(r.ok, true);
-  assert.deepEqual(r.cambio_telefono, { anterior: '3735528639', nuevo: '3735639528' });
+  assert.deepEqual(r.cambio_telefono, { anterior: '1100000001', nuevo: '1100000002' });
   const ev = await b.filas(`select usuario, evento, telefono_anterior, telefono_nuevo, nota, operador from usuarios_portal_eventos`);
-  assert.deepEqual(ev, [{ usuario: 'edga300x', evento: 'CAMBIO_TELEFONO', telefono_anterior: '3735528639', telefono_nuevo: '3735639528', nota: 'perdió el número', operador: 'juancarlos' }]);
-  assert.equal((await b.cotejo('edga300x', '3735639528')).veredicto, 'COINCIDE');
-  const viejo = await b.cotejo('edga300x', '3735528639');
+  assert.deepEqual(ev, [{ usuario: 'jugador01', evento: 'CAMBIO_TELEFONO', telefono_anterior: '1100000001', telefono_nuevo: '1100000002', nota: 'perdió el número', operador: 'juancarlos' }]);
+  assert.equal((await b.cotejo('jugador01', '1100000002')).veredicto, 'COINCIDE');
+  const viejo = await b.cotejo('jugador01', '1100000001');
   assert.equal(viejo.veredicto, 'TELEFONO_ANTERIOR');
-  assert.equal(viejo.telefonos_anteriores[0].anterior, '3735528639');
-  assert.equal((await b.portal('edga300x', '3735639528')).verdict, 'ACCESO');
-  assert.equal((await b.portal('edga300x', '3735528639')).verdict, 'CONFLICTO_TELEFONO');
+  assert.equal(viejo.telefonos_anteriores[0].anterior, '1100000001');
+  assert.equal((await b.portal('jugador01', '1100000002')).verdict, 'ACCESO');
+  assert.equal((await b.portal('jugador01', '1100000001')).verdict, 'CONFLICTO_TELEFONO');
 });
 
 t('teléfono de otro usuario: sin forzar es conflicto; forzado, el viejo queda DUPLICADO apuntando al nuevo y no se borra', async () => {
   const b = await base();
-  await b.alta('natta473', '1122334455');
-  const sinForzar = await b.vincular('mendozal77', '1122334455');
-  assert.equal(sinForzar.ok, false); assert.equal(sinForzar.conflicto_tel, true); assert.equal(sinForzar.usuario_actual, 'natta473');
-  const r = await b.vincular('mendozal77', '1122334455', true, 'cambió de usuario');
-  assert.equal(r.ok, true); assert.deepEqual(r.reemplazados, ['natta473']);
+  await b.alta('jugador02', '1122334455');
+  const sinForzar = await b.vincular('jugador03', '1122334455');
+  assert.equal(sinForzar.ok, false); assert.equal(sinForzar.conflicto_tel, true); assert.equal(sinForzar.usuario_actual, 'jugador02');
+  const r = await b.vincular('jugador03', '1122334455', true, 'cambió de usuario');
+  assert.equal(r.ok, true); assert.deepEqual(r.reemplazados, ['jugador02']);
   const v = await b.filas(`select usuario, estado_vinculo, duplicado_de, reemplazado_por, reemplazado_operador, reemplazado_motivo from usuarios_portal_vinculos order by id`);
   // DUPLICADO y no un estado nuevo: las funciones que ya excluyen DUPLICADO no lo muestran como jugador activo.
   assert.deepEqual(v, [
-    { usuario: 'natta473', estado_vinculo: 'DUPLICADO', duplicado_de: 'mendozal77', reemplazado_por: 'mendozal77', reemplazado_operador: 'juancarlos', reemplazado_motivo: 'cambió de usuario' },
-    { usuario: 'mendozal77', estado_vinculo: 'VINCULADO', duplicado_de: null, reemplazado_por: null, reemplazado_operador: null, reemplazado_motivo: null }]);
-  assert.equal(await b.uno(`select count(*)::int from usuarios_portal_eventos where evento='USUARIO_REEMPLAZADO' and usuario='natta473'`), 1);
+    { usuario: 'jugador02', estado_vinculo: 'DUPLICADO', duplicado_de: 'jugador03', reemplazado_por: 'jugador03', reemplazado_operador: 'juancarlos', reemplazado_motivo: 'cambió de usuario' },
+    { usuario: 'jugador03', estado_vinculo: 'VINCULADO', duplicado_de: null, reemplazado_por: null, reemplazado_operador: null, reemplazado_motivo: null }]);
+  assert.equal(await b.uno(`select count(*)::int from usuarios_portal_eventos where evento='USUARIO_REEMPLAZADO' and usuario='jugador02'`), 1);
   // Portal: el alias viejo queda pendiente, sin acceso y SIN nombrar al usuario de ahora
   // ("redirigir la información al operador, nunca la identidad del usuario").
-  const p = await b.portal('natta473', '1122334455');
+  const p = await b.portal('jugador02', '1122334455');
   assert.equal(p.verdict, 'REVISION'); assert.equal(p.ok, false);
-  assert.ok(!JSON.stringify(p).includes('mendozal77'), 'el Portal no revela el alias nuevo');
-  const p2 = await b.portal('natta473', '1199999999');
+  assert.ok(!JSON.stringify(p).includes('jugador03'), 'el Portal no revela el alias nuevo');
+  const p2 = await b.portal('jugador02', '1199999999');
   assert.equal(p2.verdict, 'CONFLICTO_TELEFONO'); assert.equal(p2.usuario_vigente, undefined);
-  assert.equal((await b.portal('mendozal77', '1122334455')).verdict, 'ACCESO');
+  assert.equal((await b.portal('jugador03', '1122334455')).verdict, 'ACCESO');
   // NODO: el alias viejo dice quién es hoy; el número dice quién lo usaba antes.
-  const c = await b.cotejo('natta473', '1122334455');
-  assert.equal(c.veredicto, 'USUARIO_REEMPLAZADO'); assert.equal(c.usuario.vigente, 'mendozal77');
+  const c = await b.cotejo('jugador02', '1122334455');
+  assert.equal(c.veredicto, 'USUARIO_REEMPLAZADO'); assert.equal(c.usuario.vigente, 'jugador03');
   const c2 = await b.cotejo('otro99', '1122334455');
-  assert.equal(c2.veredicto, 'TELEFONO_DE_OTRO'); assert.equal(c2.telefono.dueno.usuario, 'mendozal77');
-  assert.equal(c2.usuarios_anteriores[0].usuario, 'natta473'); assert.equal(c2.usuarios_anteriores[0].ahora, 'mendozal77');
+  assert.equal(c2.veredicto, 'TELEFONO_DE_OTRO'); assert.equal(c2.telefono.dueno.usuario, 'jugador03');
+  assert.equal(c2.usuarios_anteriores[0].usuario, 'jugador02'); assert.equal(c2.usuarios_anteriores[0].ahora, 'jugador03');
 });
 
 t('usuario viejo de otra persona con un número que hoy usa otro: los dos datos a la vista', async () => {
@@ -128,8 +128,8 @@ t('un DUPLICADO de antes (unificado por el panel, sin reemplazado_por) entra al 
 
 t('la firma vieja (2.1.5) usa la nueva: tampoco borra', async () => {
   const b = await base();
-  await b.alta('natta473', '1122334455');
-  const r = await b.uno(`select panel_vincular_usuario('s','P4','mendozal77','1122334455',true,'op')`);
+  await b.alta('jugador02', '1122334455');
+  const r = await b.uno(`select panel_vincular_usuario('s','P4','jugador03','1122334455',true,'op')`);
   assert.equal(r.ok, true);
   assert.equal(await b.uno(`select count(*)::int from usuarios_portal_vinculos`), 2);
 });
@@ -148,13 +148,13 @@ t('cadena de reemplazos: el vigente es el último; nuevo y bloqueado', async () 
 
 t('la decisión del operador queda en la historia; sin evidencia no toca ningún vínculo', async () => {
   const b = await base();
-  await b.alta('natta473', '1122334455');
+  await b.alta('jugador02', '1122334455');
   const antes = await b.filas(`select usuario, telefono_canon, estado_vinculo from usuarios_portal_vinculos`);
-  assert.deepEqual(await b.uno(`select panel_identidad_decision('s','P4','natta473','1199999999','SIN_EVIDENCIA','no contesta','juancarlos')`), { ok: true });
-  assert.deepEqual(await b.uno(`select panel_identidad_decision('s','P4','natta473','1199999999','OTRA_PERSONA','es la hermana','juancarlos')`), { ok: true });
+  assert.deepEqual(await b.uno(`select panel_identidad_decision('s','P4','jugador02','1199999999','SIN_EVIDENCIA','no contesta','juancarlos')`), { ok: true });
+  assert.deepEqual(await b.uno(`select panel_identidad_decision('s','P4','jugador02','1199999999','OTRA_PERSONA','es la hermana','juancarlos')`), { ok: true });
   assert.deepEqual(await b.filas(`select usuario, telefono_canon, estado_vinculo from usuarios_portal_vinculos`), antes);
   assert.deepEqual(await b.filas(`select evento, telefono_nuevo, nota, operador from usuarios_portal_eventos order by id`), [
     { evento: 'IDENTIDAD_SIN_EVIDENCIA', telefono_nuevo: '1199999999', nota: 'no contesta', operador: 'juancarlos' },
     { evento: 'IDENTIDAD_OTRA_PERSONA', telefono_nuevo: '1199999999', nota: 'es la hermana', operador: 'juancarlos' }]);
-  assert.equal((await b.uno(`select panel_identidad_decision('s','P4','natta473','1','BORRAR','x','y')`)).ok, false);
+  assert.equal((await b.uno(`select panel_identidad_decision('s','P4','jugador02','1','BORRAR','x','y')`)).ok, false);
 });

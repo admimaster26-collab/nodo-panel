@@ -427,7 +427,7 @@ window.abrirPerfilJugador = function(usuario,vistaPrevia){
   // Titulares e instrumentos salen también de las operaciones de esta misma ficha, que vienen del
   // servidor. La base local es POR PC: si esta máquina no atendió esas operaciones, la ficha
   // mostraba un solo titular "·reg" y "Sin destinos" con tres titulares y un retiro a la vista
-  // (milo30kc, 6/11). Donde la operación trae el dato, su cuenta manda sobre la local.
+  // (jugador04, 6/11). Donde la operación trae el dato, su cuenta manda sobre la local.
   const deOps = _pjDatosDeOperaciones(ops);
   const tels = Object.keys(local.telefonos||{});
   const cbus = _pjMezclarPorClave(local.cbus, deOps.cbus, function(c){ return typeof _jugNormCbu==='function' ? _jugNormCbu(c.raw) : String(c.raw||'').toLowerCase(); });

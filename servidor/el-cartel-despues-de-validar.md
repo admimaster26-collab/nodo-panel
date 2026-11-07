@@ -9,7 +9,7 @@ actual sigue siendo incongruente."*
 Su captura, tal cual. El cliente escribió por el portal:
 
 ```
-Hola 👋 Quiero validar mi acceso para operar. Usuario: laugoat66. Tel: 2612700870.
+Hola 👋 Quiero validar mi acceso para operar. Usuario: laugoat66. Tel: 1100000003.
 ```
 
 Su cuenta real es **lauggoat66** (con dos ges) y ese teléfono ya era suyo. La tarjeta de cotejo
@@ -19,8 +19,8 @@ hacía bien su trabajo:
 ⚠️ REVISAR                                          declaró el cliente
 USUARIO    laugoat66    ⚠ no figura así
                         Tiene el teléfono que declaró — es casi seguro su cuenta.
-                        [ lauggoat66 · 2612700870 ]
-TELÉFONO   2612700870   ⚠ es de lauggoat66
+                        [ lauggoat66 · 1100000003 ]
+TELÉFONO   1100000003   ⚠ es de lauggoat66
                         [ usar lauggoat66 ]
 El teléfono es de lauggoat66 — parece que escribió mal el alias.
 ```
@@ -48,7 +48,7 @@ que la tarjeta mira.
 ✅ VALIDADO
 USUARIO    lauggoat66   ✓ validado
                         El cliente había escrito laugoat66
-TELÉFONO   2612700870   ✓ validado
+TELÉFONO   1100000003   ✓ validado
 Validado y agendado. Si escribió por el portal, ya recibió el botón para ingresar.
 ```
 

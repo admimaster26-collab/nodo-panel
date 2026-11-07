@@ -155,7 +155,7 @@ async function _ejecutarCrearUsuario(){
         extra = '<div style="margin-top:8px;font-size:12px;color:var(--muted)">No se generaron alternativas libres. Probá con otra base.</div>';
       }
       // Si ya existe puede ser ÉL: se ofrece validarlo con este teléfono en vez de inventarle otro alias
-      // (annamartinezz, 6/11: existía con los datos exactos y la ventana sólo ofrecía crear otro).
+      // (jugador05, 6/11: existía con los datos exactos y la ventana sólo ofrecía crear otro).
       const _validarEste = '<div style="margin-top:8px"><button type="button" class="mini-btn green" data-u="'+escapeHtml(usuario)+'" data-t="'+escapeHtml(String(telefono).replace(/\D/g,''))+'"'
         + ' onclick="_altaValidarExistente(this)">✓ Es este jugador: validarlo con este teléfono</button></div>';
       if(resEl) resEl.innerHTML = '<div class="err-box" style="padding:10px;margin-top:8px">❌ El alias <b>'+escapeHtml(usuario)+'</b> ya existe en el casino.'+_validarEste+extra+'</div>';

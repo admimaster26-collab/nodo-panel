@@ -3388,9 +3388,9 @@ function panelConAviso(respuestaPortal) {
 
 test('el aviso va primero al hilo que el portal lee', async () => {
   const { sb, alPortal, rpcs } = panelConAviso({ ok: true });
-  const r = await sb.notificarUsuarioEnChat('milo30kc', 'Tu carga ya esta acreditada.');
+  const r = await sb.notificarUsuarioEnChat('jugador04', 'Tu carga ya esta acreditada.');
   assert.equal(alPortal.length, 1, 'tiene que intentar el portal');
-  assert.equal(alPortal[0].usuario, 'milo30kc');
+  assert.equal(alPortal[0].usuario, 'jugador04');
   assert.match(alPortal[0].texto, /acreditada/);
   assert.ok(r && r.ok, 'y si el portal lo tomo, se termina ahi');
   assert.equal(rpcs.includes('panel_nodo_send_chat_message'), false,
@@ -3399,7 +3399,7 @@ test('el aviso va primero al hilo que el portal lee', async () => {
 
 test('si el jugador no tiene conversacion abierta, se le abre una (Juan, 2/11)', async () => {
   const { sb, alPortal, rpcs } = panelConAviso({ ok: false, error: 'sin-ticket' });
-  await sb.notificarUsuarioEnChat('milo30kc', 'Tu carga ya esta acreditada.');
+  await sb.notificarUsuarioEnChat('jugador04', 'Tu carga ya esta acreditada.');
   assert.equal(alPortal.length, 1, 'primero prueba la conversacion que ya tenga');
   assert.equal(rpcs[0], 'panel_chat_iniciar', 'y si no hay, la abre donde el portal lee');
 });
@@ -3408,14 +3408,14 @@ test('avisarJugadorEnChat no intenta el portal dos veces', async () => {
   // Ya lo probo el mismo; si al caer al camino viejo se volviera a intentar, el jugador podria
   // recibir el mismo mensaje repetido.
   const { sb, alPortal } = panelConAviso({ ok: false, error: 'sin-ticket' });
-  await sb.avisarJugadorEnChat('milo30kc', 'Tu carga ya esta acreditada.', { crearSiNoHay: false });
+  await sb.avisarJugadorEnChat('jugador04', 'Tu carga ya esta acreditada.', { crearSiNoHay: false });
   assert.equal(alPortal.length, 1, 'un solo intento al portal, no dos');
 });
 
 test('sin usuario o sin texto no se manda nada', async () => {
   const { sb, alPortal } = panelConAviso({ ok: true });
   await sb.notificarUsuarioEnChat('', 'algo');
-  await sb.notificarUsuarioEnChat('milo30kc', '');
+  await sb.notificarUsuarioEnChat('jugador04', '');
   assert.equal(alPortal.length, 0);
 });
 

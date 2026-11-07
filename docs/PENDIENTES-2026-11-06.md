@@ -1,6 +1,21 @@
 # Pendientes al 6/11 (corte por límite de uso)
 
-## Retiro con DNI — falta unir las dos versiones
+## Retiro con DNI — UNIDO y publicado el 7/11
+- `servidor/retiro-instrumentos-portal.sql` (vuelta atrás: `retiro-instrumentos-portal-vuelta-atras.sql`,
+  prueba: `tests/retiro-instrumentos-portal.test.cjs`). DNI como huella con secreto del servidor, marca
+  `retiro_instrumento_v1` en la metadata, cuenta y solicitud juntas, llave por oficina en
+  `retiro_instrumentos_oficinas`. Con la llave apagada `contexto_v1` contesta `enabled:false` antes de
+  mirar nada más: el Portal sigue con el retiro de siempre.
+- **Llave prendida sólo en P4** (7/11, para la prueba de Juan con `?prueba=p4`). El Portal de producción
+  no llama a `contexto_v1` (revisado en los registros), así que los jugadores reales de P4 no lo ven.
+  Apagar: `update retiro_instrumentos_oficinas set habilitado=false where pc_codigo='P4'`.
+- `contexto_v1` entrega destino y titular de la cuenta validada sólo con vínculo ACCESO: lo mismo que ya
+  entrega hoy `landing_datos_retiro` para rellenar. Si se quiere dejar de entregarlo, mover la comparación
+  al servidor (el Portal la hace en las líneas ~3342, 3424, 3506, 4559).
+- Falta, después de la prueba: sacar `landing_retiro_instrumento_declarar` / `landing_retiro_instrumentos`
+  (hoy sólo avisan que se use la v1).
+
+### Lo que quedaba antes de la unión (historia)
 - **Servidor publicado (Claude):** `servidor/retiro-instrumentos.sql` — tablas `retiro_instrumentos` y
   `retiro_instrumento_eventos` (vacías), funciones `panel_retiro_instrumento`, `_validar`, `_rechazar`
   (clave del panel), `landing_retiro_instrumentos`, `landing_retiro_instrumento_declarar`.

@@ -56,7 +56,7 @@ function armar(guardado){
     },
     state: { pendingTipo:'CARGA', pendingBilletera:'MP Juan', solicitudId:'123',
              solicitudStartedAt: 111, chatId:'9', chatToken:'t', seenMsgIds:new Set(),
-             usuario:'milo30kc', telefono:'3856273053', nivelAcceso:'OK',
+             usuario:'jugador04', telefono:'3856273053', nivelAcceso:'OK',
              motivoSoporte:'', portalThreadSeen:new Set(), shownTexts:new Set() },
     Set, Object
   };
@@ -71,7 +71,7 @@ function armar(guardado){
 const TODO_GUARDADO = {
   bet300_pending_tipo:'CARGA', bet300_pending_billetera:'MP Juan', bet300_solicitud_id:'123',
   bet300_solicitud_started_at:'111', bet300_chat_id:'9', bet300_chat_token:'t',
-  bet300_usuario:'milo30kc', bet300_telefono:'3856273053', bet300_vinculo_estado:'OK',
+  bet300_usuario:'jugador04', bet300_telefono:'3856273053', bet300_vinculo_estado:'OK',
   bet300_nivel_acceso:'OK', bet300_motivo_soporte:'', bet300_portal_thread_seen:'[]',
   bet300_validacion_id:'555', bet300_validacion_estado:'EXISTE', bet300_bono_usado:'1',
   bet300_public_code:'rt-z9p42', bet300_app_instalada:'1', bet300_fs_hint:'1'
@@ -86,7 +86,7 @@ test('cerrar la solicitud se lleva TODO lo de la solicitud, incluida la billeter
   assert.equal(ctx.state.pendingBilletera, '', 'y el estado en memoria tampoco puede quedar viejo');
   assert.equal(ctx.state.solicitudId, '');
   // El jugador sigue siendo el mismo: eso NO se toca.
-  assert.equal(almacen.get('bet300_usuario'), 'milo30kc');
+  assert.equal(almacen.get('bet300_usuario'), 'jugador04');
   assert.equal(almacen.get('bet300_validacion_id'), '555');
 });
 

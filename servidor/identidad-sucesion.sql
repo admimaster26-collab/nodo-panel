@@ -1,6 +1,6 @@
 -- Cambio de número y cambio de usuario como transición registrada, nunca como borrado (6/11).
 --
--- Caso que lo destapó: edga300x (P4) perdió su número y pidió con uno nuevo. La tarjeta de NODO
+-- Caso que lo destapó: jugador01 (P4) perdió su número y pidió con uno nuevo. La tarjeta de NODO
 -- buscaba sólo por teléfono y dijo "no hay cuenta con este usuario"; la versión anterior decía
 -- "coinciden" mirando otra solicitud. Ninguna decía la verdad: es el mismo usuario con otro número.
 --

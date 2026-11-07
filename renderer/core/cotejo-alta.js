@@ -20,8 +20,8 @@ function _altaDist(a, b){
 }
 function _altaNormU(s){ return String(s||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]/g,''); }
 // Igual que el servidor (telefono_canon): 10 dígitos, sin 54, 9 ni 0 adelante. Antes sólo sacaba lo
-// que no era dígito: "+54 9 3735 63-9528" quedaba 5493735639528, no coincidía con ninguna cuenta
-// (todas guardan 3735639528) y la tarjeta decía que el número no figuraba (6/11).
+// que no era dígito: "+54 9 1100 00-0002" quedaba 5491100000002, no coincidía con ninguna cuenta
+// (todas guardan 1100000002) y la tarjeta decía que el número no figuraba (6/11).
 function _altaNormTel(s){
   let v = String(s||'').replace(/\D/g,'');
   if(v.length > 10){
@@ -138,7 +138,7 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
   }catch(_e){}
   // Buscador WTK por el teléfono Y por el usuario. Antes iba un solo término (el teléfono si vino):
   // con un número nuevo o mal tipeado el usuario nunca se buscaba y la tarjeta decía "no hay cuenta
-  // con este usuario" de alguien vinculado hace meses (edga300x, 6/11).
+  // con este usuario" de alguien vinculado hace meses (jugador01, 6/11).
   // La identidad (veredicto del servidor con la historia de los dos) va en paralelo.
   // Su luz en el semáforo (IDENTIDAD): OK sólo si el servidor contestó con un veredicto conocido. Si
   // la consulta se cae, la tarjeta vuelve a lo de antes sin avisar: por eso queda a la vista.
@@ -161,7 +161,7 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
     if(_terminos.length && typeof supabaseClient!=='undefined' && supabaseClient){
       const _resps=await Promise.all(_terminos.map(function(q){
         // Promise.resolve: el pedido de supabase sólo tiene then(), no catch(). Encadenado directo
-        // tiraba error, se perdía la búsqueda entera y la tarjeta decía "no hay cuenta" (annamartinezz, 6/11).
+        // tiraba error, se perdía la búsqueda entera y la tarjeta decía "no hay cuenta" (jugador05, 6/11).
         return Promise.resolve(supabaseClient.rpc('panel_crm_vinculos_buscar',{p_pc_codigos:null, p_query:q, p_limit:40, p_secret:window.PANEL_DATA_SECRET})).catch(function(){ return { error:true }; });
       }));
       _resps.forEach(function(r){
@@ -214,7 +214,7 @@ window.altaCotejarDatos = async function(usuarioDecl, telefonoDecl){
         // teléfono no siguiera nombrando al dueño viejo) y rompí lo importante: si el declarado
         // aparece en el índice con ese teléfono, gana él y el cotejo dice "✓ mismo dueño" aunque
         // en la base el teléfono sea de OTRO. El conflicto quedaba tapado con un verde, el
-        // operador validaba confiado, y recién ahí saltaba "ese teléfono es de natta473" — con el
+        // operador validaba confiado, y recién ahí saltaba "ese teléfono es de jugador02" — con el
         // aviso al cliente ya enviado con el usuario equivocado.
         // Este campo responde UNA pregunta: de quién es este teléfono. No se negocia con el
         // declarado; para eso está el cruce del pie, que compara los dos y muestra el conflicto.

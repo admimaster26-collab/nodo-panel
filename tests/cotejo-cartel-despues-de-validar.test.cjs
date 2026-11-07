@@ -13,7 +13,7 @@ const identidad = require('../renderer/domain/identidad.js');
 //
 // El caso de su captura, tal cual:
 //
-//     el cliente escribió     "Usuario: laugoat66. Tel: 2612700870."
+//     el cliente escribió     "Usuario: laugoat66. Tel: 1100000003."
 //     su cuenta real es        lauggoat66, con ese mismo teléfono, VINCULADO
 //
 // El operador aprieta "Validar y vincular", sale el modal "✅ Usuario validado y agendado"...
@@ -31,18 +31,18 @@ const SRC = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'core', 'cote
 // lauggoat66 YA era el dueño del teléfono antes de que el operador tocara nada: por eso la
 // tarjeta decía "es de lauggoat66". Validar no mueve este dato.
 const LAUGGOAT = {
-  usuario: 'lauggoat66', telefonos: ['2612700870'], titular: '',
+  usuario: 'lauggoat66', telefonos: ['1100000003'], titular: '',
   vinculo: 'VINCULADO', pc: 'P2', confiable: true
 };
 const PADRON = () => ({
   usuario:  { exacto: null, similares: [LAUGGOAT] },
-  telefono: { exacto: Object.assign({ _tel: '2612700870' }, LAUGGOAT), similares: [],
+  telefono: { exacto: Object.assign({ _tel: '1100000003' }, LAUGGOAT), similares: [],
               otros: [{ usuario: 'lauggoat66', pc: 'P2', vinculo: 'VINCULADO' }] }
 });
 
 const TICKET = {
-  usuario: 'laugoat66', telefono: '2612700870',
-  thread: [{ mensaje: 'Hola 👋 Quiero validar mi acceso para operar. Usuario: laugoat66. Tel: 2612700870.' }]
+  usuario: 'laugoat66', telefono: '1100000003',
+  thread: [{ mensaje: 'Hola 👋 Quiero validar mi acceso para operar. Usuario: laugoat66. Tel: 1100000003.' }]
 };
 
 // ── La oficina: un panel de mentira, pero que CORRE el archivo de verdad ──────────────────
@@ -110,8 +110,8 @@ test('despues de validar el cartel dice Validado y se va el REVISAR', async () =
   assert.equal(p.cartel(), 'Revisar', 'arranca avisando');
 
   // El operador aprieta "Validar y vincular" con el alias corregido.
-  await p.ctx.ejecutarVincular('lauggoat66', '2612700870', true);
-  assert.deepEqual(p.llamadas.vinculados, [{ usuario: 'lauggoat66', telefono: '2612700870' }]);
+  await p.ctx.ejecutarVincular('lauggoat66', '1100000003', true);
+  assert.deepEqual(p.llamadas.vinculados, [{ usuario: 'lauggoat66', telefono: '1100000003' }]);
 
   const html = await p.dibujar();
   assert.equal(p.cartel(), 'Validado');
@@ -124,7 +124,7 @@ test('despues de validar el cartel dice Validado y se va el REVISAR', async () =
 test('se acuerda aunque se reinicie el panel', async () => {
   const p1 = abrirPanel(PADRON);
   await p1.dibujar();
-  await p1.ctx.ejecutarVincular('lauggoat66', '2612700870', true);
+  await p1.ctx.ejecutarVincular('lauggoat66', '1100000003', true);
   const disco = JSON.parse(p1.ctx.localStorage.getItem('nodo.cotejo.resueltos'));
   assert.equal(disco[Object.keys(disco)[0]].usuario, 'lauggoat66');
 });
@@ -141,17 +141,17 @@ test('validar a OTRO jugador no pinta de verde la consulta abierta', async () =>
 test('si el padron ya no lo respalda, no se muestra el verde', async () => {
   const p = abrirPanel(PADRON);
   await p.dibujar();
-  await p.ctx.ejecutarVincular('lauggoat66', '2612700870', true);
+  await p.ctx.ejecutarVincular('lauggoat66', '1100000003', true);
 
   // Alguien reasignó el teléfono a otra cuenta después de validar. La marca vieja no alcanza:
   // el verde se confirma contra el padrón de AHORA o no se pinta.
-  const OTRO = { usuario: 'natta473', telefonos: ['2612700870'], vinculo: 'VINCULADO', pc: 'P2', confiable: true };
+  const OTRO = { usuario: 'jugador02', telefonos: ['1100000003'], vinculo: 'VINCULADO', pc: 'P2', confiable: true };
   p.ctx.altaCotejarDatos = async () => ({
     usuario:  { exacto: null, similares: [] },
-    telefono: { exacto: Object.assign({ _tel: '2612700870' }, OTRO), similares: [],
-                otros: [{ usuario: 'natta473', pc: 'P2', vinculo: 'VINCULADO' }] }
+    telefono: { exacto: Object.assign({ _tel: '1100000003' }, OTRO), similares: [],
+                otros: [{ usuario: 'jugador02', pc: 'P2', vinculo: 'VINCULADO' }] }
   });
   await p.dibujar();
   assert.notEqual(p.cartel(), 'Validado', 'el teléfono cambió de dueño: hay que volver a avisar');
-  assert.match(p.caja.innerHTML, /natta473/);
+  assert.match(p.caja.innerHTML, /jugador02/);
 });

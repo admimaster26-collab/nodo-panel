@@ -379,7 +379,7 @@ test('observaciones de identidad (perfil.identity.v1), recarga en caliente y per
   assert.equal(res2.empty,true,'después del ACK del servidor no vuelve a enviar el mismo lote');
 });
 
-// milo30kc, 6/11: tres titulares y un retiro a la cuenta de otra persona a la vista, y la ficha
+// jugador04, 6/11: tres titulares y un retiro a la cuenta de otra persona a la vista, y la ficha
 // mostraba un solo titular "·reg" y "Sin destinos registrados". Las tarjetas leían sólo la base
 // local de la PC, que no tenía esas operaciones.
 test('titulares y destinos salen de las operaciones aunque esta PC no tenga datos locales',async()=>{
