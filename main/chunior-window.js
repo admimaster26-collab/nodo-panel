@@ -1,22 +1,42 @@
 'use strict';
 const { whenWindowReady } = require('./window-ready');
 
-function createChuniorWindowService({ BrowserWindow, icon, headers, panel, env = process.env }) {
+const CHUNIOR_PARTITION = 'nodo-chunior';
+const CHUNIOR_ORIGINS = ['https://bo.chunior.com', 'https://chunior.com'];
+const CHUNIOR_STORAGES = ['appcache', 'filesystem', 'indexdb', 'localstorage', 'shadercache', 'websql', 'serviceworkers', 'cachestorage'];
+
+function createChuniorWindowService({ BrowserWindow, icon, headers, panel, session, env = process.env }) {
   const CHUNIOR_URL = 'https://bo.chunior.com/transacciones/';
   let chuniorWindow = null;
   let _chuLastRecover = 0;
   let _chu403Count = 0;
-  async function limpiarCookiesChunior(win){
-    try{
-      const ses = win.webContents.session;
-      const cookies = await ses.cookies.get({ domain: 'chunior.com' });
-      for (const c of cookies) {
-        const dom = (c.domain && c.domain.startsWith('.')) ? c.domain.slice(1) : (c.domain || '');
-        if (!/(^|\.)chunior\.com$/i.test(dom)) continue;
-        const url = (c.secure ? 'https://' : 'http://') + dom + (c.path || '/');
-        try { await ses.cookies.remove(url, c.name); } catch (_e) {}
-      }
-    }catch(e){ console.warn('[chunior] limpiar cookies', e && e.message); }
+  async function limpiarCookiesChunior(ses) {
+    const cookies = await ses.cookies.get({ domain: 'chunior.com' });
+    for (const c of cookies) {
+      const dom = (c.domain && c.domain.startsWith('.')) ? c.domain.slice(1) : (c.domain || '');
+      if (!/(^|\.)chunior\.com$/i.test(dom)) continue;
+      const url = (c.secure ? 'https://' : 'http://') + dom + (c.path || '/');
+      await ses.cookies.remove(url, c.name);
+    }
+  }
+  async function limpiarDatosLegadosChunior() {
+    const ses = session.defaultSession;
+    const tareas = [
+      ['cookies', limpiarCookiesChunior(ses)],
+      // Electron no ofrece borrado de cache HTTP por origen; se vacía el cache compartido,
+      // pero no se tocan cookies ni almacenamiento local de NODO.
+      ['cache HTTP compartida', ses.clearCache()]
+    ];
+    for (const origin of CHUNIOR_ORIGINS) {
+      tareas.push([origin, ses.clearStorageData({
+        origin,
+        storages: CHUNIOR_STORAGES,
+        quotas: ['temporary', 'persistent', 'syncable']
+      })]);
+    }
+    const resultados = await Promise.allSettled(tareas.map(t => t[1]));
+    const fallas = resultados.flatMap((r, i) => r.status === 'rejected' ? [tareas[i][0]] : []);
+    if (fallas.length) throw new Error('No se pudo limpiar el almacenamiento local heredado de Chunior: ' + fallas.join(', '));
   }
   function createChuniorWindow() {
     chuniorWindow = new BrowserWindow({
@@ -26,6 +46,7 @@ function createChuniorWindowService({ BrowserWindow, icon, headers, panel, env =
       icon:   icon,
       backgroundColor: '#ffffff',
       webPreferences: {
+        partition:            CHUNIOR_PARTITION,
         contextIsolation:     true,
         nodeIntegration:      false,
         sandbox:              true,
@@ -34,7 +55,7 @@ function createChuniorWindowService({ BrowserWindow, icon, headers, panel, env =
     });
     // Chunior 404ea las requests con User-Agent de Electron (bot detection en su CDN). Le ponemos el
     // mismo UA de Chrome real que usa la ventana de Agentes → el login carga como en un navegador normal.
-    try { headers.configure(chuniorWindow); } catch (_e) {}
+    headers.configure(chuniorWindow, { chunior: true });
     chuniorWindow.loadURL(CHUNIOR_URL);
     // Auto-recovery del 403/CSRF: si Chunior muestra "403 Forbidden" (token CSRF vencido), NO sirve
     // recargar (re-envía el POST fallido → mismo 403). Navegamos a la BASE con un GET nuevo → token
@@ -51,7 +72,9 @@ function createChuniorWindowService({ BrowserWindow, icon, headers, panel, env =
             // El GET a la base TAMBIÉN da 403 → la cookie de sesión está corrupta. Limpiarla y reintentar.
             console.warn('[chunior] 403 persiste → limpiando cookies de Chunior y recargando login limpio');
             _chu403Count = 0;
-            try { await limpiarCookiesChunior(chuniorWindow); } catch (_e) {}
+            try { await limpiarCookiesChunior(chuniorWindow.webContents.session); } catch (e) {
+              console.warn('[chunior] no se pudieron limpiar las cookies', e && e.code || 'ERROR');
+            }
           } else {
             console.warn('[chunior] 403/CSRF detectado → navegando a la base (GET) para recuperar el token');
           }
@@ -117,7 +140,7 @@ function createChuniorWindowService({ BrowserWindow, icon, headers, panel, env =
   ipcMain.handle('chunior:reset', async (_event, opts) => {
     const win = getChuniorWindow();
     _chu403Count = 0;
-    if (opts && opts.hard) { try { await limpiarCookiesChunior(win); } catch (_e) {} }
+    if (opts && opts.hard) { await limpiarCookiesChunior(win.webContents.session); }
     try { win.loadURL(CHUNIOR_URL); await whenChuniorReady(win); } catch (_e) {}
     try { win.show(); win.focus(); } catch (_e) {}
     let url = ''; try { url = win.webContents.getURL(); } catch (_e) {}
@@ -134,7 +157,7 @@ function createChuniorWindowService({ BrowserWindow, icon, headers, panel, env =
 
   }
 
-  return { create: createChuniorWindow, get: getChuniorWindow, registerIpc };
+  return { create: createChuniorWindow, get: getChuniorWindow, limpiarDatosLegados: limpiarDatosLegadosChunior, registerIpc };
 }
 
 module.exports = { createChuniorWindowService };

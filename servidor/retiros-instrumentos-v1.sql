@@ -1,3 +1,10 @@
+-- ⚠ NO PUBLICAR (9/11). Propuesta de Codex que nunca se publicó. Define con OTRO contrato las mismas
+-- funciones que hoy usa el Portal en producción (landing_portal_retiro_contexto_v1 / _crear_v1): publicarlo
+-- las pisaría y rompería el retiro con DNI de P1 y P4. Lo que corre de verdad es
+-- servidor/retiro-instrumentos-portal.sql + servidor/retiro-dni-interruptor.sql (interruptor:
+-- public.retiro_instrumentos_oficinas). Ni el esquema retiros_privados ni las nodo_beta_retiro_*_v1 existen
+-- en el servidor. Se conserva sólo como referencia y para su prueba aislada.
+--
 -- Retiros Portal: validacion humana y ciega de titularidad. No almacena DNI en claro.
 -- Desplegar tras cotejar definiciones/ACL remotas. Todo queda desactivado por oficina.
 create schema if not exists retiros_privados;

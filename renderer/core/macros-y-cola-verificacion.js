@@ -202,16 +202,17 @@ async function procesarColaVerificacion(){
 if(window.ctrlElectron){
   setInterval(function(){
     if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
+    if(!document.getElementById("viewVerificaciones")) return;
     return procesarColaVerificacion();
   }, 5000);
-  // Actualiza badge de pendientes cada 10s
+  // Actualiza badge de pendientes cada 10s (sólo si el badge existe en la vista)
   setInterval(async ()=>{
     if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
+    const badge = document.getElementById("badgeVerif");
+    if(!badge) return;
     const { count } = await supabaseClient.from("verificaciones")
       .select("id", { count:"exact", head:true })
       .eq("pc_codigo", pcOperativa).eq("estado","PENDIENTE");
-    const badge = document.getElementById("badgeVerif");
-    if(!badge) return;
     if(count){ badge.classList.remove("hidden"); badge.textContent=count; }
     else badge.classList.add("hidden");
   }, 10000);

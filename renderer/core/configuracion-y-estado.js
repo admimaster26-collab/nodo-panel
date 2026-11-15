@@ -127,6 +127,9 @@ async function _revisarLineas(){
     let d = r.data; try{ if(typeof d==='string') d=JSON.parse(d); }catch(_e){}
     window._lineasEstado = d;
     _pintarAvisoLineas(d);
+    // Es el momento exacto para revisar si la que se cayó es la que muestra el Portal: si lo
+    // es, NodoWsp la cambia sola por otra que esté andando (renderer/extensions/oficina-whatsapp.js).
+    try{ window.NodoWsp && window.NodoWsp.revisar(); }catch(_e){}
   }catch(_e){ /* mudo a propósito: es informativo, no puede trabar la operación */ }
 }
 setInterval(_revisarLineas, 5*60*1000);

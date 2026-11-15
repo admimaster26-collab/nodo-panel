@@ -157,7 +157,7 @@ async function cargarSolicitudesPortal(silencioso=false){
                 const _capRes = await _pApi.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: _pcUp, p_activate: false });
                 const _capData = _capRes && _capRes.data;
                 const _caps = (_capData && Array.isArray(_capData.capabilities)) ? _capData.capabilities : [];
-                deps.V154P._bandejaCapCache[_pcUp] = !!(_capData && _capData.ok === true && _capData.enabled === true && _caps.includes('bandeja.queue.v1'));
+                deps.V154P._bandejaCapCache[_pcUp] = !!(_capData && _capData.ok === true && _capData.contract === 'nodo.beta.v1' && String(_capData.scope?.pc_codigo || '').trim().toUpperCase() === _pcUp && _caps.includes('bandeja.queue.v1'));
               }
               _useBetaBandeja = deps.V154P._bandejaCapCache[_pcUp] === true;
             }

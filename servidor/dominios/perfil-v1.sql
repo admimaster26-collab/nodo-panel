@@ -53,10 +53,18 @@ end $$;
 create or replace function operaciones.historial_evaluado_v1(p_pc_codigos text[],p_usuario text default null)
 returns table(fila public.historial_ops,vigente boolean,requiere_revision boolean)
 language sql stable security invoker set search_path='' as $$
+ -- 11/11: con "p_usuario is null or ..." en una sola rama, el servidor recorría la oficina entera aunque se
+ -- pidiera un solo usuario (853 ms en P1) y el perfil se cortaba a los 3 s. Dos ramas: la de un usuario entra
+ -- por el índice de usuario; la de la oficina, por el de oficina. pc_codigo se guarda en mayúsculas y sin
+ -- espacios (0 excepciones en 498.298 filas el 11/11); el filtro original queda igual como segundo control.
  with scoped as materialized (
    select h fila,lower(btrim(h.usuario)) usuario_key from public.historial_ops h
-   where upper(btrim(h.pc_codigo))=any(p_pc_codigos)
-     and (p_usuario is null or lower(btrim(h.usuario))=lower(btrim(p_usuario)))
+   where p_usuario is not null and lower(btrim(h.usuario))=lower(btrim(p_usuario))
+     and upper(btrim(h.pc_codigo))=any(p_pc_codigos)
+   union all
+   select h fila,lower(btrim(h.usuario)) usuario_key from public.historial_ops h
+   where p_usuario is null and h.pc_codigo=any(p_pc_codigos)
+     and upper(btrim(h.pc_codigo))=any(p_pc_codigos)
  ), reversas as (
    select (s.fila).reversion_de id,s.usuario_key,count(*) n from scoped s
    where (s.fila).reversion_de is not null group by (s.fila).reversion_de,s.usuario_key
@@ -110,7 +118,8 @@ begin
    max(o.fecha) ultima,
    max(o.fecha) filter(where o.tipo ilike '%deposito%' or o.tipo_normalizado ilike '%carga%' or o.tipo_normalizado ilike '%deposito%') ultima_carga
  into v_a from public.agente_operaciones_importadas o
- where upper(btrim(o.pc_codigo))=any(v_pcs)
+ -- 11/11: sin "o.pc_codigo=any" recorría 1,1 M de filas importadas (1780 ms). Se entra por el índice de oficina.
+ where o.pc_codigo=any(v_pcs) and upper(btrim(o.pc_codigo))=any(v_pcs)
    and lower(coalesce(nullif(btrim(o.alias),''),btrim(o.alias_norm)))=v_u;
  select
    (array_agg(v.telefono_canon order by (upper(btrim(v.pc_codigo))=v_pc) desc,v.id desc)

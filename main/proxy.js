@@ -6,13 +6,18 @@ function createProxyService({ app, session, env = process.env }) {
     return ["1", "true", "si", "sí", "yes", "on"].includes(String(value).trim().toLowerCase());
   }
 
-  function proxyRulesFromEnvV15() {
-    const enabled = envBoolV15(env.PROXY_ENABLED, false);
-    if (!enabled) return "";
+  function cleanProxyHost(rawHost) {
+    return String(rawHost || "")
+      .trim()
+      .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+      .replace(/\/.*$/, "")
+      .trim();
+  }
 
-    const host = String(env.PROXY_HOST || "").trim();
-    const port = String(env.PROXY_PORT || "").trim();
-    const protocol = String(env.PROXY_PROTOCOL || "http").trim().toLowerCase();
+  function buildProxyRules(rawHost, rawPort, rawProtocol) {
+    const host = cleanProxyHost(rawHost);
+    const port = String(rawPort || "").trim();
+    const protocol = String(rawProtocol || "http").trim().toLowerCase();
 
     if (!host || !port) return "";
 
@@ -20,11 +25,17 @@ function createProxyService({ app, session, env = process.env }) {
     return `http=${host}:${port};https=${host}:${port}`;
   }
 
-  // Sesión DEDICADA de Agentes (casinodrex). El proxy se aplica SOLO acá; Chunior, Supabase y el
-  // resto (sesión default) NUNCA se ven afectados por el proxy ni por el closeAllConnections
-  // (antes cortaba las conexiones de Chunior → pestaña en blanco / fallo). Igual que el NODO hermano.
+  function proxyRulesFromEnvV15() {
+    if (!envBoolV15(env.PROXY_ENABLED, false)) return "";
+    return buildProxyRules(env.PROXY_HOST, env.PROXY_PORT, env.PROXY_PROTOCOL || "http");
+  }
+
+  // El proxy está aislado de Supabase y de la sesión default. La config estática sigue siendo
+  // exclusiva de Agentes; la config de oficina en runtime se aplica también a Chunior.
   const AGENT_PARTITION = 'persist:nodo-agentes';
   function agentSes() { return session.fromPartition(AGENT_PARTITION); }
+  const CHUNIOR_PARTITION = 'nodo-chunior';
+  function chuniorSes() { return session.fromPartition(CHUNIOR_PARTITION); }
 
   async function configurarProxyElectronV15() {
     const enabled = envBoolV15(env.PROXY_ENABLED, false);
@@ -59,31 +70,30 @@ function createProxyService({ app, session, env = process.env }) {
   async function aplicarProxyRuntime(cfg) {
     try {
       cfg = cfg || {};
-      if (!cfg.enabled || !cfg.host || !cfg.port) {
+      const rules = cfg.enabled ? buildProxyRules(cfg.host, cfg.port, cfg.protocol || "http") : "";
+      if (!rules) {
         _runtimeProxyAuth = null;
-        // Sin proxy: SOLO limpiamos si antes había uno activo (solo la sesión de Agentes).
+        // Sin proxy: limpiamos ambas sesiones sólo si antes había uno activo.
         if (_proxyApplied) {
-          await agentSes().setProxy({ mode: "direct" });
-          try { await agentSes().closeAllConnections(); } catch (_e) {}
+          const sessions = [agentSes(), chuniorSes()];
+          await Promise.all(sessions.map(ses => ses.setProxy({ mode: "direct" })));
+          await Promise.all(sessions.map(ses => ses.closeAllConnections().catch(() => {})));
           _proxyApplied = false;
           console.log("[proxy] runtime: limpiado (salida directa)");
         }
         return { ok: true, enabled: false };
       }
-      const protocol = String(cfg.protocol || "http").toLowerCase();
-      const rules = protocol.startsWith("socks")
-        ? `socks=${cfg.host}:${cfg.port}`
-        : `http=${cfg.host}:${cfg.port};https=${cfg.host}:${cfg.port}`;
-      // Proxy SOLO en la sesión de Agentes → Chunior y Supabase (sesión default) intactos.
-      await agentSes().setProxy({
+      // La config de oficina se comparte entre Agentes y Chunior, nunca con la sesión default.
+      const sessions = [agentSes(), chuniorSes()];
+      await Promise.all(sessions.map(ses => ses.setProxy({
         mode: "fixed_servers",
         proxyRules: rules,
         proxyBypassRules: cfg.bypass || "<local>"
-      });
-      try { await agentSes().closeAllConnections(); } catch (_e) {}
+      })));
+      await Promise.all(sessions.map(ses => ses.closeAllConnections().catch(() => {})));
       _proxyApplied = true;
       _runtimeProxyAuth = cfg.username ? { username: String(cfg.username), password: String(cfg.password || "") } : null;
-      console.log("[proxy] runtime ACTIVADO:", rules);
+      console.log("[proxy] runtime ACTIVADO (Agentes y Chunior):", rules);
       return { ok: true, enabled: true, proxyRules: rules };
     } catch (e) {
       console.warn("[proxy] runtime error:", e.message);

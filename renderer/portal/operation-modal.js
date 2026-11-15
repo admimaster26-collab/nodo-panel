@@ -161,10 +161,13 @@ const api = {};
       }
     }catch(_e){}
   };
-  async function portalRenderPromo(usuario){
+  async function portalRenderPromo(usuario, tipo){
     const el = deps.document.getElementById('portalJobPromo');
     if(!el) return;
     el.innerHTML=''; el.dataset.bonoPct='0'; el.dataset.bonoMax='0'; el.dataset.promoBilleteraId=''; el.dataset.promoBilleteraNombre='';
+    // El bono de primer ingreso es de CARGAS (sólo se aplica si tipo==='CARGA'). En un retiro salía igual,
+    // con "Cargar con bono" tildado: ruido que confunde (Juan, 8/11: "es un retiro, para qué el bono ahí").
+    if(String(tipo||'CARGA').toUpperCase() !== 'CARGA') return;
     const u = String(usuario||'').trim();
     if(!u) return;
     try{
@@ -315,7 +318,7 @@ const api = {};
     deps.document.getElementById('portalJobObs').value = '';
     try{ deps.portalCheckDiferencia(); }catch(_e){}
     try{ portalRenderVinculo(s.USUARIO); }catch(_e){}
-    try{ portalRenderPromo(s.USUARIO); }catch(_e){}
+    try{ portalRenderPromo(s.USUARIO, tipo); }catch(_e){}
     const res = deps.document.getElementById('portalJobResultado');
     if(res) res.innerHTML = '';
     portalPoblarBilleteras(deps.document.getElementById('portalJobBilletera'), s);

@@ -1105,6 +1105,9 @@
       if(!algoSeCerro) throw new Error("no encontré qué cerrar en esta consulta");
       const map=getAccepted(); delete map[U(ticket.usuario)]; localStorage.setItem(ACCEPT_KEY,JSON.stringify(map));
       window.__nodoChatCurrentTicket=null;window.__nodoChatCurrentUser="";
+      if(window.V154P) window.V154P.chatActual=null;
+      window.chatActualId=null; window.v15ChatActualId=null;
+      try{ chatActualId=null; }catch(_e){}
       document.body.classList.remove("nodo-chat-open");
       if(typeof cargarSolicitudesPortal==="function")await cargarSolicitudesPortal(true);
       window.__wq2ActiveTab="espera";
@@ -1235,6 +1238,10 @@
   document.addEventListener("keydown",function(ev){
     if(ev.key==="Escape"&&document.body.classList.contains("nodo-chat-open")){
       ev.preventDefault();
+      window.__nodoChatCurrentTicket=null;window.__nodoChatCurrentUser="";
+      if(window.V154P) window.V154P.chatActual=null;
+      window.chatActualId=null; window.v15ChatActualId=null;
+      try{ chatActualId=null; }catch(_e){}
       document.body.classList.remove("nodo-chat-open");
       renderChatListStep2Final();
     }

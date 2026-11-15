@@ -67,7 +67,20 @@ begin
     || case when to_regprocedure('public.nodo_beta_bandeja_v1(text,text,jsonb,integer,jsonb)') is not null
             then jsonb_build_array('bandeja.queue.v1') else '[]'::jsonb end
     || case when to_regprocedure('public.nodo_beta_nexo_export_v1(text,text,integer,jsonb)') is not null
-            then jsonb_build_array('nexo.export.v1') else '[]'::jsonb end;
+            then jsonb_build_array('nexo.export.v1') else '[]'::jsonb end
+    -- 10/11 (servidor/beta-ingresos-revisiones-v1.sql): ingresos al Portal, revisiones y revisar teléfono por oficina.
+    || case when to_regprocedure('public.nodo_beta_ingresos_v1(text,text,integer)') is not null
+            then jsonb_build_array('ingresos.v1') else '[]'::jsonb end
+    || case when to_regprocedure('public.nodo_beta_revisiones_v1(text,text)') is not null
+            then jsonb_build_array('revisiones.v1') else '[]'::jsonb end
+    || case when to_regprocedure('public.nodo_beta_prevalidar_v1(text,text,text,text)') is not null
+            then jsonb_build_array('prevalidar.v1') else '[]'::jsonb end
+    -- El canal de salud acepta CRM, INGRESOS y REVISIONES: recién entonces NODO las manda (una muestra
+    -- rechazada tira el lote entero).
+    || case when exists (select 1 from pg_catalog.pg_constraint k
+                          where k.conname = 'salud_actual_integration_check'
+                            and pg_catalog.pg_get_constraintdef(k.oid) like '%''CRM''%')
+            then jsonb_build_array('health.v2') else '[]'::jsonb end;
 
   return jsonb_build_object(
     'ok', true,

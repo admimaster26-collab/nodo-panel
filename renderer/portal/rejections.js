@@ -16,18 +16,21 @@ const api = {};
     const titular = String(s.TITULAR||s.NOMBRE_COMPLETO||'').trim();
     if(!titular) return null;                                       // sin titular no inventamos nada
     const usuario = String(s.USUARIO||'').trim();
+    // En una carga el titular es el de la cuenta DESDE la que transfirió; en un retiro, el de la cuenta
+    // DONDE cobra. Antes los dos decían "desde la que transferís" (docs/FLUJOS.md).
+    const laCuenta = tipo==='RETIRO' ? 'de la cuenta donde cobrás' : 'de la cuenta desde la que transferís';
     // 1) Datos nuestros
     const propio = deps.window.esDatoPropioBilletera ? deps.window.esDatoPropioBilletera(titular) : null;
     if(propio) return { motivo:'DATO_PROPIO',
-      texto:'El titular que pusiste ("'+titular+'") es el de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular de la cuenta desde la que transferís.' };
+      texto:'El titular que pusiste ("'+titular+'") es el de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular '+laCuenta+'.' };
     // 2) Sin una sola letra → no es el nombre de una persona
     if(!/[a-záéíóúñü]/i.test(titular)) return { motivo:'SOLO_NUMEROS',
-      texto:'El titular tiene que ser un NOMBRE Y APELLIDO, no números. Escribí el nombre del titular de la cuenta desde la que transferís.' };
+      texto:'El titular tiene que ser un NOMBRE Y APELLIDO, no números. Escribí el nombre del titular '+laCuenta+'.' };
     // 3) Puso su PROPIO USUARIO como titular. Es el caso más común de "completé cualquier cosa":
     //    "usuariobet", "maria112x1". Ningún banco tiene una cuenta a nombre de un alias de casino,
     //    así que el comprobante nunca va a coincidir y el depósito no se puede cotejar.
     if(deps.window._normNombre(titular) === deps.window._normNombre(usuario)) return { motivo:'USUARIO_COMO_TITULAR',
-      texto:'Pusiste tu usuario ("'+titular+'") en vez del titular de la cuenta. Necesitamos el NOMBRE Y APELLIDO de la persona desde cuya cuenta transferís, tal como figura en el banco.' };
+      texto:'Pusiste tu usuario ("'+titular+'") en vez del titular de la cuenta. Necesitamos el NOMBRE Y APELLIDO del titular '+laCuenta+', tal como figura en el banco.' };
     // 3) Reincidencia
     if(deps.window.titularYaRechazado(usuario, titular)) return { motivo:'REINCIDENTE',
       texto:'Ya te rechazamos ese mismo titular ("'+titular+'"). Poné el nombre completo real del titular de la cuenta, o escribinos por soporte.' };
@@ -95,6 +98,12 @@ const api = {};
   // Esto la cierra como ACREDITADA —que es lo que pasó— y le avisa en consecuencia.
   api.v154pYaCargada = function(id){
     const s = (deps.V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+    // Sólo cargas: un retiro no se "carga" (docs/FLUJOS.md). Cerrarlo así lo dejaba ACREDITADO y le
+    // decía al jugador "Tu carga ya está acreditada".
+    if(String((s&&(s.TIPO||s.TIPO_SOLICITUD))||'').toUpperCase()==='RETIRO'){
+      try{ deps.toast('Eso es sólo para cargas. Un retiro se aprueba o se rechaza.','yellow'); }catch(_e){}
+      return;
+    }
     const usuario = String((s&&(s.USUARIO||s.USUARIO_JUGADOR))||'').trim();
     const monto = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
 
@@ -153,7 +162,15 @@ const api = {};
     const s = (deps.V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
     // Motivos rápidos: el usuario los VE en el portal (pantalla Estado), así que tienen que servirle.
     // El textarea arranca VACÍO (antes venía precargado "Rechazada desde panel" → todos veían ese texto inútil).
-    const _rap = [
+    // Cada tipo con SUS motivos: un retiro no tiene transferencia ni comprobante del jugador (pide la cuenta
+    // donde cobra), así que "no nos llegó tu transferencia" no tiene sentido ahí (docs/FLUJOS.md).
+    const _esRetiro = String((s&&(s.TIPO||s.TIPO_SOLICITUD))||'').toUpperCase()==='RETIRO';
+    const _rap = _esRetiro ? [
+      "Las fichas de tu usuario no alcanzan para ese monto.",
+      "El titular de la cuenta donde cobrás no coincide. Escribinos por el chat.",
+      "La cuenta de cobro (alias o CBU) no es válida. Revisala y volvé a pedir el retiro.",
+      "No pudimos procesar el retiro ahora. Escribinos por el chat y lo resolvemos."
+    ] : [
       "No nos llegó tu transferencia. Revisá el comprobante y volvé a intentar.",
       "El comprobante no coincide con el monto o la cuenta.",
       "Comprobante repetido / ya usado.",
@@ -178,11 +195,13 @@ const api = {};
                     : 'Si lo vuelve a mandar igual, se le rechaza solo y no te llega.')+'</div></span></label>')
       : '';
     deps.abrirModal("Rechazar solicitud #"+id,
-      // Si ya se la cargó, esto NO es un rechazo. Sale del rechazo y la cierra bien.
+      // Si ya se la cargó, esto NO es un rechazo. Sale del rechazo y la cierra bien. SÓLO en cargas: en un
+      // retiro lo cerraba como ACREDITADA y le decía al jugador "Tu carga ya está acreditada" (docs/FLUJOS.md).
+      (_esRetiro ? '' :
       '<div style="padding:8px 10px;border-radius:9px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.35);margin-bottom:10px;font-size:12.5px;color:#bbf7d0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
       '<span>¿Ya se la cargaste por otro lado?</span>'+
       '<button type="button" class="mini-btn green" style="font-size:11.5px" onclick="cerrarModal();v154pYaCargada(\''+id+'\')">✅ Ya se la cargué</button>'+
-      '</div>'+
+      '</div>')+
       '<label>Motivo (se envía al usuario y lo ve en el portal)</label>'+
 
       '<textarea id="v154pRechObs" placeholder="Explicale al usuario por qué se rechaza (lo va a ver en su portal)"></textarea>'+

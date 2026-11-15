@@ -401,8 +401,11 @@ function abrirModalVincular(usuarioSugerido, telefono, prefill, desdeChat){
 // decide el operador: es la misma persona (se anota el cambio con su motivo), es otra persona (no
 // hereda el usuario viejo), o no hay evidencia (queda pendiente, sin acceso). Nada se aplica solo.
 const _ALTA_ID_REVISAR = ['CAMBIO_TELEFONO','TELEFONO_ANTERIOR','TELEFONO_DE_OTRO','USUARIO_REEMPLAZADO'];
-function _altaIdentidadBloque(uDecl, tDecl, id){
-  if(!id || _ALTA_ID_REVISAR.indexOf(id.veredicto) < 0) return '';
+// Devuelve las PARTES (título, historia, botones), no una tarjeta: van adentro de la tarjeta de
+// siempre. Antes reemplazaba la tarjeta entera y el operador perdía lo que veía en la 2.1.5 —el
+// "no ve el CBU", de quién es el teléfono y en qué oficina, los "usar…" y "seguir con…" (Juan, 8/11).
+function _altaIdentidadPartes(uDecl, tDecl, id){
+  if(!id || _ALTA_ID_REVISAR.indexOf(id.veredicto) < 0) return null;
   const esc=escapeHtml, u=id.usuario||{}, t=id.telefono||{}, d=t.dueno||null;
   const fecha=function(x){ const f=new Date(x||''); return isNaN(f)?'':f.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}); };
   const nombre=function(x){ return '<b>'+esc(String(x||''))+'</b>'; };
@@ -420,7 +423,8 @@ function _altaIdentidadBloque(uDecl, tDecl, id){
   } else if(id.veredicto==='TELEFONO_ANTERIOR'){
     lineas.push(nombre(usuario)+' pide con '+num(telConsulta)+', un número que antes era suyo. Hoy tiene registrado '+num(u.telefono)+'.');
   } else if(id.veredicto==='TELEFONO_DE_OTRO'){
-    lineas.push(nombre(usuario)+' está asociado al teléfono '+num(u.telefono)+actividad(u)+'.');
+    lineas.push(u.telefono ? nombre(usuario)+' está asociado al teléfono '+num(u.telefono)+actividad(u)+'.'
+                           : nombre(usuario)+' no tiene teléfono registrado'+actividad(u)+'.');
     lineas.push('El teléfono de esta consulta, '+num(telConsulta)+', hoy figura con '+nombre(d&&d.usuario)+actividad(d)+'.');
   } else {
     lineas.push('Este usuario es antiguo. Anteriormente estaba asociado al teléfono '+num(u.telefono)+'.');
@@ -437,8 +441,6 @@ function _altaIdentidadBloque(uDecl, tDecl, id){
   if(fuerte) lineas.push('<b style="color:#ff7b72">'+esc(usuario)+' tiene '+Number(u.operaciones||0)+' operaciones'+(u.tiene_cbu?' y cuenta de cobro':'')+': decidí vos antes de validar.</b>');
   if(u.vigente) lineas.push('<span style="color:#8b949e">El último usuario validado con ese número es '+nombre(u.vigente)+'. Es un dato, no se aplica solo.</span>');
   lineas.push('<span style="color:#8b949e">No se redirecciona automáticamente.</span>');
-  const col = fuerte ? { c:'#ff7b72', bg:'rgba(248,81,73,.12)', bd:'rgba(248,81,73,.50)', ico:'🚨' }
-                     : { c:'#e3b341', bg:'rgba(227,179,65,.11)', bd:'rgba(227,179,65,.42)', ico:'⚠️' };
   const titulo = id.veredicto==='CAMBIO_TELEFONO' ? 'Cambio de número'
                : id.veredicto==='TELEFONO_ANTERIOR' ? 'Número anterior'
                : id.veredicto==='TELEFONO_DE_OTRO' ? 'Número de otro usuario' : 'Usuario antiguo';
@@ -449,40 +451,49 @@ function _altaIdentidadBloque(uDecl, tDecl, id){
   };
   const misma = id.veredicto==='USUARIO_REEMPLAZADO' ? 'Es '+esc(usuario)+': este número reemplaza al anterior'
               : 'Es '+esc(usuario)+': '+esc(telConsulta)+' pasa a ser su número';
-  return '<div style="border:1px solid '+col.bd+';border-radius:10px;background:#0d1117;overflow:hidden">'
-    +   '<div style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:'+col.bg+';border-bottom:1px solid '+col.bd+'">'
-    +     '<span style="font-size:12px;line-height:1">'+col.ico+'</span>'
-    +     '<span style="font-weight:800;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:'+col.c+'">'+titulo+' · revisión humana</span>'
-    +   '</div>'
-    +   '<div style="padding:7px 10px;font-size:12px;line-height:1.45;color:#c9d1d9">'+lineas.map(function(l){ return '<div style="margin-bottom:3px">'+l+'</div>'; }).join('')
-    +     '<div style="margin-top:6px">'
-    +       boton('MISMA', misma, '#238636')
-    +       boton('OTRA', 'Es otra persona', '#1f6feb')
-    +       boton('PENDIENTE', 'Sin evidencia: queda pendiente', '#30363d')
-    +     '</div>'
-    +   '</div>'
-    + '</div>';
+  return {
+    titulo: titulo,
+    fuerte: fuerte,
+    historia: lineas.map(function(l){ return '<div style="margin-bottom:3px">'+l+'</div>'; }).join(''),
+    botones: '<div style="margin-top:6px">'
+      +   boton('MISMA', misma, '#238636')
+      +   boton('OTRA', 'Es otra persona', '#1f6feb')
+      +   boton('PENDIENTE', 'Sin evidencia: queda pendiente', '#30363d')
+      + '</div>'
+  };
 }
+// El motivo se pide con nodoPedirTexto, NUNCA con prompt(): en Electron prompt() no existe y los tres
+// botones "no hacían nada" (Juan, 8/11). Reglas de botones: docs/BOTONES.md.
 window.altaIdentidadDecidir = async function(dec, el){
   const usuario=(el&&el.getAttribute('data-u'))||'', tel=(el&&el.getAttribute('data-t'))||'', ver=(el&&el.getAttribute('data-v'))||'';
-  if(!usuario) return;
+  if(!usuario){ toast('No se pudo leer el usuario de la tarjeta. Volvé a buscarlo.','red'); return; }
+  if(el && el.disabled) return;
   const _op=(typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || '';
   const pc=String((typeof pcOperativa!=='undefined'&&pcOperativa)||window.pcOperativa||'');
   if(dec==='MISMA'){
-    const sugerido = ver==='USUARIO_REEMPLAZADO' ? 'volvió con otro número' : 'perdió el número';
-    const motivo = prompt('¿Por qué '+tel+' pasa a ser el número de '+usuario+'? Queda en su historia.', sugerido);
+    const motivo = await window.nodoPedirTexto({
+      titulo: 'Es '+usuario+': '+tel+' pasa a ser su número',
+      texto: '¿Por qué? Queda anotado en su historia.',
+      valor: ver==='USUARIO_REEMPLAZADO' ? 'volvió con otro número' : 'perdió el número',
+      confirmar: 'Confirmar', requerido: true, faltaTexto: 'Escribí el motivo: queda registrado.'
+    });
     if(motivo===null) return;
-    if(!String(motivo).trim()){ toast('Escribí el motivo: queda registrado.','yellow'); return; }
-    return ejecutarVincular(usuario, tel, true, { motivo:String(motivo).trim(), confirmado:true });
+    return ejecutarVincular(usuario, tel, true, { motivo:motivo, confirmado:true });
   }
   const decision = dec==='OTRA' ? 'OTRA_PERSONA' : 'SIN_EVIDENCIA';
-  const motivo = prompt(dec==='OTRA' ? 'Es otra persona: no hereda '+usuario+'. ¿Algo para dejar anotado?' : 'Queda pendiente, sin acceso. ¿Qué falta?',
-    dec==='OTRA' ? 'el número es de otra persona' : 'no hay datos suficientes');
+  const motivo = await window.nodoPedirTexto({
+    titulo: dec==='OTRA' ? 'Es otra persona' : 'Sin evidencia: queda pendiente',
+    texto: dec==='OTRA' ? 'No hereda '+usuario+'. ¿Algo para dejar anotado?' : 'Queda pendiente, sin acceso. ¿Qué falta?',
+    valor: dec==='OTRA' ? 'el número es de otra persona' : 'no hay datos suficientes',
+    confirmar: 'Anotar'
+  });
   if(motivo===null) return;
+  if(el) el.disabled = true;
   try{
-    const r=await supabaseClient.rpc('panel_identidad_decision',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pc,p_usuario:usuario,p_telefono:tel,p_decision:decision,p_motivo:String(motivo||'').trim()||null,p_operador:_op});
+    const r=await supabaseClient.rpc('panel_identidad_decision',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pc,p_usuario:usuario,p_telefono:tel,p_decision:decision,p_motivo:motivo||null,p_operador:_op});
     if(r.error || !(r.data&&r.data.ok)) throw new Error((r.error&&r.error.message)||(r.data&&r.data.mensaje)||'error');
-  }catch(e){ toast('No se pudo anotar la decisión: '+(e.message||e),'red'); return; }
+  }catch(e){ toast('No se pudo anotar la decisión. Probá de nuevo.','red'); console.warn('[identidad] decisión', e&&e.message); return; }
+  finally{ if(el) el.disabled = false; }
   if(dec==='OTRA'){
     toast('Anotado: es otra persona. Creá o validá su cuenta; no hereda '+usuario+'.','blue');
     try{ abrirModalVincular('', tel, false, true); }catch(_e){}
@@ -492,6 +503,10 @@ window.altaIdentidadDecidir = async function(dec, el){
 };
 function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
   const esc=escapeHtml, tN=_altaNormTel(tDecl);
+  // Cambio de número o de usuario (lo dice el servidor): va ADENTRO de esta tarjeta, entre las filas y
+  // el pie. Antes la reemplazaba entera y el operador dejaba de ver todo lo de arriba (Juan, 8/11).
+  // Lo ya validado se ve como siempre.
+  const _id = (resuelto && resuelto.usuario) ? null : _altaIdentidadPartes(uDecl, tDecl, r.identidad);
   const telsDe=function(c){ return ((c&&c.telefonos)||[]).map(_altaNormTel).filter(Boolean); };
   const uOk=r.usuario.exacto, tOk=r.telefono.exacto;
   const duenoTel = tOk?_altaNormU(tOk.usuario):null;
@@ -582,6 +597,9 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
         sub(_nota)
         + (_mostrar.length ? '<div>'+_mostrar.map(function(c){ const tl=telsDe(c);
             return chip(c.usuario, tl[0]||tN, esc(c.usuario)+(tl.length?(' · '+esc(tl[0])):''), 'ambar'); }).join('')+'</div>' : ''));
+    } else if(_id){
+      // El servidor sabe que existe (por eso hay revisión): nunca decir "no hay cuenta" acá.
+      filas+=fila('Usuario', esc(uDecl), '✓ en sistema', '#e3b341', '');
     } else {
       filas+=fila('Usuario', esc(uDecl), '✗ no hay cuenta con este usuario', '#8b949e', '');
     }
@@ -696,7 +714,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
 
   // Ni el usuario ni el teléfono están en ninguna cuenta: decirlo con todas las letras. Juan (12/09):
   // "el chabón declaró eso y no había usuario, el desplegable de coinciden debe decir 'sin usuario'".
-  const _sinNada = !uOk && !tOk && !(r.usuario.similares||[]).length && !(r.telefono.similares||[]).length
+  const _sinNada = !_id && !uOk && !tOk && !(r.usuario.similares||[]).length && !(r.telefono.similares||[]).length
                    && (uDecl || tN.length >= 6);
   if(!pie && _sinNada){
     pie = 'No hay ninguna cuenta con ' + (uDecl ? 'este usuario' : '') + (uDecl && tN.length >= 6 ? ' ni con ' : '')
@@ -707,7 +725,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
   // mensaje de ingreso, volver al chat, pegarlo, validar y volver a validar. Todo eso ya lo hace
   // el modal de alta (crea, vincula el teléfono, agenda y le manda los datos por el chat): lo
   // único que faltaba era llegar hasta él con lo que el cliente ya declaró.
-  const _esAltaNueva = !uOk && !tOk && (uDecl || tN.length>=6);
+  const _esAltaNueva = !_id && !uOk && !tOk && (uDecl || tN.length>=6);
   let acciones = '';
   if(_esAltaNueva){
     // La comilla se arma aparte: el valor viaja DENTRO de un onclick, y una comilla suelta en el
@@ -738,8 +756,9 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
     // muestran la cuenta REAL con la que quedó validado, no lo que el cliente escribió.
     alerta=false; conflicto=false; acciones=''; titulo='';
   }
-  const nivel = (resuelto && resuelto.usuario) ? 'validado'
-              : conflicto ? 'conflicto' : alerta ? 'revisar' : (uOk||tOk) ? 'ok' : 'nuevo';
+  let nivel = (resuelto && resuelto.usuario) ? 'validado'
+            : conflicto ? 'conflicto' : alerta ? 'revisar' : (uOk||tOk) ? 'ok' : 'nuevo';
+  if(_id) nivel = (_id.fuerte || nivel==='conflicto') ? 'conflicto' : 'revisar';
   const T = {
     ok:        { c:'#3fb950', bg:'rgba(63,185,80,.10)',  bd:'rgba(63,185,80,.38)',  ico:'✅' },
     validado:  { c:'#3fb950', bg:'rgba(63,185,80,.14)',  bd:'rgba(63,185,80,.50)',  ico:'✅' },
@@ -747,7 +766,8 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
     revisar:   { c:'#e3b341', bg:'rgba(227,179,65,.11)', bd:'rgba(227,179,65,.42)', ico:'⚠️' },
     conflicto: { c:'#ff7b72', bg:'rgba(248,81,73,.12)',  bd:'rgba(248,81,73,.50)',  ico:'🚨' }
   }[nivel];
-  const etiqueta = nivel==='validado'  ? 'Validado'
+  const etiqueta = _id                 ? _id.titulo+' · revisión humana'
+                 : nivel==='validado'  ? 'Validado'
                  : nivel==='conflicto' ? 'No coinciden'
                  : (nivel==='revisar' && _typoPropio) ? 'Teléfono mal tipeado'
                  : (nivel==='revisar' && _telCompartido) ? 'Teléfono en dos cuentas'
@@ -756,10 +776,9 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
                  : (uOk&&tOk)          ? 'Coinciden'
                  : uOk                 ? 'Usuario en sistema' : 'Teléfono en sistema';
 
-  // Si el servidor dice que hay un cambio de número o de usuario, esa tarjeta manda: la de abajo
-  // podía decir "coinciden" o "no hay cuenta" sobre el mismo caso. Lo ya validado se ve como siempre.
-  const _idBloque = (resuelto && resuelto.usuario) ? '' : _altaIdentidadBloque(uDecl, tDecl, r.identidad);
-  if(_idBloque) return { html:_idBloque, alerta:true, nivel:'revisar' };
+  const seccionId = _id
+    ? '<div style="padding:6px 10px 8px;border-top:1px solid '+T.bd+';font-size:12px;line-height:1.45;color:#c9d1d9">'+_id.historia+_id.botones+'</div>'
+    : '';
 
   const html =
       '<div style="border:1px solid '+T.bd+';border-radius:10px;background:#0d1117;overflow:hidden">'
@@ -769,6 +788,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
     +     (titulo?'<span style="margin-left:auto;font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:#6e7681;white-space:nowrap">'+esc(titulo)+'</span>':'')
     +   '</div>'
     +   '<div style="padding:5px 10px 7px">'+filas+acciones+'</div>'
+    +   seccionId
     +   (pie?'<div style="padding:6px 10px;border-top:1px solid '+T.bd+';background:'+T.bg+';font-size:11.5px;line-height:1.35;color:'+T.c+'">'+pie+'</div>':'')
     + '</div>';
   return { html:html, alerta:(nivel==='conflicto'||nivel==='revisar'), nivel:nivel };
@@ -853,10 +873,13 @@ async function _altaPrevalRender(){
   box.__ultima=marca;
   box.innerHTML='<div class="small" style="color:#8b949e">Chequeando antecedentes…</div>';
   try{
-    const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
-      p_secret: window.PANEL_DATA_SECRET,
-      p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
-      p_telefono: tel, p_usuario: usr||null });
+    const pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
+    const { data, error } = typeof window.nodoPrevalidarConsultar==='function'
+      ? await window.nodoPrevalidarConsultar(tel, usr||null, pc)
+      : await supabaseClient.rpc('panel_prevalidar_usuario',{
+          p_secret: window.PANEL_DATA_SECRET,
+          p_pc_codigo: pc,
+          p_telefono: tel, p_usuario: usr||null });
     if(box.__ultima!==marca) return;           // el operador siguió escribiendo
     if(error) throw new Error(error.message||'');
     if(data && data.ok===false) throw new Error(data.error||'');

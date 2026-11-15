@@ -18,11 +18,12 @@
 </head>
 
 <body>
-<div id="updaterBox" class="updater-pill" style="position:fixed;top:10px;right:12px;z-index:100000;display:flex;align-items:center;gap:6px;background:rgba(21,26,36,.95);border:1px solid #2d3748;border-radius:999px;padding:3px 10px;font-size:11px;color:#94a3b8;box-shadow:0 3px 12px rgba(0,0,0,.4)">
+<div id="updaterBox" class="updater-pill" style="position:fixed;top:10px;right:12px;z-index:100000;display:flex;align-items:center;gap:6px;background:rgba(21,26,36,.95);border:1px solid #2d3748;border-radius:999px;padding:3px 10px;font-size:11px;color:#94a3b8;box-shadow:0 3px 12px rgba(0,0,0,.4);max-width:calc(100vw - 24px);overflow:hidden;white-space:nowrap">
   <span id="updaterVersionTxt" style="font-weight:800;color:#cbd5e1;letter-spacing:.3px">—</span>
   <button id="btnActualizarNodo" class="mini-btn gray" style="padding:2px 8px;font-size:11px;border-radius:999px" onclick="nodoBuscarActualizacion()" title="Buscar nueva versión y actualizar">🔄 Actualizar</button>
   <button class="mini-btn gray" id="updaterRollbackBtn" style="padding:2px 7px;font-size:11px;border-radius:999px;display:none" onclick="nodoVolverVersionAnterior()" title="Descargas anteriores">↩</button>
-  <span id="updaterStatusTxt"></span>
+  <!-- Tope: pase lo que pase adentro, el cartel queda en una línea y no tapa el panel (P10C, 8/11). -->
+  <span id="updaterStatusTxt" style="display:inline-block;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle"></span>
   <button id="updaterMinBtn" onclick="nodoUpdaterMinimizar(true)" title="Minimizar" style="background:transparent;border:0;color:#64748b;cursor:pointer;font-size:13px;line-height:1;padding:0 2px;margin-left:2px">—</button>
 </div>
 <!-- Plegado: muestra la VERSIÓN -->
@@ -71,7 +72,7 @@
       </div>
 
       <div class="sidebar-bottom">
-        <button id="navAjustes" aria-label="Ajustes" class="nav-btn" onclick="nodoAbrirAjustes()">⚙️ Ajustes</button>
+        <button id="navAjustes" aria-label="Ajustes" class="nav-btn" onclick="nodoAbrirAjustes()">⚙️ Ajustes<span id="navAjustesTilde" class="nav-tilde hidden"></span></button>
         <button class="nav-btn" aria-label="Cerrar sesión" onclick="cerrarSesion()">🚪 Cerrar sesión</button>
       </div>
     </aside>
@@ -560,6 +561,17 @@
         </div>
       </div>
 
+      <!-- WhatsApp que ve el jugador -->
+      <div class="ajustes-section" style="margin-top:18px;border-top:1px solid #1e293b;padding-top:16px">
+        <div class="ajustes-section-title">
+          <span>📱</span> WHATSAPP QUE VE EL JUGADOR
+        </div>
+        <div class="small" style="color:#94a3b8;margin-bottom:10px">
+          El número al que le escriben desde la página. Si la línea se cae, lo cambio solo.
+        </div>
+        <div id="ajustesWhatsapp" class="ajustes-agente-card"></div>
+      </div>
+
       <!-- Estado del sistema -->
       <div class="ajustes-section" style="margin-top:18px;border-top:1px solid #1e293b;padding-top:16px">
         <div class="ajustes-section-title">
@@ -705,5 +717,6 @@
 <script id="nodoValidacionPcDetectFixFinal" src="renderer/generated/js-validacion-pc.js"></script>
 
 <script id="v15BotonesChatInicio" src="renderer/generated/js-chat-inicio-botones.js"></script>
+<script id="nodoOficinaWhatsapp" src="renderer/generated/js-oficina-whatsapp.js"></script>
 
 </body></html>

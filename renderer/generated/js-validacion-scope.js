@@ -182,7 +182,8 @@
   // Filtro estricto para crear validación manual: usa PC local por defecto.
   const oldCrear = window.crearValidacionManual;
   window.crearValidacionManual = async function(){
-    const usuario=prompt("Usuario a validar:");
+    // nodoPedirTexto y no prompt(): en Electron prompt() no existe (docs/BOTONES.md).
+    const usuario=await window.nodoPedirTexto({titulo:"Validación manual",texto:"Usuario a validar:",confirmar:"Crear",requerido:true});
     if(!usuario)return;
 
     const pc=localPcCanon();

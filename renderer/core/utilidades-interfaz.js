@@ -89,3 +89,52 @@ function formatearHoraChat(fechaRaw){ return NodoDomain.formatos.formatearHoraCh
 function inicioDiaArgentina(){ return NodoDomain.formatos.inicioDiaArgentina(); }
 function _parseFechaCSV(str){ return NodoDomain.formatos.parseFechaCSV(str); }
 
+// Pedir un texto dentro de NODO. prompt() NO existe en Electron: falla callado y el botón "no hace
+// nada". Pasó con los botones de identidad (8/11), la validación manual y el enlace de acceso. Esto
+// es lo que se usa en su lugar; las reglas de botones están en docs/BOTONES.md.
+//   const motivo = await nodoPedirTexto({ titulo, texto, valor, confirmar:'Anotar', requerido:true });
+//   null = canceló (botón Cancelar o Esc). Enter confirma.
+window.nodoPedirTexto = function(opciones){
+  const o = opciones || {};
+  const esc = function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  return new Promise(function(resolve){
+    let cerrado = false;
+    const previo = document.getElementById('nodoPedirTexto');
+    if(previo) previo.remove();
+    const capa = document.createElement('div');
+    capa.id = 'nodoPedirTexto';
+    capa.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(5,8,12,.72);display:flex;align-items:center;justify-content:center;padding:18px';
+    const boton = 'border-radius:8px;padding:8px 14px;font-weight:800;font-size:13px;cursor:pointer;';
+    capa.innerHTML = '<div role="dialog" aria-modal="true" style="width:min(440px,100%);box-sizing:border-box;background:#111821;border:1px solid #2b3442;border-radius:12px;padding:16px;color:#e6edf3;font:13px/1.45 system-ui,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+      + (o.titulo ? '<div style="font-weight:800;font-size:14px;margin-bottom:6px">' + esc(o.titulo) + '</div>' : '')
+      + (o.texto ? '<div style="color:#c9d1d9;margin-bottom:10px">' + esc(o.texto) + '</div>' : '')
+      + '<input type="text" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid #3b4654;background:#0b0f14;color:#fff;font-size:14px">'
+      + '<div data-msg style="min-height:18px;margin-top:6px;font-size:12px;color:#fbbf24"></div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">'
+      +   '<button type="button" data-no style="' + boton + 'border:1px solid #3b4654;background:transparent;color:#e6edf3">Cancelar</button>'
+      +   '<button type="button" data-si style="' + boton + 'border:0;background:#238636;color:#fff">' + esc(o.confirmar || 'Aceptar') + '</button>'
+      + '</div></div>';
+    document.body.appendChild(capa);
+    const input = capa.querySelector('input'), si = capa.querySelector('[data-si]'),
+          no = capa.querySelector('[data-no]'), msg = capa.querySelector('[data-msg]');
+    input.value = o.valor == null ? '' : String(o.valor);
+    const cerrar = function(valor){
+      if(cerrado) return;
+      cerrado = true;
+      try{ capa.remove(); }catch(_e){}
+      resolve(valor);
+    };
+    si.onclick = function(){
+      const v = String(input.value || '').trim();
+      if(o.requerido && !v){ msg.textContent = o.faltaTexto || 'Escribí algo para seguir.'; try{ input.focus(); }catch(_e){} return; }
+      cerrar(v);
+    };
+    no.onclick = function(){ cerrar(null); };
+    input.onkeydown = function(e){
+      if(e.key === 'Enter'){ e.preventDefault(); si.onclick(); }
+      else if(e.key === 'Escape'){ e.preventDefault(); cerrar(null); }
+    };
+    setTimeout(function(){ try{ input.focus(); input.select(); }catch(_e){} }, 0);
+  });
+};
+

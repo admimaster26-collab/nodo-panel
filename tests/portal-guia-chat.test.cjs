@@ -109,6 +109,7 @@ function harness(options={}){
   vm.createContext(ctx);vm.runInContext(GUIDE,ctx);
   vm.runInContext('guiaPausaMs=0',ctx);
   for(const name of ['chatMessageRole','chatHelpMessage','sendFreeMessage','mostrarMensajePropio','estadoNormalizado','_tomarEnvio','_soltarEnvio','_restaurarBoton','tieneSolicitudPendiente','chatCerradoEnServidor','olvidarChatCerrado'])vm.runInContext(source(name),ctx);
+  vm.runInContext(source('_esRpcInexistente'),ctx);
   vm.runInContext(source('_retiroRpcInexistente'),ctx);
   vm.runInContext(source('_consultarRetiroProtocolo'),ctx);
   vm.runInContext(source('_mostrarDniRetiro'),ctx);
@@ -143,15 +144,17 @@ test('no quedó nada de la guía anterior',()=>{
     assert.ok(!PORTAL.includes(viejo),'sigue en el Portal: '+viejo);
 });
 test('el asistente no tiene un segundo camino: no le habla al servidor por su cuenta',()=>{
-  assert.ok(!/\brpc\(/.test(GUIDE),'cargas, retiros, clave y mensajes salen por las funciones de las pantallas');
-  assert.ok(!GUIDE.includes('landing_'),'ninguna función del servidor escrita acá');
+  const guiaSinAdjuntar=GUIDE.replace(/if\(g\.pedidoComprobante\)\{[\s\S]*?\n    \}/, '');
+  assert.ok(!/\brpc\(/.test(guiaSinAdjuntar),'cargas, retiros, clave y mensajes salen por las funciones de las pantallas');
+  assert.ok(!guiaSinAdjuntar.includes('landing_'),'ninguna función del servidor escrita acá');
+  assert.match(GUIDE,/landing_portal_adjuntar_comprobante_v1/,'el único RPC propio de la guía asocia el comprobante al pedido');
 });
 
 // ── El saludo y el árbol ─────────────────────────────────────────────────────
 test('el saludo avisa que es automático y que siempre hay una persona; abre el árbol sin mandar nada',()=>{
   const h=abierto();
-  assert.ok(h.dijo('Es automático'));assert.ok(h.dijo('una persona'));assert.ok(h.dijo('¿Con qué te doy una mano?'));
-  assert.deepEqual(h.opciones(),['💰 Una carga','🏧 Un retiro','🔑 Entrar a mi cuenta','✍️ Otra cosa','👤 Hablar con una persona']);
+  assert.ok(h.dijo('Es automático'));assert.ok(h.dijo('tu cajero'));assert.ok(h.dijo('¿Con qué te doy una mano?'));
+  assert.deepEqual(h.opciones(),['💰 Una carga','🏧 Un retiro','🔑 Entrar a mi cuenta','✍️ Otra cosa','👤 Hablar con mi cajero']);
   assert.equal(h.sent.length,0);assert.equal(h.rpcCalls.length,0);
 });
 test('cada lista del árbol tiene una sola persona y una sola vuelta atrás, sin opciones repetidas',()=>{
@@ -162,7 +165,7 @@ test('cada lista del árbol tiene una sola persona y una sola vuelta atrás, sin
       h.ctx.guiaIr(rama);
       const o=h.opciones();
       assert.equal(new Set(o).size,o.length,rama+': repetidas');
-      assert.equal(o.filter(x=>/persona/i.test(x)).length,1,rama+': una persona');
+      assert.equal(o.filter(x=>/cajero/i.test(x)).length,1,rama+': un solo cajero');
       assert.equal(o.filter(x=>/Otra consulta|Volver|Inicio de ayuda/.test(x)).length,rama==='inicio'?0:1,rama+': una vuelta');
     }
   }
@@ -183,7 +186,7 @@ test('al tocar, las opciones se van y lo elegido queda como mensaje del jugador,
 // ── Lo de la captura ─────────────────────────────────────────────────────────
 test('sin usuario, pedir una persona pide los datos ACÁ y el pedido sale: nunca el bucle de reintentar',async()=>{
   const h=abierto({state:{usuario:'',telefono:''}});
-  await h.tocar('Hablar con una persona');
+  await h.tocar('Hablar con mi cajero');
   assert.equal(h.sent.length,0,'todavía no hay a quién');
   assert.ok(h.elements.get('guiaUsuario'),'la ficha está en el chat');assert.ok(h.elements.get('guiaTelefono'));
   assert.deepEqual(h.navigation,[],'no lo manda a otra pantalla');
@@ -192,8 +195,8 @@ test('sin usuario, pedir una persona pide los datos ACÁ y el pedido sale: nunca
   await h.ctx.guiaEnviarIngreso();
   await new Promise(r=>setTimeout(r,5));
   assert.equal(h.sent.length,1,'el pedido salió');
-  assert.ok(h.sent[0].text.startsWith('Pido hablar con una persona.'));
-  assert.ok(h.dijo('Te paso con un operador'));
+  assert.ok(h.sent[0].text.startsWith('Pido hablar con mi cajero.'));
+  assert.ok(h.dijo('Te paso con tu cajero'));
 });
 test('los datos mal escritos se corrigen en la misma ficha y no se pierde lo que venía haciendo',async()=>{
   let intentos=0;
@@ -209,7 +212,7 @@ test('los datos mal escritos se corrigen en la misma ficha y no se pierde lo que
 });
 test('si no se valida solo, sus datos le llegan a una persona UNA vez y se le explica qué sigue',async()=>{
   const h=abierto({state:{usuario:'',telefono:''},ingreso(u,t){h.ctx.state.usuario=u;h.ctx.state.telefono=t;h.ctx.state.nivelAcceso='SOPORTE';return {acceso:false};}});
-  await h.tocar('Hablar con una persona');
+  await h.tocar('Hablar con mi cajero');
   h.campo('guiaUsuario','prueba1');h.campo('guiaTelefono','1134567890');
   await h.ctx.guiaEnviarIngreso();
   await new Promise(r=>setTimeout(r,5));
@@ -222,13 +225,13 @@ test('si no se valida solo, sus datos le llegan a una persona UNA vez y se le ex
 test('no se acuerda el usuario: lo pide por WhatsApp a su oficina, sin dejar datos en el chat',async()=>{
   const h=abierto({state:{usuario:'',telefono:''}});
   await h.tocar('Entrar a mi cuenta');await h.tocar('No me acuerdo el usuario');
-  assert.ok(h.dijo('tu usuario no se dice por acá'));assert.ok(h.dijo('desde tu número'));
+  assert.ok(h.dijo('no tengo con qué confirmar que la cuenta es tuya'));
   assert.ok(!h.elements.get('guiaUsuario')&&!h.elements.get('guiaTelefono'),'no le pide nada');
   const wa=h.ctx.guiaCargar().lista.find(o=>o.href);
-  assert.equal(wa.t,'📲 Pedir mi usuario por WhatsApp');assert.equal(wa.href,WA_PEDIDO);
+  assert.equal(wa.t,'📲 Pedírselo a mi cajero por WhatsApp');assert.equal(wa.href,WA_PEDIDO);
   assert.ok(h.elements.get('guiaAccion').innerHTML.includes('<a class="whatsapp" href="'+WA_PEDIDO+'" target="_blank" rel="noopener">'),
     'un enlace de verdad: el toque abre WhatsApp aunque haya bloqueador');
-  assert.ok(h.opciones().includes('👤 Hablar con una persona'));
+  assert.ok(h.opciones().includes('👤 Hablar con mi cajero'));
   assert.equal(h.sent.length,0,'nada a una persona');assert.equal(h.creadas.length,0);
   assert.deepEqual(h.rpcCalls.map(c=>c.name),['landing_resolver_ruta_publica']);
 });
@@ -242,14 +245,17 @@ test('el "No me acuerdo el usuario" de la ficha de ingreso sale de la ficha y va
   assert.equal(h.ctx.guiaCargar().lista.find(o=>o.href)?.href,WA_PEDIDO);
   assert.equal(h.sent.length,0);
 });
-test('no se acuerda el usuario y la oficina no tiene un WhatsApp que sirva: se lo dice sin botón y queda una persona',async()=>{
+// Sin número no se lo deja sin salida: el pedido sale por el chat y el cajero le contesta al
+// WhatsApp con el que entró (Juan, 15/11). Pasa poco, pero el jugador no se queda a pie.
+test('no se acuerda el usuario y la oficina no tiene un WhatsApp que sirva: el pedido sale por el chat',async()=>{
   for(const whatsapp of ['','54911234567']){   // sin cargar, y uno al que le faltan números
     const h=abierto({state:{usuario:'',telefono:''},whatsapp});
     await h.tocar('Entrar a mi cuenta');await h.tocar('No me acuerdo el usuario');
-    assert.ok(h.dijo('Pedíselo a tu oficina por WhatsApp'),whatsapp);
+    assert.ok(h.dijo('Le avisamos a tu cajero'),whatsapp);
     assert.ok(!h.ctx.guiaCargar().lista.some(o=>o.href)&&!h.elements.get('guiaAccion').innerHTML.includes('wa.me'),whatsapp+': sin botón');
-    assert.ok(h.opciones().includes('👤 Hablar con una persona'));
-    assert.ok(!h.elements.get('guiaTelefono'));assert.equal(h.sent.length,0);
+    assert.equal(h.sent.length,1,whatsapp+': el pedido viaja');
+    assert.ok(/No me acuerdo mi usuario/.test(h.sent[0].text),h.sent[0].text);
+    assert.ok(!h.elements.get('guiaTelefono'),whatsapp+': no le pide datos de nuevo');
   }
 });
 test('el WhatsApp de la oficina se arma para wa.me con la misma regla de los teléfonos; mal cargado, no hay botón',()=>{
@@ -270,7 +276,7 @@ test('el WhatsApp de la oficina se pregunta una vez; sin conexión no se guarda 
   const h=abierto({state:{usuario:'',telefono:''},ruta:()=>falla?{error:{message:'Failed to fetch'}}:{data:[{ok:true,whatsapp_numero:WA_OFICINA}]}});
   const pedir=async()=>{await h.tocar('Entrar a mi cuenta');await h.tocar('No me acuerdo el usuario');};
   await pedir();
-  assert.ok(h.dijo('Pedíselo a tu oficina'),'sin conexión: sin botón');
+  assert.ok(h.dijo('Le avisamos a tu cajero'),'sin conexión: sin botón');
   falla=false;
   await h.tocar('Otra consulta');await pedir();
   assert.equal(h.ctx.guiaCargar().lista.find(o=>o.href)?.href,WA_PEDIDO);
@@ -297,29 +303,30 @@ test('pedir una persona manda un mensaje claro, con el tema, y dos toques no lo 
   h.ctx.guiaTocar(0);h.ctx.guiaTocar(0);
   await new Promise(r=>setTimeout(r,5));
   assert.equal(h.sent.length,1);
-  assert.equal(h.sent[0].text,'Pido hablar con una persona.\nTema: no consigo entrar a mi cuenta.');
+  assert.ok(h.sent[0].text.startsWith('Pido hablar con mi cajero.\nTema: no consigo entrar a mi cuenta.'),h.sent[0].text);
+  assert.match(h.sent[0].text,/Resumen del asistente:\n· Eligió: el acceso a mi cuenta › no consigo entrar a mi cuenta/,'a la persona le llega lo que eligió');
   suelta();await primero;
   assert.ok(h.del('user').some(t=>t.startsWith('Pido hablar')),'el jugador ve lo mismo que el operador');
   assert.ok(!h.opciones().some(o=>/persona/.test(o)),'ya está pedido: no se ofrece de nuevo');
 });
 test('repetir EXACTAMENTE el mismo pedido enseguida no lo manda dos veces, y lo tocado queda escrito',async()=>{
   const h=abierto();
-  await h.tocar('Hablar con una persona');
+  await h.tocar('Hablar con mi cajero');
   await h.tocar('Otra consulta');
-  assert.ok(h.opciones().some(o=>/persona/.test(o)),'la salida a una persona está siempre');
-  await h.tocar('Hablar con una persona');
+  assert.ok(h.opciones().some(o=>/cajero/.test(o)),'la salida al cajero está siempre');
+  await h.tocar('Hablar con mi cajero');
   assert.equal(h.sent.length,1);
-  assert.ok(h.dijo('Ese pedido ya lo tiene una persona'));
-  assert.ok(h.del('user').includes('👤 Hablar con una persona'),'el toque no desaparece');
+  assert.ok(h.dijo('Tu pedido ya le llegó a tu cajero'));
+  assert.ok(h.del('user').includes('👤 Hablar con mi cajero'),'el toque no desaparece');
 });
 // Juan, 1/11: validó, le contestaron y al tocar «No me deja entrar igual» el mensaje desaparecía,
 // salía «Ya le avisé» y a NODO no llegaba nada.
 test('un pedido con OTRO tema siempre llega, aunque recién haya avisado a una persona',async()=>{
   const h=abierto();
-  await h.tocar('Hablar con una persona');
+  await h.tocar('Hablar con mi cajero');
   await h.tocar('Otra consulta');await h.tocar('Entrar a mi cuenta');await h.tocar('No me deja entrar igual');
   assert.equal(h.sent.length,2,'llega');
-  assert.equal(h.sent[1].text,'Pido hablar con una persona.\nTema: no consigo entrar a mi cuenta.');
+  assert.ok(h.sent[1].text.startsWith('Pido hablar con mi cajero.\nTema: no consigo entrar a mi cuenta.'),h.sent[1].text);
   assert.ok(h.del('user').some(t=>t.includes('no consigo entrar')),'y el jugador lo ve');
 });
 // Juan, 6/11: con los datos ya en manos de una persona, "Hablar con una persona" no distingue nada y
@@ -327,47 +334,47 @@ test('un pedido con OTRO tema siempre llega, aunque recién haya avisado a una p
 // solo y, apenas lo habilitan, aparece Ingresar.
 test('esperando la validación no se le ofrece nada que no sirva',async()=>{
   const h=abierto({state:{usuario:'',telefono:''},ingreso(u,t){h.ctx.state.usuario=u;h.ctx.state.telefono=t;h.ctx.state.nivelAcceso='SOPORTE';return {acceso:false};}});
-  await h.tocar('Hablar con una persona');
+  await h.tocar('Hablar con mi cajero');
   h.campo('guiaUsuario','prueba1');h.campo('guiaTelefono','1134567890');
   await h.ctx.guiaEnviarIngreso();
   await new Promise(r=>setTimeout(r,5));
   h.ctx.guiaReponerMenu();
-  assert.deepEqual(h.opciones(),[],'ni "Ya me activaron" ni "Hablar con una persona"');
+  assert.deepEqual(h.opciones(),[],'ni "Ya me activaron" ni "Hablar con mi cajero"');
   h.ctx.guiaIr('inicio');
   assert.deepEqual(h.opciones(),[]);
-  assert.ok(h.dijo('Una persona ya tiene tus datos'));
+  assert.ok(h.dijo('Tu cajero ya tiene tus datos'));
 });
 test('si el operador contestó o el chat se cerró, el mismo pedido vuelve a salir',async()=>{
   const contesto=abierto();
-  await contesto.tocar('Hablar con una persona');
+  await contesto.tocar('Hablar con mi cajero');
   contesto.ctx.guiaCederAPersona(new Date().toISOString());
-  await contesto.tocar('Ver opciones');await contesto.tocar('Hablar con una persona');
+  await contesto.tocar('Ver opciones');await contesto.tocar('Hablar con mi cajero');
   assert.equal(contesto.sent.length,2,'contestó: vuelve a salir');
   const cerrado=abierto({state:{chatId:'55',chatToken:'tok'}});
-  await cerrado.tocar('Hablar con una persona');
+  await cerrado.tocar('Hablar con mi cajero');
   cerrado.ctx.state.chatId='';cerrado.ctx.state.chatToken='';
-  await cerrado.tocar('Otra consulta');await cerrado.tocar('Hablar con una persona');
+  await cerrado.tocar('Otra consulta');await cerrado.tocar('Hablar con mi cajero');
   assert.equal(cerrado.sent.length,2,'se cerró: vuelve a salir');
 });
 test('pasados unos minutos, el mismo pedido sin respuesta vuelve a salir',async()=>{
   const h=abierto();
-  await h.tocar('Hablar con una persona');
+  await h.tocar('Hablar con mi cajero');
   h.ctx.guiaCargar().pedido.at=Date.now()-6*60*1000;
-  await h.tocar('Otra consulta');await h.tocar('Hablar con una persona');
+  await h.tocar('Otra consulta');await h.tocar('Hablar con mi cajero');
   assert.equal(h.sent.length,2);
 });
 test('si falla el envío lo dice UNA vez, no apila carteles, y probar de nuevo manda de verdad',async()=>{
   let falla=true,intentos=0;
   const h=abierto({send:async()=>{intentos++;return falla?{ok:false,error:'Sin conexión'}:{ok:true,message_id:9,chat_id:'7'};}});
   const antes=h.messages.length;
-  await h.tocar('Hablar con una persona');
+  await h.tocar('Hablar con mi cajero');
   assert.equal(intentos,1);assert.equal(h.messages.length,antes,'sin globos repetidos');
   assert.match(h.elements.get('guiaAccion').innerHTML,/No pude mandarlo/);
   await h.tocar('Probar de nuevo');
   assert.equal(intentos,2,'cada toque es un intento real');assert.equal(h.messages.length,antes);
   assert.match(h.elements.get('guiaAccion').innerHTML,/Sigue sin salir/);
   falla=false;await h.tocar('Probar de nuevo');
-  assert.equal(intentos,3);assert.ok(h.dijo('Te paso con un operador'));
+  assert.equal(intentos,3);assert.ok(h.dijo('Te paso con tu cajero'));
   assert.ok(!h.dijo('Sin conexión'),'nunca muestra el texto técnico');
 });
 
@@ -404,14 +411,48 @@ test('ningún texto que manda el asistente activa el bot del servidor',()=>{
 test('transferí y no apareció: con una en la fila dice cuál es y ofrece el comprobante',async()=>{
   const h=abierto({rows:[CARGA_PENDIENTE]});
   await h.tocar('Una carga');await h.tocar('Transferí y no me apareció');
-  assert.ok(h.dijo('$5.000')||h.dijo('5.000'));assert.ok(h.dijo('en la fila'));
-  assert.ok(h.dijo('Mandá el comprobante para que un operador revise la carga.'),'el texto que pidió Juan');
+  const cartel=h.elements.get('guiaAccion').innerHTML;
+  assert.match(cartel,/5\.000/,'el monto que subió, en el cartel');
+  assert.match(cartel,/está en la fila/);assert.match(cartel,/La están revisando/);
+  assert.match(cartel,/#378404/,'el número de pedido');
+  assert.ok(h.dijo('Mandá el comprobante para que tu cajero revise la carga.'),'el texto que pidió Juan');
   assert.ok(h.elements.get('guiaArchivo'),'el cartel de subir el comprobante');
 });
 test('transferí y no apareció: rechazada muestra el motivo real',async()=>{
   const h=abierto({rows:[{tipo:'CARGA',estado:'RECHAZADA',monto:3000,fecha:new Date().toISOString(),motivo:'No nos llegó la transferencia',solicitud_id:7}]});
   await h.tocar('Una carga');await h.tocar('Transferí y no me apareció');
-  assert.ok(h.dijo('No nos llegó la transferencia'));assert.ok(h.elements.get('guiaArchivo'));
+  const cartel=h.elements.get('guiaAccion').innerHTML;
+  assert.match(cartel,/No nos llegó la transferencia/,'el motivo, en el cartel');
+  assert.match(cartel,/Rechazada/);assert.ok(h.elements.get('guiaArchivo'));
+});
+// Juan, 15/11: "le entregas un desplegable con cargas a reclamar". Cinco cargas de $5.000 son cinco
+// filas iguales: antes contestaba por la última, que podía no ser la que el jugador reclama.
+test('con varias cargas en juego le pregunta cuál, y contesta por la que elige',async()=>{
+  const hoy=new Date().toISOString();
+  const h=abierto({rows:[
+    {tipo:'CARGA',estado:'PENDIENTE',monto:5000,fecha:hoy,solicitud_id:11},
+    {tipo:'CARGA',estado:'PENDIENTE',monto:7000,fecha:hoy,solicitud_id:22},
+    {tipo:'CARGA',estado:'ACREDITADA',monto:9000,fecha:hoy,solicitud_id:33}]});
+  await h.tocar('Una carga');await h.tocar('Transferí y no me apareció');
+  const elegir=h.elements.get('guiaAccion').innerHTML;
+  assert.ok(h.dijo('Tenés 3 cargas'));
+  assert.ok(h.elements.get('guiaCual'),'el desplegable');
+  for(const monto of ['5.000','7.000','9.000'])assert.ok(elegir.includes(monto),monto);
+  assert.match(elegir,/Acreditada/,'cada opción dice cómo quedó');
+  assert.ok(!h.elements.get('guiaArchivo'),'todavía no le pide el comprobante');
+  // Elige la segunda: el cartel y el comprobante son de ESA.
+  h.elements.get('guiaCual').value='1';
+  await h.ctx.guiaCargaElegida();
+  const cartel=h.elements.get('guiaAccion').innerHTML;
+  assert.match(cartel,/7\.000/);assert.ok(!cartel.includes('5.000'),'no mezcla con la otra');
+  assert.match(cartel,/#22/);assert.ok(h.elements.get('guiaArchivo'));
+  assert.ok(h.del('user').some(t=>/7\.000/.test(t)),'queda escrito cuál eligió');
+});
+// Con una sola no le pregunta nada: contesta derecho.
+test('con una sola carga no aparece el desplegable',async()=>{
+  const h=abierto({rows:[CARGA_PENDIENTE]});
+  await h.tocar('Una carga');await h.tocar('Transferí y no me apareció');
+  assert.ok(!h.elements.get('guiaCual'));assert.ok(h.elements.get('guiaArchivo'));
 });
 test('transferí y no apareció: sin nada le da la ficha ahí mismo',async()=>{
   const h=abierto({rows:[]});
@@ -422,7 +463,8 @@ test('transferí y no apareció: sin nada le da la ficha ahí mismo',async()=>{
 test('una carga de hace días no se presenta como la que está reclamando',async()=>{
   const h=abierto({rows:[{tipo:'CARGA',estado:'ACREDITADA',monto:3000,fecha:new Date(Date.now()-3*864e5).toISOString()}]});
   await h.tocar('Una carga');await h.tocar('Transferí y no me apareció');
-  assert.ok(!h.dijo('acreditada'));assert.ok(h.elements.get('guiaMonto'));
+  assert.ok(!h.dijo('acreditada')&&!/Acreditada/.test(h.elements.get('guiaAccion').innerHTML));
+  assert.ok(h.elements.get('guiaMonto'));
 });
 test('si no puede leer la cuenta no inventa: lo dice y probar de nuevo vuelve a leer',async()=>{
   let vuelta=0;const h=abierto({historial:async()=>vuelta++?{ok:true,rows:[CARGA_PENDIENTE]}:{ok:false,code:'SIN_CONEXION',rows:[]}});
@@ -430,7 +472,7 @@ test('si no puede leer la cuenta no inventa: lo dice y probar de nuevo vuelve a 
   assert.match(h.elements.get('guiaAccion').innerHTML,/No pude revisar tu cuenta/);
   assert.ok(!h.dijo('No veo ninguna carga'),'sin datos no afirma que no hay nada');
   await h.tocar('Probar de nuevo');
-  assert.ok(h.dijo('en la fila'));
+  assert.match(h.elements.get('guiaAccion').innerHTML,/está en la fila/);
 });
 test('me la rechazaron: sin rechazos lo dice; con rechazo cuenta cuál',async()=>{
   const nada=abierto({rows:[CARGA_PENDIENTE]});
@@ -438,14 +480,39 @@ test('me la rechazaron: sin rechazos lo dice; con rechazo cuenta cuál',async()=
   assert.ok(nada.dijo('No veo cargas rechazadas'));
   const una=abierto({rows:[{tipo:'CARGA',estado:'RECHAZADA',monto:3000,fecha:'2026-10-30T10:00:00Z'}]});
   await una.tocar('Una carga');await una.tocar('Me la rechazaron');
-  assert.ok(una.dijo('No tengo guardado el motivo'));
+  const cartel=una.elements.get('guiaAccion').innerHTML;
+  assert.match(cartel,/No se pudo acreditar/,'sin motivo guardado no inventa uno');
+  assert.match(cartel,/3\.000/);assert.match(cartel,/Rechazada/);
 });
 test('último retiro: cuenta real, a qué cuenta y cómo quedó, con salida si no lo reconoce',async()=>{
   const h=abierto({rows:[{tipo:'RETIRO',estado:'PAGADA',monto:50000,fecha:'2026-10-03T16:57:00Z',billetera:'0000000000000000006269',titular:'Titular Prueba'}]});
   await h.tocar('Un retiro');await h.tocar('¿Cuál fue mi último retiro?');
   assert.ok(h.dijo('terminada en 6269'));assert.ok(h.dijo('Titular Prueba'));assert.ok(h.dijo('pagado'));
   await h.tocar('Ese no lo pedí yo');
-  assert.equal(h.sent[0].text,'Pido hablar con una persona.\nTema: un retiro que no reconozco.');
+  assert.ok(h.sent[0].text.startsWith('Pido hablar con mi cajero.\nTema: un retiro que no reconozco.'),h.sent[0].text);
+  assert.match(h.sent[0].text,/· Eligió: un retiro › un retiro que no reconozco/);
+  assert.match(h.sent[0].text,/· Último retiro: \$50\.000 · 01\/11 14:32 · pagado/,'y lo que el sistema sabe de ese retiro');
+  assert.ok(h.dijo('Ya le mandé lo que hablamos'));
+});
+// 13/11 (Juan): "al querer hablar con una persona el sistema devuelve que ya deja la información... no hace
+// un resumen en base a lo seleccionado". El resumen viaja en el mismo mensaje; sin nada que resumir, no se promete.
+test('pedir una persona sin haber elegido nada no promete un resumen que no viaja',async()=>{
+  const h=abierto();
+  await h.tocar('Hablar con mi cajero');
+  assert.equal(h.sent[0].text,'Pido hablar con mi cajero.\nTema: una consulta.');
+  assert.ok(!h.dijo('Ya le mandé lo que hablamos'));assert.ok(h.dijo('Te paso con tu cajero'));
+});
+test('el resumen que acompaña el pedido a una persona tampoco activa el bot del servidor',()=>{
+  const h=harness();
+  const temas=vm.runInContext('Object.values(GUIA_TEMAS)',h.ctx);
+  const filas=estado=>[{tipo:'CARGA',estado,monto:5000,fecha:'2026-11-01T14:32:00Z',solicitud_id:378404},{tipo:'RETIRO',estado,monto:50000,fecha:'2026-11-01T14:32:00Z',solicitud_id:378405}];
+  let probados=0;
+  for(const estado of ['PENDIENTE','EN_PROCESO','ACREDITADA','PAGADA','RECHAZADA','CANCELADA','ERROR'])for(const a of temas)for(const b of temas)for(const curso of ['','carga nº 378404','retiro nº 378405','cambio_clave nº 1']){
+    h.ctx.__r={tema:b,camino:[a,b],rows:filas(estado),curso};
+    const t=vm.runInContext('guiaTextoPersona(__r.tema)+guiaResumenPersona(__r.tema,__r.camino,__r.rows,__r.curso)',h.ctx);
+    assert.ok(!elBotContesta(t),t);probados++;
+  }
+  assert.ok(probados>3000);
 });
 test('pedí y no me pagaron: un retiro parcial dice cuánto se pagó y cuánto falta',async()=>{
   const h=abierto({rows:[{tipo:'RETIRO',estado:'EN_PROCESO',monto:50000,monto_a_pagar:50000,pagado:20000,fecha:new Date().toISOString()}]});
@@ -487,7 +554,7 @@ test('ficha de carga: todo en el chat, sale por la misma función que la pantall
   assert.equal(h.vueltas.length,1);
   for(const dato of ['$5.000','alias.demo','Titular Demo','Neo Test','#378404'])assert.ok(h.vueltas[0].includes(dato),dato);
   assert.ok(h.opciones().some(o=>o.includes('Subir el comprobante')));
-  assert.ok(h.dijo('Mandá el comprobante para que un operador revise la carga.'));
+  assert.ok(h.dijo('Mandá el comprobante para que tu cajero revise la carga.'));
   assert.ok(!h.del('guide').some(t=>t.includes('Apenas la veamos')),'el ticket ya lo dice: no se repite');
   assert.deepEqual(h.navigation,[],'no lo saca del chat');
 });
@@ -537,7 +604,7 @@ test('al abrir el chat se revisa la cuenta: sin validar, menú corto y nada de c
   const h=abierto({rpc:s.rpc,ingreso:(u,tel)=>{Object.assign(h.ctx.state,{usuario:u,telefono:tel,nivelAcceso:'OK'});return {acceso:true};}});   // el teléfono dice OK; el servidor, que no
   await tic();
   assert.equal(h.rpcCalls[0].name,'landing_portal_resolver_vinculo','se pregunta al abrir, antes de elegir nada');
-  assert.deepEqual(h.opciones(),['✅ Validar mi cuenta','🆕 Soy nuevo','🔑 No me acuerdo el usuario','👤 Hablar con una persona']);
+  assert.deepEqual(h.opciones(),['✅ Validar mi cuenta','🆕 Soy nuevo','🔑 No me acuerdo el usuario','👤 Hablar con mi cajero']);
   assert.ok(h.dijo('Tu cuenta todavía no está validada'));
   assert.equal(h.ctx.state.nivelAcceso,'SOPORTE');
   // Valida desde el menú y le aparece el menú entero.
@@ -672,7 +739,7 @@ test('no me acuerdo el usuario: sin cuenta confirmada no se lo dice ni repite lo
 test('sin validar y con sus datos ya en manos de una persona: no se los vuelve a pedir',async()=>{
   const h=abierto({state:{usuario:'juan',_altaSoporteEnviado:true},rpc:resolver('NO_REGISTRADO','')});
   await new Promise(r=>setTimeout(r,5));
-  assert.ok(h.dijo('Una persona ya tiene tus datos'));
+  assert.ok(h.dijo('Tu cajero ya tiene tus datos'));
   assert.deepEqual(h.opciones(),[]);
   assert.ok(!h.elements.get('guiaTelefono'));
 });
@@ -689,7 +756,7 @@ test('monto mal: pide el número, le avisa al operador y JAMÁS crea otra solici
 test('transferí a otra cuenta: comprobante sin vueltas, con el titular real si puede operar',async()=>{
   const h=abierto();
   await h.tocar('Una carga');await h.tocar('Le transferí a otra cuenta');
-  assert.ok(h.dijo('mandá el comprobante para que un operador revise la carga'));
+  assert.ok(h.dijo('mandá el comprobante para que tu cajero revise la carga'));
   assert.ok(h.dijo('Titular Demo'));assert.ok(h.elements.get('guiaArchivo'));
   await h.tocar('No lo tengo ahora');
   assert.match(h.sent[0].text,/sin el comprobante a mano/);
@@ -711,7 +778,31 @@ test('comprobante: un fallo no pierde el archivo; al salir llega con su imagen',
   assert.match(h.elements.get('guiaError').textContent,/sigue acá/);assert.equal(h.elements.get('guiaArchivo').files[0],archivo);
   falla=false;await h.ctx.guiaEnviarComprobante();
   assert.deepEqual(h.sent,[{text:'Comprobante de mi transferencia · pedido 378404.',img:'https://example.test/c.png',pedido:378404}],'queda atado a esa carga');
-  assert.ok(h.dijo('ya lo tiene el operador'));
+  assert.equal(h.rpcCalls.at(-1).name,'landing_portal_adjuntar_comprobante_v1');
+  assert.equal(h.rpcCalls.at(-1).args.p_solicitud_id,378404);
+  assert.ok(h.dijo('ya lo tiene tu cajero'));
+});
+test('comprobante: si PostgREST devuelve PGRST202 (schema cache), el envío sigue por el chat; un error real sí frena',async()=>{
+  let modo='pgrst202';
+  const h=abierto({
+    rows:[CARGA_PENDIENTE],
+    rpc:async name=>name==='landing_portal_adjuntar_comprobante_v1'
+      ? (modo==='pgrst202'
+          ? {error:{code:'PGRST202',message:'Could not find the function public.landing_portal_adjuntar_comprobante_v1(p_comprobante_url, p_public_code, p_solicitud_id, p_usuario) in the schema cache'}}
+          : {error:{code:'P0001',message:'SOLICITUD_NO_EXISTE'}})
+      : {data:{ok:true,chat_id:7,chat_token:'tok'}}
+  });
+  await h.tocar('Una carga');await h.tocar('Transferí y no me apareció');
+  h.elements.get('guiaArchivo').files=[{type:'image/png',size:10}];
+  await h.ctx.guiaEnviarComprobante();
+  assert.equal(h.sent.length,1,'entrega el comprobante por chat aunque falte la RPC auxiliar');
+  assert.ok(h.dijo('ya lo tiene tu cajero'));
+  modo='real';
+  h.ctx.guiaFichaComprobante(378404);
+  h.elements.get('guiaArchivo').files=[{type:'image/png',size:10}];
+  await h.ctx.guiaEnviarComprobante();
+  assert.equal(h.sent.length,1,'un error real no sigue ni da por enviado el comprobante');
+  assert.match(h.elements.get('guiaError').textContent,/No pude asociar el comprobante/);
 });
 
 test('los botones de las fichas vuelven aunque haya una solicitud pendiente',async()=>{
@@ -801,7 +892,7 @@ test('con una conversación abierta, lo corto llega siempre',async()=>{
 test('una consulta escrita completa le llega a una persona y se le confirma',async()=>{
   const h=abierto();const input=h.elements.get('freeInput');
   input.value='no me deja jugar en la ruleta desde ayer';await h.ctx.sendFreeMessage();
-  assert.equal(h.sent.length,1);assert.equal(input.value,'');assert.ok(h.dijo('ya le llegó a una persona'));
+  assert.equal(h.sent.length,1);assert.equal(input.value,'');assert.ok(h.dijo('ya le llegó a tu cajero'));
 });
 test('otra cosa: lo primero que escriba va a una persona aunque sea corto',async()=>{
   const h=abierto();const input=h.elements.get('freeInput');
@@ -929,10 +1020,10 @@ test('autoría distingue automático, persona, sistema y usuario incluso con nom
 // ── El envío de verdad ───────────────────────────────────────────────────────
 test('de punta a punta con el envío real: pedir una persona llega al canal de chat',async()=>{
   const h=abierto({realSender:true,rpc:async name=>({data:name==='landing_chat_abrir_v3'?{ok:true,chat_id:7,chat_token:'tok'}:[{ok:true,mensaje_id:101}]})});
-  await h.tocar('Hablar con una persona');
+  await h.tocar('Hablar con mi cajero');
   assert.deepEqual(h.rpcCalls.map(x=>x.name),['landing_portal_resolver_vinculo','landing_chat_abrir_v3','landing_enviar_mensaje_v2'],'primero la revisión de la cuenta, al abrir el chat');
-  assert.equal(h.rpcCalls[2].args.p_mensaje,'Pido hablar con una persona.\nTema: una consulta.');
-  assert.ok(h.dijo('Te paso con un operador'));
+  assert.equal(h.rpcCalls[2].args.p_mensaje,'Pido hablar con mi cajero.\nTema: una consulta.');
+  assert.ok(h.dijo('Te paso con tu cajero'));
 });
 test('resultado lógico ok:false y respuesta vacía no se confunden con éxito ni disparan fallback',async()=>{
   for(const data of [{ok:false,error:'rechazado'},null]){

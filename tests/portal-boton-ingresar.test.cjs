@@ -115,6 +115,7 @@ function ingresar(veredicto, extra){
   };
   vm.createContext(ctx);
   vm.runInContext(PORTAL.match(/const VINCULO_OPERA=.*/)[0] + '\n' + PORTAL.match(/const VINCULO_NO_OPERA=.*/)[0], ctx);
+  vm.runInContext(sacar('function _esRpcInexistente('), ctx);
   vm.runInContext(sacar('function despuesDeValidar('), ctx);
   vm.runInContext(sacar('function despuesPendiente('), ctx);
   vm.runInContext(sacar('async function confirmarIngresoValidado('), ctx);
@@ -147,4 +148,26 @@ test('si venía a cargar cuando le faltaba validar, Ingresar lo lleva a la carga
   assert.equal(c.hechos.home, 0);
   assert.equal(c.hechos.corrio[0].name, 'carga', 'y sigue con la carga');
   assert.equal(c.storage.has('bet300_despues_validar'), false);
+});
+
+test('si PostgREST devuelve PGRST202 de schema cache, confirmarIngresoValidado cae al respaldo legacy', async () => {
+  const c = ingresar('ACCESO');
+  const rpcs = [];
+  c.ctx.rpc = async (fn) => {
+    rpcs.push(fn);
+    if (fn === 'landing_portal_ingreso_v1') {
+      return {
+        data: null,
+        error: {
+          code: 'PGRST202',
+          message: 'Could not find the function public.landing_portal_ingreso_v1(p_origen, p_pc_codigo, p_telefono, p_usuario) in the schema cache'
+        }
+      };
+    }
+    return { data: { verdict: 'ACCESO', mensaje: 'ok' }, error: null };
+  };
+  await c.ctx.confirmarIngresoValidado('joelgoat', '1158956858');
+  assert.deepEqual(rpcs, ['landing_portal_ingreso_v1', 'landing_portal_resolver_vinculo']);
+  assert.equal(c.ctx.state.nivelAcceso, 'OK');
+  assert.equal(c.hechos.home, 1);
 });

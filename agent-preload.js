@@ -1365,7 +1365,82 @@ async function _iniciarSesionInterno(usuario, clave) {
   return { ok: false, message: 'No se pudo iniciar sesión. Verificá usuario y contraseña.' };
 }
 
+// Lee el WhatsApp que la oficina publica en Agentes > Funcionalidades y permisos: es el numero
+// que despues ve el jugador en el Portal. Solo mira la pantalla, no manda ningun formulario.
+function _wsInput(doc) {
+  var sels = [
+    '#Form_WhatsappContact input[data-parsley-validate-whatsapp-phone]',
+    '#Form_WhatsappContact input[autocomplete="phone"]',
+    'input[data-parsley-validate-whatsapp-phone]',
+    '#Form_WhatsappContact input[type="text"]'
+  ];
+  for (var i = 0; i < sels.length; i++) {
+    var el = doc.querySelector(sels[i]);
+    if (el) return el;
+  }
+  return null;
+}
+
+// El checkbox "Permite que tus jugadores te contacten por Whatsapp". Hay que leerlo aparte: un
+// numero cargado con el checkbox apagado no se publica, asi que el numero solo no alcanza para
+// decir que el jugador tiene como escribir.
+function _wsHabilitado(doc) {
+  var labels = Array.prototype.slice.call(doc.querySelectorAll('label'));
+  for (var i = 0; i < labels.length; i++) {
+    if (!/contacten\s+por\s+whatsapp/i.test(labels[i].textContent || '')) continue;
+    var c = labels[i].querySelector('input[type="checkbox"]');
+    if (c) return c.checked === true;
+  }
+  var uno = doc.querySelector('#Form_WhatsappContact');
+  var caja = uno ? doc.querySelector('input[type="checkbox"]') : null;
+  return caja ? caja.checked === true : null;
+}
+
+// 15/11: esto se leia con un iframe oculto y NUNCA funciono. Medido contra la pagina real: 21
+// segundos y el iframe no entrega documento, el backoffice no se deja enmarcar. La lectura va
+// derecho sobre la pantalla, igual que obtenerSaldoAgente, y a la pantalla la lleva main antes
+// de llamar (automation.js), que es donde se puede navegar sin matar la llamada (D-101).
+async function leerWhatsappOficina() {
+  // Lo mismo que en irABusquedaUsuarios: NO se puede mirar _opsEnCurso aca. El ipc lo sube
+  // para TODOS los metodos, incluido este, asi que siempre es > 0 y esto no leeria nunca.
+  // Que no se cruce con una carga o un retiro lo asegura la cola del panel, que es la misma
+  // que usa el watchdog para leer las fichas (renderer/extensions/oficina-whatsapp.js).
+  if (_loginEnCurso) {
+    return { ok: false, ocupado: true, message: 'La ventana de Agentes esta entrando a la sesion.' };
+  }
+  if (pageNeedsLogin()) {
+    return { ok: false, needsLogin: true, message: 'Hay que entrar a Agentes antes de leer el WhatsApp.' };
+  }
+  if (String(window.location.href || '').indexOf('/agents/features') < 0) {
+    // No se navega desde aca a proposito: quien navega es main, y solo cuando se le pide. Asi el
+    // repaso de fondo no le mueve la pantalla al operador por ir a mirar un numero.
+    return { ok: false, motivo: 'OTRA_PANTALLA',
+             message: 'La ventana de Agentes no esta en Funcionalidades y permisos.' };
+  }
+  try {
+    // La pantalla es React: puede estar montando. Se espera al campo, no a la carga.
+    var el = _wsInput(document);
+    var t0 = now();
+    while (!el && now() - t0 < 12000) {
+      await delay(250);
+      if (pageNeedsLogin()) {
+        return { ok: false, needsLogin: true, message: 'Agentes pidio ingresar de nuevo.' };
+      }
+      el = _wsInput(document);
+    }
+    if (!el) {
+      return { ok: false, motivo: 'NO_APARECIO',
+               message: 'La pantalla no mostro el campo de WhatsApp.' };
+    }
+    return { ok: true, numero: String(el.value || '').trim(),
+             habilitado: _wsHabilitado(document), desde: 'pantalla' };
+  } catch (e) {
+    return { ok: false, motivo: 'ERROR', message: (e && e.message) ? e.message : String(e) };
+  }
+}
+
 const api = {
+  leerWhatsappOficina,
   buscarUsuario,
   cargarSaldo,
   retirarSaldo,

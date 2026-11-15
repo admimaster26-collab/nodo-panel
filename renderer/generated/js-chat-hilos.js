@@ -189,6 +189,15 @@
 
   window._chatCanalNuevo = {
     cargar: cargarSesiones,
+    recibir(filas, pc){
+      const target = U(pc || window.pcOperativa || '');
+      if(!target || !Array.isArray(filas)) return;
+      syncOffice();
+      if(_pc === target && !_page){
+        _sesiones = filas;
+        _ultima = Date.now();
+      }
+    },
     tickets: ticketsDelCanalNuevo,
     mensajesDe: mensajesDe,
     paginaMensajes: chatId => _mensajes.get(S(chatId)),
@@ -1326,6 +1335,9 @@
       if(!algoSeCerro) throw new Error("no encontré qué cerrar en esta consulta");
       const map=getAccepted(); delete map[U(ticket.usuario)]; localStorage.setItem(ACCEPT_KEY,JSON.stringify(map));
       window.__nodoChatCurrentTicket=null;window.__nodoChatCurrentUser="";
+      if(window.V154P) window.V154P.chatActual=null;
+      window.chatActualId=null; window.v15ChatActualId=null;
+      try{ chatActualId=null; }catch(_e){}
       document.body.classList.remove("nodo-chat-open");
       if(typeof cargarSolicitudesPortal==="function")await cargarSolicitudesPortal(true);
       window.__wq2ActiveTab="espera";
@@ -1456,6 +1468,10 @@
   document.addEventListener("keydown",function(ev){
     if(ev.key==="Escape"&&document.body.classList.contains("nodo-chat-open")){
       ev.preventDefault();
+      window.__nodoChatCurrentTicket=null;window.__nodoChatCurrentUser="";
+      if(window.V154P) window.V154P.chatActual=null;
+      window.chatActualId=null; window.v15ChatActualId=null;
+      try{ chatActualId=null; }catch(_e){}
       document.body.classList.remove("nodo-chat-open");
       renderChatListStep2Final();
     }
@@ -1921,10 +1937,14 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
     const cbu = String(sol.CBU || sol.CVU || sol.CBU_ALIAS || sol.ALIAS_CBU || '').trim();
     const billeteraDeclarada = String(sol.BILLETERA_NOMBRE || sol.billetera || sol.DESTINO || '').trim();
 
-    // Obtener comprobante: de la solicitud o del último mensaje reciente con foto del chat
+    // Obtener comprobante: de la solicitud o del último mensaje reciente con foto del chat. SÓLO en cargas:
+    // el retiro no usa comprobante para nada (pide la cuenta donde cobra; al usuario ya se lo conoce).
+    // Antes, en un retiro se tomaba la última foto que el jugador mandó por el chat como "comprobante" y
+    // hasta se la analizaba (Juan, 8/11). Ver docs/FLUJOS.md.
+    const esCarga = tipo === 'CARGA';
     const solMeta = (sol.metadata && typeof sol.metadata === 'object') ? sol.metadata : ((sol.METADATA && typeof sol.METADATA === 'object') ? sol.METADATA : {});
-    let comprobanteUrl = sol.COMPROBANTE_URL || sol.comprobante_url || sol.IMAGEN_URL || sol.imagen_url || solMeta.comprobante_url || solMeta.imagen_url || null;
-    if(!comprobanteUrl && window.__nodoChatCurrentTicket && Array.isArray(window.__nodoChatCurrentTicket.thread)){
+    let comprobanteUrl = esCarga ? (sol.COMPROBANTE_URL || sol.comprobante_url || sol.IMAGEN_URL || sol.imagen_url || solMeta.comprobante_url || solMeta.imagen_url || null) : null;
+    if(esCarga && !comprobanteUrl && window.__nodoChatCurrentTicket && Array.isArray(window.__nodoChatCurrentTicket.thread)){
       const hace2hs = Date.now() - (2 * 3600 * 1000);
       const userImgs = window.__nodoChatCurrentTicket.thread.filter(m => {
         const rol = String(m.origen || m.remitente || m.role || '').toUpperCase();
@@ -1936,8 +1956,8 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
       }
     }
 
-    // Análisis de comprobante (en memoria o dispara consulta)
-    let ocr = sol._simOcr || null;
+    // Análisis de comprobante (en memoria o dispara consulta). Sólo cargas.
+    let ocr = esCarga ? (sol._simOcr || null) : null;
     if(!ocr && comprobanteUrl){
       ocr = ocrCache.get(comprobanteUrl) || null;
       if(!ocr){
@@ -2023,26 +2043,58 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
     }
     if(!fechaFormatted) fechaFormatted = 'Reciente';
 
-    let html = `
-      <div class="nodo-sol-pill" style="border:1px solid ${colorBorder}">
-        <div class="nodo-sol-tag-header">
-          <span>${tipo === 'RETIRO' ? '⬇️ SOLICITUD RETIRO' : '💳 SOLICITUD CARGA'} #${esc(solId)}</span>
-          <div style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
-            ${sol._isDemo ? `
+    // Los datos de los botones viajan como JSON escapado, no pegados entre comillas: un titular con
+    // apóstrofo ("D'Angelo") rompía el onclick y el botón no hacía nada (docs/BOTONES.md, regla 2).
+    const jsArg = function(v){ return esc(JSON.stringify(String(v == null ? '' : v))); };
+    const clicToggle   = 'window.nodoToggleSolBanner(' + jsArg(contenedorId) + ',' + jsArg(usuarioActual) + ')';
+    const clicAprobar  = 'window.nodoAprobarSolDesdeChat(' + jsArg(solId) + ', ' + (Number(monto) || 0) + ', ' + jsArg(titular) + ')';
+    const clicRechazar = 'window.nodoRechazarSolDesdeChat(' + jsArg(solId) + ')';
+    const demoBotones = sol._isDemo ? `
               <div class="nodo-dev-sol-tester">
                 <button class="mini-btn green" type="button" onclick="window.nodoDemoPreview('verde')" title="Verde: OK">🟢</button>
                 <button class="mini-btn yellow" type="button" onclick="window.nodoDemoPreview('ambar')" title="Ámbar: Horario">🟡</button>
                 <button class="mini-btn red" type="button" onclick="window.nodoDemoPreview('rojo')" title="Rojo: Duplicado">🔴</button>
                 <button class="mini-btn gray" type="button" onclick="window.nodoDemoPreview('off')" title="Cerrar demo">✕</button>
-              </div>
-            ` : ''}
-            <button class="nodo-sol-btn-toggle" type="button" onclick="window.nodoToggleSolBanner('${contenedorId}','${esc(usuarioActual)}')">
-              ${desplegado ? '▲ Ocultar detalle' : '▼ Ver detalle'}
-            </button>
+              </div>` : '';
+
+    // PLEGADA: lo justo para decidir sin ocupar medio chat (Juan, 8/11: "Ver detalle" y "Ocultar detalle"
+    // se veían iguales). Monto, estado y los dos botones; una alerta roja se ve igual en el estado y en
+    // "Forzar". Desplegada: la tarjeta completa, con destino, titular, alertas y comprobante.
+    if(!desplegado){
+      container.innerHTML = `
+      <div class="nodo-sol-pill nodo-sol-compacta" style="border:1px solid ${colorBorder}">
+        <div class="nodo-sol-tag-header">
+          <span>${tipo === 'RETIRO' ? '⬇️ Retiro' : '💳 Carga'} #${esc(solId)} · ${esc(fechaFormatted)}</span>
+          <div style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
+            ${demoBotones}
+            <button class="nodo-sol-btn-toggle" type="button" onclick="${clicToggle}">▼ Ver detalle</button>
+          </div>
+        </div>
+        <div class="nodo-sol-compacta-fila">
+          <div class="nodo-sol-compacta-datos" onclick="${clicToggle}" title="${esc(resumenEstado)}">
+            <span class="nodo-sol-compacta-monto" style="color:${colorMonto}">${fmtMoney(monto)}</span>
+            <span class="nodo-sol-compacta-estado" style="color:${colorEstado}">${esc(String(resumenEstado).split(' · ')[0])}</span>
+          </div>
+          <div class="nodo-sol-compacta-acciones">
+            <button class="nodo-sol-btn-rechazar" type="button" title="Rechazar" onclick="${clicRechazar}">✕</button>
+            <button class="nodo-sol-btn-aprobar" type="button" onclick="${clicAprobar}" ${prev ? 'style="border-color:#ef4444;background:#b91c1c"' : ''}>${prev ? '⚠ Forzar' : '⚡ Aprobar'}</button>
+          </div>
+        </div>
+      </div>`;
+      return;
+    }
+
+    let html = `
+      <div class="nodo-sol-pill" style="border:1px solid ${colorBorder}">
+        <div class="nodo-sol-tag-header">
+          <span>${tipo === 'RETIRO' ? '⬇️ SOLICITUD RETIRO' : '💳 SOLICITUD CARGA'} #${esc(solId)}</span>
+          <div style="display:flex;align-items:center;gap:6px" onclick="event.stopPropagation()">
+            ${demoBotones}
+            <button class="nodo-sol-btn-toggle" type="button" onclick="${clicToggle}">▲ Ocultar detalle</button>
           </div>
         </div>
 
-        <div class="nodo-sol-hero" onclick="window.nodoToggleSolBanner('${contenedorId}','${esc(usuarioActual)}')">
+        <div class="nodo-sol-hero" onclick="${clicToggle}">
           <div class="nodo-sol-hero-left">
             <div class="nodo-sol-hero-icon">${iconTipo}</div>
             <div>
@@ -2069,7 +2121,7 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
               <span class="val">${esc(titular)}</span>
             </div>
           ` : ''}
-          ${cbu ? `
+          ${cbu && cbu.replace(/\s+/g, '').toLowerCase() !== String(billetera || '').replace(/\s+/g, '').toLowerCase() ? `
             <div class="nodo-sol-meta-row">
               <span class="lbl">CBU / Alias:</span>
               <span class="cbu">${esc(cbu)}</span>
@@ -2079,7 +2131,7 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
 
         ${prev ? `
           <div class="nodo-sol-alerta-roja">
-            ⛔ CUIDADO: Este usuario ya recibió una carga de ${fmtMoney(prev.monto)} hoy a las ${prev.hora} (Op #${prev.opId}).
+            ⛔ CUIDADO: Este usuario ya ${esCarga ? 'recibió una carga' : 'cobró un retiro'} de ${fmtMoney(prev.monto)} hoy a las ${prev.hora} (Op #${prev.opId}).
           </div>
         ` : ''}
 
@@ -2106,13 +2158,13 @@ Responde ÚNICAMENTE un JSON válido (sin markdown, sin bloques de código, sin 
 
         <div class="nodo-sol-actions-bar">
           <div style="font-size:11px;color:#94a3b8">
-            ${comprobanteUrl ? '📎 Comprobante adjunto' : 'Sin comprobante adjunto'}
+            ${esCarga ? (comprobanteUrl ? '📎 Comprobante adjunto' : 'Sin comprobante adjunto') : ''}
           </div>
           <div style="display:flex;gap:8px">
-            <button class="nodo-sol-btn-rechazar" type="button" onclick="window.nodoRechazarSolDesdeChat('${solId}')">
+            <button class="nodo-sol-btn-rechazar" type="button" onclick="${clicRechazar}">
               ✕ Rechazar
             </button>
-            <button class="nodo-sol-btn-aprobar" type="button" onclick="window.nodoAprobarSolDesdeChat('${solId}', ${monto}, '${esc(titular)}')" ${prev ? 'style="border-color:#ef4444;background:#b91c1c"' : ''}>
+            <button class="nodo-sol-btn-aprobar" type="button" onclick="${clicAprobar}" ${prev ? 'style="border-color:#ef4444;background:#b91c1c"' : ''}>
               ${prev ? '⚠ Forzar Aprobación' : `⚡ Aprobar (${fmtMoney(monto)})`}
             </button>
           </div>

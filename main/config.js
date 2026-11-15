@@ -8,12 +8,10 @@ function configureEnvironment({ app, rootDir, env = process.env, execPath = proc
       // NODO_ENV=p4 → lee .env.p4 ; sin NODO_ENV → lee .env.
       const envName = env.NODO_ENV ? (".env." + String(env.NODO_ENV).toLowerCase()) : ".env";
       // PRODUCCIÓN: en la app empaquetada rootDir está dentro del .asar (no se puede dejar un .env ahí).
-      // Prioridad: (1) carpeta de datos de usuario de Windows (app.getPath('userData'), típicamente
-      // %APPDATA%\nodo-operativo\) — NUNCA la toca el instalador/desinstalador de NSIS, sobrevive
-      // a cada actualización. (2) junto al ejecutable instalado (compatibilidad con instalaciones
-      // viejas que todavía tienen el .env ahí — pero OJO, ese se pierde en cada update porque el
-      // desinstalador de la versión previa borra toda la carpeta de instalación). (3) rootDir (dev).
+      // Las credenciales por PC viven fuera del repo, en %LOCALAPPDATA%\NODO.
+      // Como respaldo se busca en userData, junto al ejecutable y por último en rootDir (dev).
       const dirs = [];
+      if (env.LOCALAPPDATA) dirs.push(path.join(env.LOCALAPPDATA, 'NODO'));
       try { dirs.push(app.getPath('userData')); } catch (_e) {}
       try { dirs.push(path.dirname(execPath)); } catch (_e) {}
       dirs.push(rootDir);

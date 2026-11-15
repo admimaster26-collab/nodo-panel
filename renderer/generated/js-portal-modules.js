@@ -320,8 +320,21 @@ const api = {};
     const health = function(){ try{ return root.NodoSalud?.begin('RETIROS'); }catch(_e){ return null; } };
     const record = function(h,stage,state,code,durationMs){ try{ h?.record(stage,state,code,durationMs); }catch(_e){} };
 
+    // En NODO, `supabaseClient` y `operador` son `const`/`let` del script principal: se ven por su nombre
+    // desde cualquier script, pero NO son window.supabaseClient ni window.operador. Este módulo sólo los
+    // buscaba en window, no los encontraba, no consultaba nunca al servidor y mostraba "No se pudo comprobar
+    // la cuenta de cobro… ¿Continuar igual?", que deja pagar sin validar (Juan, 8/11, primer retiro real).
+    // Las pruebas pasaban porque le daban la conexión a mano.
+    const globalPorNombre = function(nombre){
+      try{
+        if(nombre === 'supabaseClient' && typeof supabaseClient !== 'undefined') return supabaseClient; // eslint-disable-line no-undef
+        if(nombre === 'operador' && typeof operador !== 'undefined') return operador; // eslint-disable-line no-undef
+      }catch(_e){}
+      return null;
+    };
+
     const operator = function(){
-      const o = deps.operador || root.operador || {};
+      const o = deps.operador || root.operador || globalPorNombre('operador') || {};
       return String(o.usuario || o.nombre || 'panel').slice(0,100);
     };
 
@@ -330,7 +343,7 @@ const api = {};
     };
 
     const rpc = async function(name, params){
-      const client = deps.supabaseClient || root.supabaseClient || deps.window?.supabaseClient;
+      const client = deps.supabaseClient || root.supabaseClient || deps.window?.supabaseClient || globalPorNombre('supabaseClient');
       if(client && typeof client.rpc === 'function'){
         try{ return await client.rpc(name, params); }
         catch(err){ return { error: { code: err?.code || 'NETWORK', message: String(err?.message || err) } }; }
@@ -366,16 +379,54 @@ const api = {};
       return overlay;
     }
 
-    function validationOverlay(dest, tit, info){
+    // Avisos sobre el DNI y la edad (los arma el servidor). NADA de esto traba al jugador: es información
+    // para que el operador revise antes de validar. Los textos no acusan: un DNI raro o una edad que no
+    // coincide pueden ser de alguien legítimo (Juan, 8/11: "que no se pueda dar un falso positivo que
+    // genere problemas entre usuarios y operadores"). El control de identidad de verdad es el CUIT de abajo.
+    const DNI_AVISOS = {
+      NUMERO_REPETIDO:  { rojo:true,  t:function(){ return 'El DNI tiene todos los números iguales. Existe, pero es raro: confirmá con el CUIT.'; } },
+      NUMERO_ESCALERA:  { rojo:true,  t:function(){ return 'El DNI es una escalera de números (1234…). Existe, pero es raro: confirmá con el CUIT.'; } },
+      NUMERO_RESERVADO: { rojo:false, t:function(){ return 'Ese número no es de un DNI argentino: es el que se les da a extranjeros sin DNI. Por el número no se sabe la edad.'; } },
+      NUMERO_BEBE:      { rojo:true,  t:function(){ return 'Ese número es de los que se les dan a bebés desde 2023: puede estar mal escrito.'; } },
+      EXTRANJERO:       { rojo:false, t:function(){ return 'DNI de extranjero: por el número no se sabe la edad.'; } },
+      EDAD_COINCIDE:    { rojo:false, t:function(d){ return 'Dijo que tiene ' + d.declarada + ' años; por el número del DNI tendría entre ' + d.min + ' y ' + d.max + '.'; } },
+      EDAD_NO_COINCIDE: { rojo:true,  t:function(d){ return 'Dijo que tiene ' + d.declarada + ' años, y un DNI con ese número suele ser de alguien de entre ' + d.min + ' y ' + d.max + '. Puede pasar si sacó el DNI de grande.'; } },
+      EDAD_CAMBIO:      { rojo:true,  t:function(d){ return 'Antes dijo que tenía ' + d.previa + ' años (y no lo dejamos retirar). Ahora dice ' + d.declarada + '.'; } },
+      YA_RECHAZADO:     { rojo:true,  t:function(){ return 'Este DNI ya se rechazó antes para este jugador porque no coincidía con el titular.'; } }
+    };
+    function dniAvisos(data){
+      const lista = Array.isArray(data && data.alertas) ? data.alertas
+        : String((data && data.alerta_edad) || '').split(',').filter(Boolean);
+      const codigos = lista.filter(function(c){ return DNI_AVISOS[c]; });
+      if(!codigos.length) return '';
+      const d = { declarada: Number(data.edad_declarada) || 0, previa: Number(data.edad_previa) || 0,
+                  min: Number(data.edad_min) || 0, max: Number(data.edad_max) || 0 };
+      const rojo = codigos.some(function(c){ return DNI_AVISOS[c].rojo; });
+      const t = rojo ? { c:'#ff7b72', bg:'rgba(248,81,73,.12)', titulo:'🚨 Revisá antes de validar' }
+                     : { c:'#e3b341', bg:'rgba(227,179,65,.11)', titulo:'⚠️ Revisá la edad' };
+      return '<div style="border:1px solid ' + t.c + ';background:' + t.bg + ';border-radius:9px;padding:10px;margin:0 0 12px">'
+        + '<div style="font-weight:800;color:' + t.c + ';margin-bottom:4px">' + t.titulo + '</div>'
+        + codigos.map(function(c){ return '<div style="margin-bottom:3px">• ' + esc(DNI_AVISOS[c].t(d)) + '</div>'; }).join('')
+        + '<div style="margin-top:4px">Si hace falta, pedile una foto del DNI por el chat.</div>'
+        + '<label style="display:flex;gap:8px;align-items:center;margin-top:8px;font-weight:700;cursor:pointer">'
+        + '<input id="nodoCuentaEdadOk" type="checkbox" style="width:16px;height:16px"> Lo revisé: es mayor de 18 años</label>'
+        + '</div>';
+    }
+
+    function validationOverlay(dest, tit, info, data){
       return '<h2 id="nodoCuentaTitulo" style="font-size:17px;margin:0 0 6px">Verificación de cuenta · una sola vez</h2>'
-        + '<p>En la pantalla de transferencia de Mercado Pago / banco, confirmá el CUIT/CUIL del titular. El DNI declarado por el jugador permanece oculto.</p>'
+        + dniAvisos(data)
+        + '<p>En la pantalla de transferencia de Mercado Pago / banco, fijate el DNI del titular de la cuenta y escribilo abajo. El DNI que declaró el jugador no se muestra.</p>'
         + '<div style="background:#161b22;border:1px solid #30363d;border-radius:9px;padding:10px;margin:12px 0">'
         + '<div>Solicitud <b>#' + esc(info.id || '') + '</b> · Jugador <b>' + esc(info.usuario || '') + '</b></div>'
-        + '<div>Cuenta: <b style="font-family:monospace">' + esc(dest || 'sin dato') + '</b></div>'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">Cuenta: <b style="font-family:monospace;user-select:all">' + esc(dest || 'sin dato') + '</b>'
+        + (dest ? '<button id="nodoCuentaCopiar" type="button" title="Copiar la cuenta para pegarla en Mercado Pago" style="border:1px solid #3b4654;border-radius:6px;padding:2px 8px;background:#0d1117;color:#7cc4ff;font-size:12px;font-weight:700;cursor:pointer">📋 Copiar</button>' : '')
+        + '</div>'
         + '<div>Titular declarado: <b>' + esc(tit || 'sin dato') + '</b></div>'
         + '</div>'
-        + '<label for="nodoCuentaDni" style="display:block;margin-bottom:4px">CUIT/CUIL del titular según Mercado Pago</label>'
-        + '<input id="nodoCuentaDni" inputmode="numeric" autocomplete="off" placeholder="8 dígitos o CUIT/CUIL del titular" style="width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #3b4654;background:#0b0f14;color:#fff;font-size:15px">'
+        // Juan, 8/11: "poné DNI, no usamos el CUIT ni el CUIL".
+        + '<label for="nodoCuentaDni" style="display:block;margin-bottom:4px">DNI del titular según Mercado Pago</label>'
+        + '<input id="nodoCuentaDni" inputmode="numeric" autocomplete="off" placeholder="DNI del titular, sin puntos" style="width:100%;box-sizing:border-box;padding:10px;border-radius:8px;border:1px solid #3b4654;background:#0b0f14;color:#fff;font-size:15px">'
         + '<div id="nodoCuentaMsg" role="status" aria-live="polite" style="min-height:22px;margin:8px 0;font-size:13px"></div>'
         + '<div style="display:flex;gap:8px;margin-top:8px">'
         + '<button id="nodoCuentaValidar" type="button" style="flex:1;border:0;border-radius:8px;padding:10px;background:#16803c;color:#fff;font-weight:800;cursor:pointer">Validar y seguir</button>'
@@ -411,20 +462,15 @@ const api = {};
       const res = await rpc('panel_retiro_instrumento', { p_secret: secret, p_solicitud_id: Number(solicitudId) });
       const durationMs = Math.max(0, now() - started);
 
-      if(res && res.error){
-        const code = res.error.code;
-        if(code === 'PGRST202'){
-          // La base todavía no tiene la función (oficina en versión anterior): no frena
-          return { seguir: true, estado: 'LEGACY' };
-        }
-        record(h, 'DATA', 'ERROR', 'CUENTA_COBRO_NO_LEIDA', durationMs);
-        const confirmFn = deps.window?.confirm || root.confirm || (() => true);
-        const continuar = confirmFn('No se pudo comprobar la cuenta de cobro en el servidor.\n\n¿Continuar con el retiro igual?');
-        if(!continuar) return { seguir: false, estado: 'ERROR' };
-        return { seguir: true, estado: 'FORZADO' };
-      }
-
+      // Acá sólo llegan retiros que el Portal marcó para validar el DNI (los tres llamadores lo miran antes).
+      // Si no se puede comprobar la cuenta, no se paga. Antes un error ofrecía "¿Continuar igual?" y la falta
+      // de la función dejaba seguir: las dos cosas permitían pagar sin validar (9/11).
       const data = (res && res.data) || {};
+      if((res && res.error) || data.ok === false){
+        record(h, 'DATA', 'ERROR', 'CUENTA_COBRO_NO_LEIDA', durationMs);
+        toast('No se pudo comprobar la cuenta de cobro. No se movió saldo. Probá de nuevo en un momento.', 'red');
+        return { seguir: false, estado: 'ERROR' };
+      }
       const estado = data.estado || 'SIN_DECLARAR';
       if(estado === 'VALIDADO' || estado === 'SIN_DECLARAR'){
         record(h, 'EFFECT', 'OK', 'RETIRO_ESTADO_' + estado, durationMs);
@@ -435,7 +481,7 @@ const api = {};
       const titular = data.titular || info.titular || '';
 
       return await new Promise(function(resolve){
-        openOverlay(validationOverlay(destino, titular, info));
+        openOverlay(validationOverlay(destino, titular, info, data));
         record(h, 'RENDER', 'OK', 'RETIRO_VALIDACION_MODAL_VISIBLE', 0);
 
         const $ = function(id){ return deps.document.getElementById(id); };
@@ -455,6 +501,13 @@ const api = {};
 
         const input = $('nodoCuentaDni');
         try{ input?.focus(); }catch(_e){}
+        // Sólo el DNI: hasta 8 números. Si pegan un CUIT/CUIL completo (11 números), queda el DNI del medio;
+        // cortarlo a los primeros 8 daba un número equivocado y le gastaba un intento al jugador.
+        const soloDni = function(v){
+          const d = String(v == null ? '' : v).replace(/\D/g, '');
+          return d.length === 11 ? d.slice(2, 10) : d.slice(0, 8);
+        };
+        if(input) input.oninput = function(){ const v = soloDni(input.value); if(v !== input.value) input.value = v; };
 
         const btnCancelar = $('nodoCuentaCancelar');
         if(btnCancelar){
@@ -464,13 +517,43 @@ const api = {};
         }
 
         const btnValidar = $('nodoCuentaValidar');
+        // Con aviso de edad, no se valida sin tildar que se confirmó que es mayor. El botón se ve atenuado
+        // pero NO se deshabilita: un botón deshabilitado no recibe el clic, así que el aviso de "tildá la
+        // casilla" nunca aparecía y el operador apretaba sin que pasara nada (Juan, 8/11: "no permite").
+        const edadOk = $('nodoCuentaEdadOk');
+        const pintarValidar = function(){
+          if(!btnValidar || !btnValidar.style) return;
+          const falta = !!(edadOk && !edadOk.checked);
+          btnValidar.style.opacity = falta ? '.45' : '';
+        };
+        if(edadOk && btnValidar){
+          pintarValidar();
+          edadOk.onchange = function(){ pintarValidar(); message('', ''); };
+        }
+        // Copiar la cuenta para pegarla en Mercado Pago y ver el CUIT del titular. La ventana tapa todo y
+        // no se podía volver a la tarjeta a copiarla (Juan, 8/11).
+        const btnCopiar = $('nodoCuentaCopiar');
+        if(btnCopiar){
+          btnCopiar.onclick = async function(){
+            let ok = false;
+            try{
+              if(typeof root.nodoCopiar === 'function') ok = await root.nodoCopiar(destino, { etiqueta: 'Cuenta copiada' });
+              else if(root.navigator && root.navigator.clipboard){ await root.navigator.clipboard.writeText(String(destino || '')); ok = true; }
+            }catch(_e){ ok = false; }
+            message(ok ? 'Cuenta copiada: pegala en Mercado Pago para ver el CUIT del titular.' : 'No se pudo copiar. Seleccioná la cuenta con el mouse y copiala.', ok ? '#7ee787' : '#fbbf24');
+          };
+        }
         if(btnValidar){
           btnValidar.onclick = async function(){
             if(busy) return;
-            const rawDni = String(input ? input.value : '').trim();
-            const cleanDni = rawDni.replace(/\D/g, '');
-            if(!cleanDni){
-              message('Ingresá el DNI o CUIT/CUIL del titular.', '#fbbf24');
+            if(edadOk && !edadOk.checked){
+              message('Primero tildá "Lo revisé: es mayor de 18 años" (arriba, en el recuadro).', '#fbbf24');
+              try{ edadOk.focus(); }catch(_e){}
+              return;
+            }
+            const cleanDni = soloDni(input ? input.value : '');
+            if(cleanDni.length < 7){
+              message('Escribí el DNI del titular (7 u 8 números, sin puntos).', '#fbbf24');
               return;
             }
             busy = true;
@@ -496,6 +579,13 @@ const api = {};
             if(vData.ok === true && vData.estado === 'VALIDADO'){
               toast('Cuenta de cobro validada. El retiro puede continuar.', 'green');
               done({ seguir: true, estado: 'VALIDADO' });
+              return;
+            }
+
+            if(vData.motivo === 'CUIT_INVALIDO'){
+              // Salida siempre disponible: con los 8 números del DNI no hay dígito verificador que pueda trabar.
+              message('Ese número no es válido. Revisá el DNI del titular. No se gastó ningún intento.', '#fbbf24');
+              try{ input?.select(); }catch(_e){}
               return;
             }
 
@@ -1016,7 +1106,7 @@ async function cargarSolicitudesPortal(silencioso=false){
                 const _capRes = await _pApi.rpc('nodo_beta_capacidades_v1', { p_pc_codigo: _pcUp, p_activate: false });
                 const _capData = _capRes && _capRes.data;
                 const _caps = (_capData && Array.isArray(_capData.capabilities)) ? _capData.capabilities : [];
-                deps.V154P._bandejaCapCache[_pcUp] = !!(_capData && _capData.ok === true && _capData.enabled === true && _caps.includes('bandeja.queue.v1'));
+                deps.V154P._bandejaCapCache[_pcUp] = !!(_capData && _capData.ok === true && _capData.contract === 'nodo.beta.v1' && String(_capData.scope?.pc_codigo || '').trim().toUpperCase() === _pcUp && _caps.includes('bandeja.queue.v1'));
               }
               _useBetaBandeja = deps.V154P._bandejaCapCache[_pcUp] === true;
             }
@@ -1253,18 +1343,21 @@ const api = {};
     const titular = String(s.TITULAR||s.NOMBRE_COMPLETO||'').trim();
     if(!titular) return null;                                       // sin titular no inventamos nada
     const usuario = String(s.USUARIO||'').trim();
+    // En una carga el titular es el de la cuenta DESDE la que transfirió; en un retiro, el de la cuenta
+    // DONDE cobra. Antes los dos decían "desde la que transferís" (docs/FLUJOS.md).
+    const laCuenta = tipo==='RETIRO' ? 'de la cuenta donde cobrás' : 'de la cuenta desde la que transferís';
     // 1) Datos nuestros
     const propio = deps.window.esDatoPropioBilletera ? deps.window.esDatoPropioBilletera(titular) : null;
     if(propio) return { motivo:'DATO_PROPIO',
-      texto:'El titular que pusiste ("'+titular+'") es el de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular de la cuenta desde la que transferís.' };
+      texto:'El titular que pusiste ("'+titular+'") es el de NUESTRA cuenta, no el tuyo. Poné el nombre completo del titular '+laCuenta+'.' };
     // 2) Sin una sola letra → no es el nombre de una persona
     if(!/[a-záéíóúñü]/i.test(titular)) return { motivo:'SOLO_NUMEROS',
-      texto:'El titular tiene que ser un NOMBRE Y APELLIDO, no números. Escribí el nombre del titular de la cuenta desde la que transferís.' };
+      texto:'El titular tiene que ser un NOMBRE Y APELLIDO, no números. Escribí el nombre del titular '+laCuenta+'.' };
     // 3) Puso su PROPIO USUARIO como titular. Es el caso más común de "completé cualquier cosa":
     //    "usuariobet", "maria112x1". Ningún banco tiene una cuenta a nombre de un alias de casino,
     //    así que el comprobante nunca va a coincidir y el depósito no se puede cotejar.
     if(deps.window._normNombre(titular) === deps.window._normNombre(usuario)) return { motivo:'USUARIO_COMO_TITULAR',
-      texto:'Pusiste tu usuario ("'+titular+'") en vez del titular de la cuenta. Necesitamos el NOMBRE Y APELLIDO de la persona desde cuya cuenta transferís, tal como figura en el banco.' };
+      texto:'Pusiste tu usuario ("'+titular+'") en vez del titular de la cuenta. Necesitamos el NOMBRE Y APELLIDO del titular '+laCuenta+', tal como figura en el banco.' };
     // 3) Reincidencia
     if(deps.window.titularYaRechazado(usuario, titular)) return { motivo:'REINCIDENTE',
       texto:'Ya te rechazamos ese mismo titular ("'+titular+'"). Poné el nombre completo real del titular de la cuenta, o escribinos por soporte.' };
@@ -1332,6 +1425,12 @@ const api = {};
   // Esto la cierra como ACREDITADA —que es lo que pasó— y le avisa en consecuencia.
   api.v154pYaCargada = function(id){
     const s = (deps.V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
+    // Sólo cargas: un retiro no se "carga" (docs/FLUJOS.md). Cerrarlo así lo dejaba ACREDITADO y le
+    // decía al jugador "Tu carga ya está acreditada".
+    if(String((s&&(s.TIPO||s.TIPO_SOLICITUD))||'').toUpperCase()==='RETIRO'){
+      try{ deps.toast('Eso es sólo para cargas. Un retiro se aprueba o se rechaza.','yellow'); }catch(_e){}
+      return;
+    }
     const usuario = String((s&&(s.USUARIO||s.USUARIO_JUGADOR))||'').trim();
     const monto = Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0);
 
@@ -1390,7 +1489,15 @@ const api = {};
     const s = (deps.V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
     // Motivos rápidos: el usuario los VE en el portal (pantalla Estado), así que tienen que servirle.
     // El textarea arranca VACÍO (antes venía precargado "Rechazada desde panel" → todos veían ese texto inútil).
-    const _rap = [
+    // Cada tipo con SUS motivos: un retiro no tiene transferencia ni comprobante del jugador (pide la cuenta
+    // donde cobra), así que "no nos llegó tu transferencia" no tiene sentido ahí (docs/FLUJOS.md).
+    const _esRetiro = String((s&&(s.TIPO||s.TIPO_SOLICITUD))||'').toUpperCase()==='RETIRO';
+    const _rap = _esRetiro ? [
+      "Las fichas de tu usuario no alcanzan para ese monto.",
+      "El titular de la cuenta donde cobrás no coincide. Escribinos por el chat.",
+      "La cuenta de cobro (alias o CBU) no es válida. Revisala y volvé a pedir el retiro.",
+      "No pudimos procesar el retiro ahora. Escribinos por el chat y lo resolvemos."
+    ] : [
       "No nos llegó tu transferencia. Revisá el comprobante y volvé a intentar.",
       "El comprobante no coincide con el monto o la cuenta.",
       "Comprobante repetido / ya usado.",
@@ -1415,11 +1522,13 @@ const api = {};
                     : 'Si lo vuelve a mandar igual, se le rechaza solo y no te llega.')+'</div></span></label>')
       : '';
     deps.abrirModal("Rechazar solicitud #"+id,
-      // Si ya se la cargó, esto NO es un rechazo. Sale del rechazo y la cierra bien.
+      // Si ya se la cargó, esto NO es un rechazo. Sale del rechazo y la cierra bien. SÓLO en cargas: en un
+      // retiro lo cerraba como ACREDITADA y le decía al jugador "Tu carga ya está acreditada" (docs/FLUJOS.md).
+      (_esRetiro ? '' :
       '<div style="padding:8px 10px;border-radius:9px;background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.35);margin-bottom:10px;font-size:12.5px;color:#bbf7d0;display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+
       '<span>¿Ya se la cargaste por otro lado?</span>'+
       '<button type="button" class="mini-btn green" style="font-size:11.5px" onclick="cerrarModal();v154pYaCargada(\''+id+'\')">✅ Ya se la cargué</button>'+
-      '</div>'+
+      '</div>')+
       '<label>Motivo (se envía al usuario y lo ve en el portal)</label>'+
 
       '<textarea id="v154pRechObs" placeholder="Explicale al usuario por qué se rechaza (lo va a ver en su portal)"></textarea>'+
@@ -3182,10 +3291,13 @@ const api = {};
       }
     }catch(_e){}
   };
-  async function portalRenderPromo(usuario){
+  async function portalRenderPromo(usuario, tipo){
     const el = deps.document.getElementById('portalJobPromo');
     if(!el) return;
     el.innerHTML=''; el.dataset.bonoPct='0'; el.dataset.bonoMax='0'; el.dataset.promoBilleteraId=''; el.dataset.promoBilleteraNombre='';
+    // El bono de primer ingreso es de CARGAS (sólo se aplica si tipo==='CARGA'). En un retiro salía igual,
+    // con "Cargar con bono" tildado: ruido que confunde (Juan, 8/11: "es un retiro, para qué el bono ahí").
+    if(String(tipo||'CARGA').toUpperCase() !== 'CARGA') return;
     const u = String(usuario||'').trim();
     if(!u) return;
     try{
@@ -3336,7 +3448,7 @@ const api = {};
     deps.document.getElementById('portalJobObs').value = '';
     try{ deps.portalCheckDiferencia(); }catch(_e){}
     try{ portalRenderVinculo(s.USUARIO); }catch(_e){}
-    try{ portalRenderPromo(s.USUARIO); }catch(_e){}
+    try{ portalRenderPromo(s.USUARIO, tipo); }catch(_e){}
     const res = deps.document.getElementById('portalJobResultado');
     if(res) res.innerHTML = '';
     portalPoblarBilleteras(deps.document.getElementById('portalJobBilletera'), s);
@@ -5122,7 +5234,12 @@ const api = {};
     if(betaActive){
       try { r={data:await deps.window._chatCanalNuevo.cargar(),error:null}; }
       catch(e) { r={data:null,error:{message:e.message}}; }
-    }else if(!betaError) r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
+    }else if(!betaError){
+      r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
+      if(!r?.error){
+        try{ deps.window._chatCanalNuevo?.recibir?.(deps.normArr(r?.data), canal); }catch(_e){}
+      }
+    }
     if(!betaActive && !betaError && (r?.error || !deps.normArr(r?.data).length)){
       const primeraFallo=!!r?.error;
       const fb = await deps.rpc("panel_v154_plus_listar_chat_sesiones", {p_pc_codigo: canal});

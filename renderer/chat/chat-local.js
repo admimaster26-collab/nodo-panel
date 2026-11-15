@@ -333,7 +333,7 @@
   window.v15RenderChatMensajes = renderChatConversationStep2;
   window.v15CargarChatsCompacto = window.cargarChats;
   window.v15EnviarChatCompacto = window.enviarChat;
-  window.v15AbrirChatCompacto = window.abrirChat;
+  window.v15AbrirChatCompacto = async function(id){ if(typeof window.abrirChat === 'function') return window.abrirChat(id); };
   // asegurarChatsSoportePortal: usa la función real de BLQ2 (no stub)
 
   setTimeout(function(){

@@ -143,11 +143,18 @@ La migración arma las tres campañas a partir de cada "Primer ingreso" con los 
 se archivan.
 
 ### 3.2 Identidad estable
+### 3.2 Identidad estable (por oficina)
 
 `identidad = 'TEL:' || telefono_canon` (está en el 100 % de los vínculos). Todo lo de "una sola vez" se
 controla por identidad, no por texto de usuario: borrar o renombrar al usuario no lo habilita de nuevo.
 Titular y cuenta de retiro repetidos **mandan a revisión**, no bloquean solos: una familia comparte
 teléfono o cuenta.
+`identidad = pc_codigo || ':TEL:' || telefono_canon` (el teléfono está en el 100 % de los vínculos y los
+usuarios pertenecen a su oficina: no se comparten entre oficinas). Todo lo de "una sola vez" se controla por
+esa identidad de oficina + teléfono, no por texto de usuario: borrar o renombrar al usuario dentro de la
+oficina no lo habilita de nuevo, y lo que pase en otra oficina no bloquea ni mezcla nada acá.
+Titular y cuenta de retiro repetidos en la misma oficina **mandan a revisión**, no bloquean solos: una
+familia comparte teléfono o cuenta.
 
 ### 3.3 Registro de otorgamientos: sólo se agrega
 
@@ -277,6 +284,7 @@ No publica: avisa a Claude.
 1. ~~**Aplicar F0** (cerrar los dos agujeros).~~ Aplicado el 4/11.
 2. **Identidad = teléfono** para "una sola vez". Alternativa: teléfono o titular, que es más estricta y da
    más falsos positivos en familias.
+2. **Identidad = oficina + teléfono (`pc_codigo:TEL:telefono_canon`)** para "una sola vez" (los usuarios no se comparten entre oficinas). Alternativa dentro de la misma oficina: teléfono o titular, que es más estricta y da más falsos positivos en familias.
 3. **Bono de app** exige que el pedido venga de la app (recomendado) o alcanza con haberla instalado.
 4. **Las 9 oficinas sin promo:** se les prende el motor o siguen cargando bonos como carga común.
 5. **Permiso para `apply_migration`** en la configuración, o aplicación por fase con su orden.

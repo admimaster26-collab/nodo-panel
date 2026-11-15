@@ -242,7 +242,8 @@
    "id": "js:jugadores-crm",
    "type": "script",
    "sources": [
-    "extensions/jugadores-crm.js"
+    "extensions/jugadores-crm.js",
+    "extensions/crm-ingresos.js"
    ]
   },
   {
@@ -299,6 +300,13 @@
    "type": "script",
    "sources": [
     "extensions/validacion-pc.js"
+   ]
+  },
+  {
+   "id": "js:oficina-whatsapp",
+   "type": "script",
+   "sources": [
+    "extensions/oficina-whatsapp.js"
    ]
   },
   {

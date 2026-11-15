@@ -38,7 +38,12 @@ const api = {};
     if(betaActive){
       try { r={data:await deps.window._chatCanalNuevo.cargar(),error:null}; }
       catch(e) { r={data:null,error:{message:e.message}}; }
-    }else if(!betaError) r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
+    }else if(!betaError){
+      r = await deps.rpc("panel_core_get_chat_sesiones_json", {p_pc_codigo: canal});
+      if(!r?.error){
+        try{ deps.window._chatCanalNuevo?.recibir?.(deps.normArr(r?.data), canal); }catch(_e){}
+      }
+    }
     if(!betaActive && !betaError && (r?.error || !deps.normArr(r?.data).length)){
       const primeraFallo=!!r?.error;
       const fb = await deps.rpc("panel_v154_plus_listar_chat_sesiones", {p_pc_codigo: canal});

@@ -90,24 +90,35 @@ window._drexMarcarSinSesion = function(motivo){
 
 // Cartel FIJO mientras la sesión esté caída. El modal se puede cerrar; esto no se va hasta que se
 // entra de verdad. Es el «cartel de sesión cerrada como mínimo» que faltaba.
+// Mientras el cartel está, NODO se corre hacia abajo lo que mide (antes lo tapaba: Juan, 8/11). La altura
+// va en --nodo-aviso-h y base.css corre el panel, el menú, el chat y los avisos.
+function _drexAvisoAltura(b){
+  try{
+    const raiz = document.documentElement;
+    if(b){ raiz.style.setProperty('--nodo-aviso-h', (b.offsetHeight || 0) + 'px'); document.body.classList.add('nodo-con-aviso'); }
+    else { raiz.style.setProperty('--nodo-aviso-h', '0px'); document.body.classList.remove('nodo-con-aviso'); }
+  }catch(_e){}
+}
+try{ window.addEventListener('resize', function(){ const b = document.getElementById('drexSinSesionBanner'); if(b) _drexAvisoAltura(b); }); }catch(_e){}
 window._drexAvisarSinSesion = function(){
   try{
     let b = document.getElementById('drexSinSesionBanner');
-    if(!window._drexSinSesion){ if(b) b.remove(); return; }
+    if(!window._drexSinSesion){ if(b) b.remove(); _drexAvisoAltura(null); return; }
     if(!b){
       b = document.createElement('div');
       b.id = 'drexSinSesionBanner';
       b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;background:#7f1d1d;'
-        + 'color:#fff;padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;'
-        + 'font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.45)';
+        + 'color:#fff;padding:7px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;'
+        + 'font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.45)';
       document.body.appendChild(b);
     }
     b.innerHTML = '<span style="font-size:18px">🔒</span>'
       + '<b>La sesión de Agentes está cerrada</b>'
       + '<span style="font-weight:400;opacity:.9">No se puede cargar ni retirar hasta entrar.</span>'
       + '<button onclick="_mostrarModalLoginDrex()" style="margin-left:auto;background:#fff;'
-      + 'color:#7f1d1d;border:0;border-radius:8px;padding:6px 14px;font-weight:700;cursor:pointer">'
+      + 'color:#7f1d1d;border:0;border-radius:8px;padding:5px 14px;font-weight:700;cursor:pointer">'
       + 'Entrar a Agentes</button>';
+    _drexAvisoAltura(b);
   }catch(_e){}
 };
 

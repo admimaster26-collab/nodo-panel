@@ -176,6 +176,7 @@ window.nodoAbrirAjustes = function(){
     nodoSincronizarAjustesTonos();
     try{ window.nodoCargarBackendAgentes && window.nodoCargarBackendAgentes(); }catch(_e){}
     try{ window.verificarEstadoBackoffice && window.verificarEstadoBackoffice(); }catch(_e){}
+    try{ window.NodoWsp && window.NodoWsp.revisar(); }catch(_e){}
     try{ nodoPintarEstadoSistema(); }catch(_e){}
   }catch(_e){}
 };

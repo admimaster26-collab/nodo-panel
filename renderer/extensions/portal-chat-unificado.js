@@ -288,16 +288,17 @@
     try{ window.v15ChatActualId = window.chatActualId; }catch(_e){}
     try{ if(typeof abrirChatExpandido === 'function') abrirChatExpandido(); }catch(_e){}
     try{ renderChatList(); }catch(_e){}
+    if(typeof window._v154pCargarChat === 'function') return window._v154pCargarChat(false);
     await cargarChatActual(false);
   };
 
   window.cargarChatActual = cargarChatActual = async function(silencioso=false){
+    if(typeof window._v154pCargarChat === 'function') return window._v154pCargarChat(silencioso);
     const chatId = String(window.chatActualId || chatActualId || window.v15ChatActualId || '').trim();
     if(!chatId) return;
 
     const r = await supabaseClient.rpc('panel_core_get_chat_mensajes_json', {
-      p_chat_id: Number(chatId),
-      p_pc_codigo: (typeof _chatScope === 'function' ? _chatScope() : (window._chatScope ? window._chatScope() : 'P1'))
+      p_chat_id: String(chatId)
     });
 
     if(r.error){

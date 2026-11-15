@@ -1287,6 +1287,15 @@ async function _iniciarSesionInterno(usuario, clave) {
 }
 
 // ── API expuesta (mismo shape que el preload de casinodrex) ──────────────────
+// BET300 (agentesbet.io) no tiene todavía una pantalla equivalente a "Contacto por Whatsapp"
+// de casinodrex, así que el número no se puede leer solo. Se contesta con un motivo claro en
+// vez de dejar que el puente devuelva "Método no permitido": NODO lo muestra como "cargalo a
+// mano" y el operador lo escribe en Ajustes, que es el mismo camino que usa una oficina sin WTK.
+async function leerWhatsappOficina() {
+  return { ok: false, motivo: 'OTRO_BACKOFFICE',
+           message: 'Este backoffice no tiene la pantalla de WhatsApp: hay que cargar el número a mano.' };
+}
+
 const api = {
   buscarUsuario,
   cargarSaldo,
@@ -1295,6 +1304,7 @@ const api = {
   cambiarClave,
   crearUsuario,
   obtenerSaldoAgente,
+  leerWhatsappOficina,
   irABusquedaUsuarios,
   iniciarSesion,
   estadoPagina: status,

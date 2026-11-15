@@ -294,15 +294,33 @@ window.crmBuscarDebounce=function(){
         ? t('sinval','🟡 Sin validar', r.vinculo_sin_validar, 'yellow') : '')
     + t('pre','✅ Prevalidar', null, 'blue')
     + t('frios','😴 Dormidos', null, 'blue')
-    + t('resc','🎯 Rescate', null, 'purple');
+    + t('resc','🎯 Rescate', null, 'purple')
+    // Pestañas que vienen de otro archivo (Ingresos y Revisiones, extensions/crm-ingresos.js):
+    // sólo aparecen si la oficina tiene esos canales. Acá no se sabe nada de ellas.
+    + _rxTabsExtra();
   }
-  window.crmRxTab = function(k){
-    _RX.tab = k; _rxTabs();
-    if(k==='pre')   return _rxPintarPrevalidar();
-    if(k==='frios') return _rxPintarFrios();
-    if(k==='resc')  return _rxPintarRescate();
+  function _rxTabsExtra(){
+    try{ return typeof window.crmRxTabsExtra==='function' ? String(window.crmRxTabsExtra(_RX.tab)||'') : ''; }
+    catch(e){ console.warn('[crm] pestañas extra', e); return ''; }
+  }
+  // true si la pestaña es de otro archivo y ese archivo se hizo cargo de pintarla.
+  function _rxPintoExtra(){
+    try{ return typeof window.crmRxPintarExtra==='function' && window.crmRxPintarExtra(_RX.tab, _rxDestino())===true; }
+    catch(e){ console.warn('[crm] pestaña extra', e); return false; }
+  }
+  // Una sola decisión de qué se pinta según la pestaña. Antes estaba repetida al cambiar de
+  // pestaña y al terminar de cargar, y la segunda copia se olvidaba de Rescate: con Rescate
+  // abierta, "Actualizar" pintaba la cola del turno debajo de la pestaña equivocada.
+  function _rxPintarTab(){
+    if(_rxPintoExtra()) return;
+    if(_RX.tab==='pre')   return _rxPintarPrevalidar();
+    if(_RX.tab==='frios') return _rxPintarFrios();
+    if(_RX.tab==='resc')  return _rxPintarRescate();
     _rxPintar();
-  };
+  }
+  window.crmRxTab = function(k){ _RX.tab = k; _rxTabs(); _rxPintarTab(); };
+  // Para las pestañas de otro archivo: vuelven a dibujar la fila cuando les llega su número.
+  window.crmRxRefrescarTabs = function(){ _rxTabs(); };
 
   // ── Rescate ────────────────────────────────────────────────────────────────
   // La cola de Dormidos sale sólo de historial_ops, que arranca en julio: todo el que dejó
@@ -413,10 +431,10 @@ window.crmBuscarDebounce=function(){
       if(error) throw new Error(error.message||'no se pudo consultar');
       if(data && data.ok===false) throw new Error(data.error||'sin datos');
       _RX.datos = data; _rxTabs();
-      if(_RX.tab==='pre') _rxPintarPrevalidar();
-      else if(_RX.tab==='frios') _rxPintarFrios();
-      else _rxPintar();
+      _rxPintarTab();
     }catch(e){
+      // Las pestañas de otro archivo no dependen de la cola: si la cola falla, se ven igual.
+      if(_rxPintoExtra()) return;
       const b=_rxDestino();
       if(b) b.innerHTML='<div class="err-box" style="padding:10px">No se pudo cargar: '+escapeHtml(e.message||'')+'</div>';
     }finally{ _RX.cargando = false; }
@@ -841,10 +859,13 @@ window.crmBuscarDebounce=function(){
       box.innerHTML='<div class="alert-box" style="padding:10px">Poné al menos el teléfono.</div>'; return; }
     box.innerHTML='<div class="load" style="color:#8b949e">Buscando…</div>';
     try{
-      const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
-        p_secret: window.PANEL_DATA_SECRET,
-        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
-        p_telefono: tel||null, p_usuario: usr||null });
+      const pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
+      const { data, error } = typeof window.nodoPrevalidarConsultar==='function'
+        ? await window.nodoPrevalidarConsultar(tel||null, usr||null, pc)
+        : await supabaseClient.rpc('panel_prevalidar_usuario',{
+            p_secret: window.PANEL_DATA_SECRET,
+            p_pc_codigo: pc,
+            p_telefono: tel||null, p_usuario: usr||null });
       if(error) throw new Error(error.message||'');
       if(data && data.ok===false) throw new Error(data.error||'sin datos');
       const v=String(data.veredicto||'').toUpperCase();
@@ -932,10 +953,13 @@ window.crmBuscarDebounce=function(){
     const pinta = h => { const b=document.getElementById('modalBody'); if(b) b.innerHTML=h; };
     try{
       const tel = await _rxTelefonoDe(usuario);
-      const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
-        p_secret: window.PANEL_DATA_SECRET,
-        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
-        p_telefono: tel||null, p_usuario: usuario });
+      const pc = (typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
+      const { data, error } = typeof window.nodoPrevalidarConsultar==='function'
+        ? await window.nodoPrevalidarConsultar(tel||null, usuario, pc)
+        : await supabaseClient.rpc('panel_prevalidar_usuario',{
+            p_secret: window.PANEL_DATA_SECRET,
+            p_pc_codigo: pc,
+            p_telefono: tel||null, p_usuario: usuario });
       if(error) throw new Error(error.message||'');
       if(data && data.ok===false) throw new Error(data.error||'sin datos');
       const v=String(data.veredicto||'').toUpperCase();
@@ -1082,10 +1106,13 @@ window.crmBuscarDebounce=function(){
       out.innerHTML='<div class="alert-box" style="padding:9px">Poné al menos el teléfono o el usuario.</div>'; return; }
     out.innerHTML='<div class="small" style="color:#8b949e;padding:9px">Consultando…</div>';
     try{
-      const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
-        p_secret: window.PANEL_DATA_SECRET,
-        p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||'',
-        p_telefono: tel||null, p_usuario: usr||null });
+      const pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
+      const { data, error } = typeof window.nodoPrevalidarConsultar==='function'
+        ? await window.nodoPrevalidarConsultar(tel||null, usr||null, pc)
+        : await supabaseClient.rpc('panel_prevalidar_usuario',{
+            p_secret: window.PANEL_DATA_SECRET,
+            p_pc_codigo: pc,
+            p_telefono: tel||null, p_usuario: usr||null });
       if(error) throw new Error(error.message||'falló la consulta');
       if(!data || data.ok===false) throw new Error((data&&data.error)||'sin datos');
       const col = data.veredicto==='LIBRE' ? '#22c55e' : data.veredicto==='YA_EXISTE' ? '#ef4444' : '#f5c518';

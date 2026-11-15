@@ -56,16 +56,29 @@ function timersFake() {
 
 function windowFakes() {
   const windows = [];
-  const defaultSession = { webRequest: { onBeforeSendHeaders() {} }, cookies: { async get() { return []; }, async remove() {} } };
+  const makeSession = () => ({
+    webRequest: { onBeforeSendHeaders() {} },
+    cookies: { async get() { return []; }, async remove() {} },
+    async clearCache() {},
+    async clearStorageData() {}
+  });
+  const defaultSession = makeSession();
+  const partitionSessions = new Map();
   class Window extends EventEmitter {
     constructor(options) {
       super();
       this.options = options;
       this.loaded = [];
       this.dead = false;
+      const partition = options && options.webPreferences && options.webPreferences.partition;
+      let windowSession = defaultSession;
+      if (partition) {
+        if (!partitionSessions.has(partition)) partitionSessions.set(partition, makeSession());
+        windowSession = partitionSessions.get(partition);
+      }
       this.webContents = new EventEmitter();
       Object.assign(this.webContents, {
-        sent: [], session: defaultSession, isLoading: () => false,
+        sent: [], session: windowSession, isLoading: () => false,
         getURL: () => this.loaded.at(-1) || '', getTitle: () => '',
         getUserAgent: () => 'Chrome/128.0.0.0 Electron/32', setUserAgent() {},
         setVisualZoomLevelLimits() {}, reload() {},
@@ -86,7 +99,7 @@ function windowFakes() {
     static getAllWindows() { return windows.filter(w => !w.dead); }
     static fromWebContents(contents) { return windows.find(w => w.webContents === contents); }
   }
-  return { Window, windows, defaultSession };
+  return { Window, windows, defaultSession, partitionSessions };
 }
 
 test('configuration preserves OS overrides and loads UTF-16 office file before application defaults', t => {
@@ -104,6 +117,21 @@ test('configuration preserves OS overrides and loads UTF-16 office file before a
   assert.ok(env.SUPABASE_URL.startsWith('https://'));
 });
 
+test('configuration loads per-office secrets from LocalAppData NODO outside the workspace', t => {
+  const dir = tempDir(t);
+  const localDir = path.join(dir, 'local');
+  const credentialsDir = path.join(localDir, 'NODO');
+  const userDir = path.join(dir, 'user');
+  const appDir = path.join(dir, 'app');
+  fs.mkdirSync(credentialsDir, { recursive: true });
+  fs.mkdirSync(userDir); fs.mkdirSync(appDir);
+  fs.writeFileSync(path.join(credentialsDir, '.env.p4'), 'PC_CODIGO=P4\nPANEL_DATA_SECRET=secret\n');
+  const env = { NODO_ENV: 'P4', LOCALAPPDATA: localDir };
+  configureEnvironment({ app: { getPath: () => userDir }, rootDir: appDir, execPath: path.join(appDir, 'app.exe'), env });
+  assert.equal(env.PC_CODIGO, 'P4');
+  assert.equal(env.PANEL_DATA_SECRET, 'secret');
+});
+
 test('backend selection persists across instances and resolves preloads from app root', t => {
   const dir = tempDir(t);
   const options = { app: { getPath: () => dir }, rootDir: dir, env: {} };
@@ -119,20 +147,38 @@ test('backend selection persists across instances and resolves preloads from app
 test('startup and runtime proxy only change the dedicated partition, including direct reset', async () => {
   const app = new EventEmitter();
   const calls = [];
-  const agentSession = { async setProxy(config) { calls.push(config); }, async closeAllConnections() { calls.push('close'); } };
+  const sessions = new Map();
+  const makeSession = partition => ({
+    async setProxy(config) { calls.push([partition, config]); },
+    async closeAllConnections() { calls.push([partition, 'close']); }
+  });
   const proxy = createProxyService({
     app, env: { PROXY_ENABLED: '1', PROXY_HOST: 'office', PROXY_PORT: '8000' },
-    session: { fromPartition(partition) { assert.equal(partition, 'persist:nodo-agentes'); return agentSession; }, get defaultSession() { assert.fail('default session must remain untouched'); } }
+    session: {
+      fromPartition(partition) {
+        assert.ok(['persist:nodo-agentes', 'nodo-chunior'].includes(partition));
+        if (!sessions.has(partition)) sessions.set(partition, makeSession(partition));
+        return sessions.get(partition);
+      },
+      get defaultSession() { assert.fail('default session must remain untouched'); }
+    }
   });
   await proxy.configure();
   await proxy.apply(null);
   assert.deepEqual(calls, [
-    { mode: 'fixed_servers', proxyRules: 'http=office:8000;https=office:8000', proxyBypassRules: '<local>' }, 'close',
-    { mode: 'direct' }, 'close'
+    ['persist:nodo-agentes', { mode: 'fixed_servers', proxyRules: 'http=office:8000;https=office:8000', proxyBypassRules: '<local>' }],
+    ['persist:nodo-agentes', 'close'],
+    ['persist:nodo-agentes', { mode: 'direct' }], ['nodo-chunior', { mode: 'direct' }],
+    ['persist:nodo-agentes', 'close'], ['nodo-chunior', 'close']
   ]);
   await proxy.apply(null);
-  assert.equal(calls.length, 4, 'already direct does not close healthy connections');
+  assert.equal(calls.length, 6, 'already direct does not close healthy connections');
   await proxy.apply({ enabled: true, host: 'runtime', port: 1080, protocol: 'socks5', username: 'u', password: 'p' });
+  assert.deepEqual(calls.slice(6), [
+    ['persist:nodo-agentes', { mode: 'fixed_servers', proxyRules: 'socks=runtime:1080', proxyBypassRules: '<local>' }],
+    ['nodo-chunior', { mode: 'fixed_servers', proxyRules: 'socks=runtime:1080', proxyBypassRules: '<local>' }],
+    ['persist:nodo-agentes', 'close'], ['nodo-chunior', 'close']
+  ]);
   let prevented = 0;
   let auth;
   const event = { preventDefault() { prevented++; } };
@@ -140,6 +186,37 @@ test('startup and runtime proxy only change the dedicated partition, including d
   app.emit('login', event, {}, {}, { isProxy: true }, (...args) => { auth = args; });
   assert.equal(prevented, 1);
   assert.deepEqual(auth, ['u', 'p']);
+});
+
+test('proxy strips protocol scheme and path from host on startup and runtime config', async () => {
+  const app = new EventEmitter();
+  const calls = [];
+  const sessions = new Map();
+  const makeSession = partition => ({
+    async setProxy(config) { calls.push([partition, config]); },
+    async closeAllConnections() {}
+  });
+  const proxy = createProxyService({
+    app,
+    env: { PROXY_ENABLED: '1', PROXY_HOST: 'https://office.proxy.local/', PROXY_PORT: '8000' },
+    session: {
+      fromPartition(partition) {
+        if (!sessions.has(partition)) sessions.set(partition, makeSession(partition));
+        return sessions.get(partition);
+      }
+    }
+  });
+  await proxy.configure();
+  await proxy.apply({ enabled: true, host: 'https://ar86.proxy.nordvpn.com/', port: '89', protocol: 'http' });
+  const bad = await proxy.apply({ enabled: true, host: 'https://', port: '89', protocol: 'http' });
+  assert.deepEqual(calls, [
+    ['persist:nodo-agentes', { mode: 'fixed_servers', proxyRules: 'http=office.proxy.local:8000;https=office.proxy.local:8000', proxyBypassRules: '<local>' }],
+    ['persist:nodo-agentes', { mode: 'fixed_servers', proxyRules: 'http=ar86.proxy.nordvpn.com:89;https=ar86.proxy.nordvpn.com:89', proxyBypassRules: '<local>' }],
+    ['nodo-chunior', { mode: 'fixed_servers', proxyRules: 'http=ar86.proxy.nordvpn.com:89;https=ar86.proxy.nordvpn.com:89', proxyBypassRules: '<local>' }],
+    ['persist:nodo-agentes', { mode: 'direct' }],
+    ['nodo-chunior', { mode: 'direct' }]
+  ]);
+  assert.deepEqual(bad, { ok: true, enabled: false });
 });
 
 test('partition failure never falls back to proxying the default session', async () => {
@@ -153,25 +230,27 @@ test('partition failure never falls back to proxying the default session', async
   assert.equal(touched, false);
 });
 
-test('BET300 hook does not replace Chunior hook and neither changes Supabase requests', () => {
-  const defaultHooks = [], agentHooks = [];
+test('isolated Chunior and BET300 hooks do not affect unrelated requests', () => {
+  const defaultHooks = [], agentHooks = [], chuniorHooks = [];
   const defaultSession = { webRequest: { onBeforeSendHeaders(fn) { defaultHooks.push(fn); } } };
   const agentSession = { webRequest: { onBeforeSendHeaders(fn) { agentHooks.push(fn); } } };
+  const chuniorSession = { webRequest: { onBeforeSendHeaders(fn) { chuniorHooks.push(fn); } } };
   const headers = createSessionHeaders({ session: { defaultSession }, backends: { current: { spa: true } } });
   const win = ses => ({ webContents: { session: ses, getUserAgent: () => 'Chrome/128.0 Electron/32', setUserAgent() {} } });
-  headers.configure(win(defaultSession));
+  headers.configure(win(chuniorSession), { chunior: true });
   headers.configure(win(agentSession));
-  headers.configure(win(defaultSession));
-  assert.equal(defaultHooks.length, 1);
+  headers.configure(win(chuniorSession), { chunior: true });
+  assert.equal(defaultHooks.length, 0);
   assert.equal(agentHooks.length, 1);
+  assert.equal(chuniorHooks.length, 1);
   const request = (hook, url) => {
     let output;
     hook({ url, requestHeaders: { Existing: 'kept' } }, result => { output = result.requestHeaders; });
     return output;
   };
-  assert.ok(request(defaultHooks[0], 'https://bo.chunior.com/transacciones/')['sec-ch-ua']);
+  assert.ok(request(chuniorHooks[0], 'https://bo.chunior.com/transacciones/')['sec-ch-ua']);
   assert.ok(request(agentHooks[0], 'https://agentesbet.io/')['sec-ch-ua']);
-  for (const hook of [defaultHooks[0], agentHooks[0]]) {
+  for (const hook of [chuniorHooks[0], agentHooks[0]]) {
     assert.deepEqual(request(hook, 'https://example.supabase.co/rest/v1'), { Existing: 'kept' });
     assert.deepEqual(request(hook, 'https://example.com/chunior.com/agentesbet.io'), { Existing: 'kept' });
   }
@@ -308,6 +387,27 @@ test('missing office secret performs no network or login and clears runtime prox
   assert.deepEqual(applied, [null]);
 });
 
+test('office proxy lookup applies the server configuration without exposing credentials', async () => {
+  const ipcMain = ipcFake();
+  let request;
+  const applied = [];
+  const credentials = registerOfficeCredentialsIpc({
+    ipcMain,
+    env: { SUPABASE_URL: 'https://db.test/', SUPABASE_ANON_KEY: 'public', PANEL_DATA_SECRET: 'secret' },
+    fetch: async (...args) => {
+      request = args;
+      return { json: async () => ({ ok: true, enabled: true, protocol: 'http', host: 'office-proxy', port: 8080, username: 'user', password: 'pass' }) };
+    },
+    automation: {},
+    proxy: { async apply(config) { applied.push(config); return { ok: true, enabled: true }; } }
+  });
+  assert.deepEqual(await credentials.applyProxyForOffice('P4', { timeoutMs: 1000 }), { ok: true, enabled: true });
+  assert.equal(request[0], 'https://db.test/rest/v1/rpc/panel_get_proxy');
+  assert.ok(request[1].signal instanceof AbortSignal);
+  assert.deepEqual(JSON.parse(request[1].body), { p_secret: 'secret', p_pc_codigo: 'P4' });
+  assert.deepEqual(applied, [{ enabled: true, protocol: 'http', host: 'office-proxy', port: 8080, username: 'user', password: 'pass', bypass: undefined }]);
+});
+
 test('office credentials are passed directly to automation and are absent from renderer response', async () => {
   const ipcMain = ipcFake();
   let sent;
@@ -320,18 +420,50 @@ test('office credentials are passed directly to automation and are absent from r
   assert.deepEqual(sent, ['iniciarSesion', 'agent', 'password']);
 });
 
-test('Chunior hard reset only clears its own cookies and execution gate preserves production setting', async () => {
+test('Chunior clears legacy site data, then uses a non-persistent isolated session', async () => {
   const { Window, defaultSession } = windowFakes();
   const removed = [];
+  const cleared = [];
   defaultSession.cookies.get = async () => [
     { domain: '.chunior.com', name: 'session', secure: true, path: '/' },
     { domain: 'notchunior.com', name: 'foreign', secure: true },
     { domain: 'db.supabase.co', name: 'auth', secure: true }
   ];
   defaultSession.cookies.remove = async (...args) => { removed.push(args); };
+  defaultSession.clearCache = async () => { cleared.push('cache'); };
+  defaultSession.clearStorageData = async options => { cleared.push(options); };
+  const chunior = createChuniorWindowService({
+    BrowserWindow: Window, icon: 'icon', headers: { configure() {} }, panel: { refocus() {} },
+    session: { defaultSession }, env: {}
+  });
+
+  await chunior.limpiarDatosLegados();
+  const win = chunior.create();
+  assert.equal(win.options.webPreferences.partition, 'nodo-chunior');
+  assert.equal(win.loaded[0], 'https://bo.chunior.com/transacciones/');
+  assert.deepEqual(removed, [['https://chunior.com/', 'session']]);
+  assert.equal(cleared[0], 'cache');
+  assert.deepEqual(cleared.slice(1).map(x => x.origin), ['https://bo.chunior.com', 'https://chunior.com']);
+  assert.ok(cleared.slice(1).every(x => x.storages.includes('localstorage') && x.storages.includes('cachestorage')));
+});
+
+test('Chunior hard reset only clears its own cookies and execution gate preserves production setting', async () => {
+  const { Window, defaultSession, partitionSessions } = windowFakes();
+  const removed = [];
   const ipcMain = ipcFake();
-  const chunior = createChuniorWindowService({ BrowserWindow: Window, icon: 'icon', headers: { configure() {} }, panel: { refocus() {} }, env: { NODO_PROD: '1' } });
+  const chunior = createChuniorWindowService({
+    BrowserWindow: Window, icon: 'icon', headers: { configure() {} }, panel: { refocus() {} },
+    session: { defaultSession }, env: { NODO_PROD: '1' }
+  });
   chunior.registerIpc(ipcMain);
+  chunior.create();
+  const chuniorSession = partitionSessions.get('nodo-chunior');
+  chuniorSession.cookies.get = async () => [
+    { domain: '.chunior.com', name: 'session', secure: true, path: '/' },
+    { domain: 'notchunior.com', name: 'foreign', secure: true },
+    { domain: 'db.supabase.co', name: 'auth', secure: true }
+  ];
+  chuniorSession.cookies.remove = async (...args) => { removed.push(args); };
   assert.equal((await ipcMain.invoke('chunior:exec', 'anything')).reason, 'chunior_exec_disabled');
   assert.equal((await ipcMain.invoke('chunior:reset', { hard: true })).ok, true);
   assert.deepEqual(removed, [['https://chunior.com/', 'session']]);

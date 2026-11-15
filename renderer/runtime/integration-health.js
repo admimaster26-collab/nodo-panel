@@ -3,11 +3,11 @@
   else root.NodoSalud=factory(root);
 })(globalThis,function(root){
   'use strict';
-  const integrations=new Set('CHAT PORTAL TELEMETRIA CAPACIDADES BANDEJA IDENTIDAD PERSISTENCIA HISTORIAL BILLETERAS RETIROS VALIDACION WORKERS AUTOMATISMOS CONCILIACION NEXO ADMIN CONEXION'.split(' '));
+  const integrations=new Set('CHAT PORTAL TELEMETRIA CAPACIDADES BANDEJA IDENTIDAD PERSISTENCIA HISTORIAL BILLETERAS RETIROS VALIDACION WORKERS AUTOMATISMOS CONCILIACION NEXO ADMIN CONEXION CRM INGRESOS REVISIONES'.split(' '));
   const stages=new Set(['ALIVE','CONNECTED','DATA','EFFECT','RENDER']);
   // Ramas que el servidor todavía no acepta: se ven en esta PC pero no viajan. Una sola muestra
   // rechazada tira el lote entero, y el 1/11 eso dejó mudo a todo el semáforo.
-  const SOLO_LOCAL=new Set(['PERSISTENCIA']);
+  const SOLO_LOCAL=new Set(['PERSISTENCIA','CRM','INGRESOS','REVISIONES']);
   const states=new Set(['OK','DEGRADED','ERROR','IDLE','UNKNOWN']);
   const FRESH_MS=300000;
   const samples=new Map(),dirty=new Map(),attempts=new Map();
@@ -125,7 +125,8 @@
         if(version!==epoch || office!==pc())return null;
         if(!config?.enabled || !config.offices?.includes(office)){transport='IDLE';return null;}
         record('TELEMETRIA','ALIVE','OK');
-        const batch=[...dirty.entries()].filter(([,sample])=>!SOLO_LOCAL.has(sample.integration)).slice(0,32);
+        const enviaTodo=root.__nodoHealthV2===true;
+        const batch=[...dirty.entries()].filter(([,sample])=>enviaTodo?sample.integration!=='PERSISTENCIA':!SOLO_LOCAL.has(sample.integration)).slice(0,32);
         const response=await root.panelAPI.rpc('nodo_beta_salud_v1',{p_pc_codigo:office,p_muestras:batch.map(([,s])=>s),p_build:config.build});
         if(version!==epoch || office!==pc())return null;
         let data=response?.data;
@@ -151,7 +152,8 @@
   // capacidades son internas: si fallan se ve como un solo aviso, no como dos filas que nadie entiende.
   const NOMBRES={CHAT:'Chat',PORTAL:'Portal',BANDEJA:'Solicitudes',IDENTIDAD:'Perfil de jugadores',PERSISTENCIA:'Guardado de datos',
     HISTORIAL:'Historial',BILLETERAS:'Billeteras',RETIROS:'Lectura de fichas',VALIDACION:'Validaciones',WORKERS:'Tareas de fondo',
-    AUTOMATISMOS:'Automatismos',CONCILIACION:'Control de fichas',NEXO:'Nexo',ADMIN:'Administración',CONEXION:'Conexión'};
+    AUTOMATISMOS:'Automatismos',CONCILIACION:'Control de fichas',NEXO:'Nexo',ADMIN:'Administración',CONEXION:'Conexión',
+    CRM:'CRM',INGRESOS:'Ingresos al Portal',REVISIONES:'Revisiones'};
   const MOTIVOS={SERVER_TIMEOUT:'El servidor tardó demasiado',UNAUTHORIZED:'Sin permiso',RPC_MISSING:'Falta actualizar el servidor',
     CLIENT_UNAVAILABLE:'La aplicación no está conectada',NETWORK:'Sin conexión',FICHAS_SIN_SESION:'Se cayó la sesión de Agentes',
     FICHAS_ILEGIBLES:'El casino no devolvió el saldo',FICHAS_SIN_RESPUESTA:'El casino no contestó',AGENTE_OCUPADO:'El agente está ocupado',

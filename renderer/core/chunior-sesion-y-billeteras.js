@@ -214,17 +214,18 @@ async function _chuniorConfirmarPuesto(value, text){
     window.pcOperativa = pcCodigoNuevo;          // espejo para los overrides que leen window
     window.oficinaId   = oficinaIdNueva;
 
-    // Aplicar el proxy de esta oficina (la config/clave se resuelve en el main, blindada).
-    // Mostramos el resultado para diagnóstico (antes se ignoraba → no se sabía si aplicó).
+    // Aplicar el proxy de esta oficina a Agentes y Chunior (la clave se resuelve en el main).
     try{
       if(window.ctrlElectron && ctrlElectron.proxyApply){
-        Promise.resolve(ctrlElectron.proxyApply(pcCodigoNuevo)).then(function(r){
-          if(r && r.ok && r.enabled) toast("🌐 Proxy de oficina aplicado (Agentes saldrá por proxy)","green");
-          else if(r && r.reason==="missing-secret") toast("⚠️ Esta PC no tiene la clave de la oficina → proxy NO aplicado. Agentes puede fallar.","red");
-          else if(r && r.enabled===false) toast("🌐 Esta oficina no tiene proxy en el admi → salida directa.","blue");
-        }).catch(function(){});
+        const r = await ctrlElectron.proxyApply(pcCodigoNuevo);
+        if(r && r.ok && r.enabled) toast("🌐 Proxy de oficina aplicado a Chunior y Agentes","green");
+        else if(r && r.reason==="missing-secret") toast("⚠️ Esta PC no tiene la clave de la oficina → Chunior y Agentes pueden fallar.","red");
+        else if(r && r.ok===false) toast("⚠️ No se pudo configurar la conexión de esta oficina. Chunior puede no cargar.","red");
+        else if(r && r.enabled===false) toast("🌐 Esta oficina no tiene proxy en el admi → salida directa.","blue");
       }
-    }catch(_e){}
+    }catch(_e){
+      toast("⚠️ No se pudo configurar la conexión de esta oficina. Chunior puede no cargar.","red");
+    }
 
     // En el primer ingreso, historial, titulares bloqueados y billeteras de Chunior los trae el
     // arranque por etapas, de a uno y después de dibujar el Inicio (login-y-realtime.js). Antes

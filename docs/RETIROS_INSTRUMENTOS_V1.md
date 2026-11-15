@@ -2,7 +2,20 @@
 
 Este documento fija el contrato local de la beta, cómo distinguirlo del diseño anterior que quedó en el árbol y qué falta comprobar antes de habilitar una oficina.
 
-## Fuentes canónicas
+> **Corrección del 9/11 (cotejado contra producción).** Lo que corre en el servidor NO es
+> `retiros-instrumentos-v1.sql`. Ese archivo nunca se publicó: en producción no existen el esquema
+> `retiros_privados` ni las funciones `nodo_beta_retiro_*_v1`. Lo publicado es:
+> - [`servidor/retiro-instrumentos-portal.sql`](../servidor/retiro-instrumentos-portal.sql): las funciones del
+>   Portal (`landing_portal_retiro_contexto_v1` / `_crear_v1`) y las de NODO (`panel_retiro_instrumento` /
+>   `_validar` / `_rechazar`);
+> - [`servidor/retiro-dni-interruptor.sql`](../servidor/retiro-dni-interruptor.sql): el interruptor por
+>   oficina, `public.retiro_instrumentos_oficinas` (hoy P1 y P4 prendidas). Es el único interruptor y lo leen
+>   las dos funciones del Portal.
+>
+> No publicar `retiros-instrumentos-v1.sql`: define las mismas funciones del Portal con otro contrato y las
+> pisaría. El resto de este documento describe esa propuesta, no lo que está en uso.
+
+## Fuentes de la propuesta de Codex (no publicada)
 
 - Migración: [`servidor/retiros-instrumentos-v1.sql`](../servidor/retiros-instrumentos-v1.sql)
 - Reversión operativa: [`servidor/retiros-instrumentos-v1-vuelta-atras.sql`](../servidor/retiros-instrumentos-v1-vuelta-atras.sql)

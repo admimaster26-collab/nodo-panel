@@ -68,6 +68,12 @@
       correr:async () => { await root._chatCanalNuevo.cargar(true); return veredicto('CHAT'); } },
     { partes:['Historial'], hay:() => typeof root.cargarHistorial === 'function',
       correr:async () => { await root.cargarHistorial(); return veredicto('HISTORIAL'); } },
+    { partes:['CRM'], hay:() => typeof root.cargarOperacionesAgente === 'function',
+      correr:async () => { await root.cargarOperacionesAgente(true); return veredicto('CRM'); } },
+    { partes:['Ingresos al Portal'], hay:() => typeof root.crmCargarIngresos === 'function' && root._crmCapIngresos === true,
+      correr:async () => { await root.crmCargarIngresos(true); return veredicto('INGRESOS'); } },
+    { partes:['Revisiones'], hay:() => typeof root.crmCargarRevisiones === 'function' && root._crmCapRevisiones === true,
+      correr:async () => { await root.crmCargarRevisiones(true); return veredicto('REVISIONES'); } },
     { partes:['Lectura de fichas', 'Automatismos'], hay:() => !!root.ctrlElectron && typeof root.callDrex === 'function', correr:agentes },
     { partes:['Control de fichas'], hay:() => !!root.ctrlElectron && typeof root._watchdogLeer === 'function', correr:controlDeFichas }
   ];

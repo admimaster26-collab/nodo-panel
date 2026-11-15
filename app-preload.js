@@ -11,7 +11,9 @@ const ALLOWED_AUTOMATION_METHODS = new Set([
   'obtenerSaldoAgente',
   'iniciarSesion',
   'recuperarFlujo',
-  'abortarOperacion'
+  'abortarOperacion',
+  // Lee el WhatsApp publicado en Funcionalidades y permisos. No opera: sólo mira la pantalla.
+  'leerWhatsappOficina'
 ]);
 
 contextBridge.exposeInMainWorld('ctrlElectron', {

@@ -400,9 +400,10 @@
   };
 
   window.crearValidacionManual=async function(){
-    const usuario=prompt("Usuario a validar:");
+    // nodoPedirTexto y no prompt(): en Electron prompt() no existe (docs/BOTONES.md).
+    const usuario=await window.nodoPedirTexto({titulo:"Validación manual",texto:"Usuario a validar:",confirmar:"Seguir",requerido:true});
     if(!usuario)return;
-    const pc=prompt("PC / oficina:",window.pcOperativa||"P1") || (window.pcOperativa||"P1");
+    const pc=(await window.nodoPedirTexto({titulo:"Validación manual",texto:"PC / oficina:",valor:window.pcOperativa||"P1",confirmar:"Crear"})) || (window.pcOperativa||"P1");
     try{
       await insertarValidacionManual(usuario,pc);
       try{toast("Validación creada: "+usuario,"green")}catch(_e){}
@@ -434,19 +435,18 @@
     try{
       // Espera su paso del arranque por etapas: sin oficina leía desde la pantalla de login.
       if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
-      // El apartado de Verificaciones fue ELIMINADO: sin el elemento, `!undefined` daba true y este
-      // código creía que la vista estaba activa (seguía renderizando/polleando al pedo).
+      // El apartado de Verificaciones y su badge fueron eliminados de la pantalla: si no existe
+      // #badgeVerif, no consultamos validaciones_usuario cada 15s para descartar el resultado.
+      const badge=document.getElementById("badgeVerif");
+      if(!badge)return;
       const _elVerif=document.getElementById("viewVerificaciones");
       const active=!!_elVerif && !_elVerif.classList.contains("hidden");
       if(active)return;
       const {data}=await leerValidaciones();
       const rows=data.map(r=>mapRow(r,"validaciones_usuario"));
       const pend=rows.filter(r=>["PENDIENTE","PROCESANDO"].includes(r.estado)).length;
-      const badge=document.getElementById("badgeVerif");
-      if(badge){
-        if(pend){badge.classList.remove("hidden");badge.textContent=String(pend)}
-        else badge.classList.add("hidden");
-      }
+      if(pend){badge.classList.remove("hidden");badge.textContent=String(pend)}
+      else badge.classList.add("hidden");
     }catch(_e){}
   },15000);
 

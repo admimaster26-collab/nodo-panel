@@ -5,7 +5,7 @@ function createSessionHeaders({ session, backends }) {
     try { const host = new URL(url).hostname; return host === domain || host.endsWith('.' + domain); }
     catch (_) { return false; }
   };
-  function configurarSesionAgentesDrex(win) {
+  function configurarSesionAgentesDrex(win, { chunior = false } = {}) {
     try {
       const cur       = win.webContents.getUserAgent();
       const chromeTok = (cur.match(/Chrome\/[\d.]+/) || ['Chrome/124.0.0.0'])[0];
@@ -14,7 +14,7 @@ function createSessionHeaders({ session, backends }) {
       const secChUa   = '"Chromium";v="' + major + '", "Google Chrome";v="' + major + '", "Not.A/Brand";v="99"';
       win.webContents.setUserAgent(ua); // por-webContents (Agentes y Chunior)
       const ses = win.webContents.session;
-      if (ses === session.defaultSession && !ses.__nodoChuniorHook) {
+      if (chunior && !ses.__nodoChuniorHook) {
         ses.__nodoChuniorHook = true;
         ses.webRequest.onBeforeSendHeaders((details, cb) => {
           try {
@@ -34,7 +34,7 @@ function createSessionHeaders({ session, backends }) {
       // BET300: Cloudflare de agentesbet.net bloquea por el client-hint sec-ch-ua "Electron".
       // Reescribimos UA + sec-ch-ua SOLO para agentesbet.net y SOLO con el flag bet300 activo
       // (casinodrex 100% intacto: con casinodrex este hook ni se instala).
-      if (ses !== session.defaultSession && backends.current.spa && !ses.__nodoBet300Hook) {
+      if (!chunior && ses !== session.defaultSession && backends.current.spa && !ses.__nodoBet300Hook) {
         ses.__nodoBet300Hook = true;
         ses.webRequest.onBeforeSendHeaders((details, cb) => {
           try {

@@ -24,6 +24,12 @@ function createAutomationService({ agents, backends, requests, env = process.env
     if      (method === 'buscarUsuario')       preNav = agents.navigate(backends.current.url);
     else if (method === 'crearUsuario')        preNav = agents.navigate(backends.current.newUserUrl, { forceReload: !backends.current.spa }); // BET300 crea por modal, sin recargar
     else if (method === 'obtenerSaldoAgente')  preNav = agents.navigate(backends.current.url);
+    // El WhatsApp publicado se lee en Funcionalidades y permisos, y el preload NO navega solo
+    // (D-101). La ventana la mueve main, y sólo cuando se lo piden con {navegar:true}: el
+    // repaso de fondo lee gratis si el operador ya está ahí y si no, se queda sin dato.
+    else if (method === 'leerWhatsappOficina') preNav = (args[0] && args[0].navegar && backends.current.whatsappUrl)
+      ? agents.navigate(backends.current.whatsappUrl)
+      : agents.ready(win);
     else                                       preNav = agents.ready(win);
     // Antes de mandar nada, esperar a que el preload de esa ventana avise que ya escucha: si no,
     // la orden se manda al vacio y muere en el timeout. No rechaza nunca — si el saludo no llega,

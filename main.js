@@ -60,7 +60,7 @@ const headers = createSessionHeaders({ session, backends });
 const fallasLog = path.join(app.getPath('userData'), 'nodo-fallas.log');
 app.on('child-process-gone', (_e, d) => anotarFalla(fallasLog, 'se cerro un proceso: ' + JSON.stringify(d)));
 const panel = createPanelWindow({ BrowserWindow, rootDir, icon, logPath: fallasLog });
-const chunior = createChuniorWindowService({ BrowserWindow, icon, headers, panel });
+const chunior = createChuniorWindowService({ BrowserWindow, icon, headers, panel, session });
 // Visor de imágenes del chat: ventana aparte y una sola. Se registra solo sus IPC.
 const visorImagen = createImageWindowService({ BrowserWindow, ipcMain, rootDir, icon });
 const automationRequests = createRequestRegistry();
@@ -83,7 +83,7 @@ registerNexoIpc({ ipcMain, app });
 registerUpdaterIpc({ ipcMain, app, BrowserWindow, shell, panel });
 registerExternalLinksIpc({ ipcMain, shell });
 registerAgentIpc({ ipcMain, agents, automation, verification, backends, automationRequests, verificationRequests });
-registerOfficeCredentialsIpc({ ipcMain, automation, proxy });
+const officeCredentials = registerOfficeCredentialsIpc({ ipcMain, automation, proxy });
 // El panel manda lo que hay que mostrar; decidir QUE mostrar es del panel, no de main.
 ipcMain.handle('nodo:discord', (_e, estado) => {
   try { discord.actualizar(estado); } catch (_err) {}
@@ -98,6 +98,24 @@ app.whenReady().then(async () => {
   try { app.setAppUserModelId('com.nodooperativo.app'); } catch (_e) {}
   await proxy.configure();
   panel.create();
+  const pcCodigoInicial = String(process.env.PC_CODIGO || '').trim();
+  const proxyConfigurableAntesDeChunior = pcCodigoInicial &&
+    process.env.PANEL_DATA_SECRET &&
+    process.env.SUPABASE_URL &&
+    (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY);
+  if (proxyConfigurableAntesDeChunior) {
+    const resultado = await officeCredentials.applyProxyForOffice(pcCodigoInicial, { resetOnMissing: false, timeoutMs: 8000 });
+    if (!resultado.ok) console.warn('[proxy] no se pudo resolver el proxy inicial de Chunior:', resultado.reason || 'ERROR');
+    else if (resultado.enabled) console.log('[proxy] proxy de oficina listo antes de abrir Chunior');
+    else console.log('[proxy] sin proxy de oficina configurado; Chunior abrirá con salida directa');
+  } else {
+    console.warn('[proxy] sin código de oficina o credenciales del servidor; Chunior abrirá con salida directa');
+  }
+  try {
+    await chunior.limpiarDatosLegados();
+    console.log('[chunior] datos locales heredados borrados; sesión no persistente');
+  }
+  catch (e) { console.error('[chunior] no se pudo limpiar el almacenamiento local heredado:', e && e.message || 'ERROR'); }
   chunior.create();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) panel.create();

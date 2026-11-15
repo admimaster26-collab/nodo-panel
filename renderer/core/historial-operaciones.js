@@ -422,7 +422,7 @@ async function cargarHistorial(){
   // Refrescar la vista unificada de solicitudes si ya tiene datos cargados
   try{ if(solicitudes.length || _historialData.length) renderHistorialUnificado(); }catch(_e){}
   // Cargar operaciones de agente (CSV) en paralelo → alimentan el CRM/segmentación
-  try{ cargarOperacionesAgente(); }catch(_e){}
+  try{ if(window._crmCargado) cargarOperacionesAgente(); }catch(_e){}
   }catch(error){
     health?.record(healthStage,'ERROR',healthStage==='RENDER'?'HISTORIAL_RENDER_FAILED':health.errorCode(error));
     throw error;
@@ -452,14 +452,20 @@ async function cargarOperacionesAgente(forzar){
   return _crmEnCurso;
 }
 async function _cargarOperacionesAgenteAhora(){
+  const health = window.NodoSalud?.begin('CRM');
   const pcs = (typeof pcAliasesHist==="function" ? pcAliasesHist() : [String(pcOperativa||"")]);
+  let resumenErr = null, resumenOk = false;
   try{
     const { data, error } = await supabaseClient.rpc("panel_crm_agente_resumen", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });
     // El error iba derecho a la basura. Es una consulta de 3 segundos y cuando se pasa del tope el
     // servidor devuelve 500: el CRM se quedaba sin datos y nadie se enteraba.
-    if(error) console.warn('[crm] agente_resumen fallo', error);
+    if(error){ console.warn('[crm] agente_resumen fallo', error); resumenErr = error; }
+    else if(Array.isArray(data)){ resumenOk = true; }
     window._agenteResumen = error ? (window._agenteResumen||[]) : (data||[]);
-  }catch(e){ console.warn('[crm] agente_resumen fallo', e); window._agenteResumen = window._agenteResumen||[]; }
+  }catch(e){ console.warn('[crm] agente_resumen fallo', e); resumenErr = e; window._agenteResumen = window._agenteResumen||[]; }
+  health?.reply(resumenErr);
+  if(resumenErr) health?.record('DATA', 'ERROR', health.errorCode(resumenErr));
+  else if(resumenOk) health?.record('DATA', 'OK', 'CRM_RESUMEN_OK');
   // Flags push/app por jugador → para mostrar 🔔/📱 en el CRM
   try{
     const { data, error } = await supabaseClient.rpc("panel_crm_flags", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });

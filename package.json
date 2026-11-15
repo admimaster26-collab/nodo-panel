@@ -1,6 +1,6 @@
 {
   "name": "nodo-operativo",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "NODO · OPERATIVO — Panel de operaciones",
   "main": "main.js",
   "scripts": {
@@ -22,7 +22,13 @@
     "dev": "set \"ELECTRON_RUN_AS_NODE=\" && electron . --dev --remote-debugging-port=9222",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
-    "release": "electron-builder --win --publish always"
+    "release": "electron-builder --win --publish always",
+    "revision": "node scripts/revision.cjs estado",
+    "revision:on": "node scripts/revision.cjs on",
+    "revision:off": "node scripts/revision.cjs off",
+    "revision:sonda": "node scripts/revision.cjs sonda",
+    "revision:ahora": "node scripts/revision.cjs ahora",
+    "revision:cierre": "node scripts/revision.cjs cierre"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.111.0",

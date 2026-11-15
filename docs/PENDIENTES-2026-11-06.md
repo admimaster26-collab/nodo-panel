@@ -6,9 +6,19 @@
   `retiro_instrumento_v1` en la metadata, cuenta y solicitud juntas, llave por oficina en
   `retiro_instrumentos_oficinas`. Con la llave apagada `contexto_v1` contesta `enabled:false` antes de
   mirar nada más: el Portal sigue con el retiro de siempre.
-- **Llave prendida sólo en P4** (7/11, para la prueba de Juan con `?prueba=p4`). El Portal de producción
-  no llama a `contexto_v1` (revisado en los registros), así que los jugadores reales de P4 no lo ven.
-  Apagar: `update retiro_instrumentos_oficinas set habilitado=false where pc_codigo='P4'`.
+- **Llave prendida en P4 (7/11) y P1 (8/11, puesto beta de pruebas).** El Portal de producción no llama a
+  `contexto_v1` (revisado en los registros), así que los jugadores reales no lo ven.
+- **Interruptor para el admin de NODO** (8/11, `servidor/retiro-dni-interruptor.sql`, publicado):
+  `admin_retiro_dni_oficinas(token)` lista y `admin_retiro_dni_oficina_cambiar(token, pc, bool)` prende/apaga,
+  con la sesión de administrador de siempre y cada cambio en `retiro_instrumentos_oficinas_historial`.
+  Falta la pantalla en el admin (no se está tocando el admin ahora).
+- **Control del DNI y la edad (8/11, publicado). Regla: el número NUNCA traba al jugador** (Juan: "que no
+  se pueda dar un falso positivo… tipo alguna traba mal hecha"). Sólo el formato es obligatorio. Número
+  raro (todos iguales, escalera, 60 M, 70-89 M, ya rechazado antes) → aviso para el operador; el control de
+  verdad es el CUIT de Mercado Pago. Edad: rango amplio por el número (estimado ± 3); si incluye menores,
+  el Portal pregunta la edad. Única traba dura: decir menos de 18, y no es para siempre (corrige y el
+  operador ve que antes dijo otra cosa). Edad < 10 o > 110 = error de tipeo, se vuelve a pedir. En NODO,
+  con cualquier aviso, casilla "Lo revisé: es mayor de 18". Para certeza: foto del DNI o Renaper (pago).
 - `contexto_v1` entrega destino y titular de la cuenta validada sólo con vínculo ACCESO: lo mismo que ya
   entrega hoy `landing_datos_retiro` para rellenar. Si se quiere dejar de entregarlo, mover la comparación
   al servidor (el Portal la hace en las líneas ~3342, 3424, 3506, 4559).

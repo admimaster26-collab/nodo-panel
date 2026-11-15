@@ -18,7 +18,15 @@ function nodoUpdaterStatus(payload){
   else if(st==="available") el.innerHTML="<button class=\"mini-btn blue\" onclick=\"nodoDescargarActualizacion()\" style=\"padding:2px 8px;font-size:11px;font-weight:700\">⬇️ v"+escapeHtml(payload.version||"")+" Descargar</button>";
   else if(st==="downloading") el.innerHTML="<span style='color:#60a5fa;font-weight:700'>⬇️ "+(payload.percent||0)+"%</span>";
   else if(st==="downloaded") el.innerHTML="<button class=\"mini-btn green\" onclick=\"nodoInstalarActualizacion()\" style=\"padding:2px 8px;font-size:11px;font-weight:800\">🚀 Reiniciar e instalar</button>";
-  else if(st==="error") el.innerHTML='<span style="color:#f87171" title="'+escapeHtml(payload.message||"")+'">⚠️ Error</span>';
+  else if(st==="error") _updaterFallo(el, payload.message);
+}
+// El operador ve "Fallo al actualizar" y nada más: ni códigos, ni el texto de GitHub, ni un globito
+// técnico al pasar el mouse. Con un 504 de GitHub el detalle traía la lista entera de versiones y la
+// 2.1.5 lo pintaba hasta tapar la pantalla de P10C (8/11). El detalle, corto, sólo a la consola.
+const UPDATER_FALLO = "Fallo al actualizar";
+function _updaterFallo(el, detalle){
+  try{ if(detalle) console.warn("[updater]", String(detalle).slice(0,200)); }catch(_e){}
+  if(el) el.innerHTML="<span style='color:#f87171;font-weight:600'>"+UPDATER_FALLO+"</span>";
 }
 // Canal único de actualización unificado
 function nodoGetCanal(){ return "main"; }
@@ -94,7 +102,8 @@ function _updaterAnclar(){
       // se queda lo más a la izquierda que entra.
       const w=el.offsetWidth;
       const r = w>0 ? Math.min(right, Math.max(12, ancho-w-8)) : right;
-      el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=r+"px";
+      // Se corre hacia abajo si está la barra roja de sesión cerrada (--nodo-aviso-h).
+      el.style.top="calc(10px + var(--nodo-aviso-h, 0px))"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=r+"px";
     });
   }catch(_e){}
 }
@@ -124,13 +133,17 @@ async function nodoBuscarActualizacion(){
   if(el) el.innerHTML="<span style='color:#94a3b8'>Buscando...</span>";
   const r = await window.updaterAPI.check();
   if(!r || !r.ok){
-    if(el) el.textContent = (r&&r.reason==="dev-mode") ? "Solo disponible en app instalada." : "No se pudo buscar actualización.";
+    if(r&&r.reason==="dev-mode"){ if(el) el.textContent="Solo disponible en app instalada."; }
+    else _updaterFallo(el, r&&r.message);
   }
 }
 async function nodoDescargarActualizacion(){
   const el=document.getElementById("updaterStatusTxt");
   if(el) el.textContent="⬇️ Descargando...";
-  try{ await window.updaterAPI.download(); }catch(_e){ if(el) el.textContent="Error al descargar."; }
+  try{
+    const r=await window.updaterAPI.download();
+    if(r && r.ok===false) _updaterFallo(el, r.message);
+  }catch(_e){ _updaterFallo(el, _e && _e.message); }
 }
 async function nodoInstalarActualizacion(){
   try{ await window.updaterAPI.install(); }catch(_e){}

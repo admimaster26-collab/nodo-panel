@@ -85,5 +85,6 @@ test('el panel versionado coincide con sus fuentes y todos sus scripts compilan'
   assert.equal(result.changed, false);
   // Canario deliberado: si cambia la cantidad de bloques, revisar el manifiesto y subirlo a mano.
   // 25/10 · 34: entró js:chat-redimensionable (la manija para estirar la columna del chat).
-  assert.equal(result.blocks, 34);
+  // 13/11 · 35: entró js:oficina-whatsapp (el WhatsApp que ve el jugador, con rotación de línea).
+  assert.equal(result.blocks, 35);
 });

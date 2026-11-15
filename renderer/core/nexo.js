@@ -321,6 +321,13 @@ async function nexoSync(verbose){
   if(!window.nexoFile || !window.nexoFile.write || _nexoSyncing) return; // sin bridge (no desktop) → nada
   _nexoSyncing=true;
   try{
+    if(typeof window.nexoFile.estado === 'function'){
+      const st = await window.nexoFile.estado();
+      if(st && st.instalado === false){
+        if(verbose){ console.log('[nexo] Nexo NO instalado (no existe %APPDATA%\\nexo-desktop) → no se consultó ni escribió'); try{toast('Nexo no está instalado en esta PC','yellow');}catch(_e){} }
+        return;
+      }
+    }
     const opsFull = await _nexoCargarOpsCompletas();      // historia COMPLETA de Supabase (cacheada 15 min)
     const payload = _nexoBuildPayload(opsFull);
     if(!payload.usuarios.length){ if(verbose) console.log('[nexo] nada para enviar todavía'); return; }

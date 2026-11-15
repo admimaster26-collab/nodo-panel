@@ -239,12 +239,11 @@ const _lecturasPanel = {
   // La primera carga la hace la etapa 2; hasta entonces este reloj no pide nada.
   wallets: () => { if(nodoArranqueHabilitado('billeteras')) return cargarBilleteras(false); },
   chats: () => {
-    // Durante el cambio de caminos, el reloj de la lista también trae las conversaciones del
-    // canal nuevo. Sin await ni encadenado: si ese lado no contesta, la lista de siempre se
-    // dibuja igual (Juan, 2/10).
+    // Una sola lectura por vuelta: cargarChatsPortal usa _chatCanalNuevo cuando el canal beta está
+    // activo y, cuando no, comparte las filas de panel_core_get_chat_sesiones_json con _chatCanalNuevo.recibir.
+    if(typeof window.nodoCargarChatsPortal === 'function') return window.nodoCargarChatsPortal(true);
     try{ if(window._chatCanalNuevo) window._chatCanalNuevo.cargar(); }catch(_e){}
-    // cargarChats ya sólo repinta (chat-hilos.js): la que pide la lista al servidor es ésta.
-    return typeof window.nodoCargarChatsPortal === 'function' ? window.nodoCargarChatsPortal(true) : cargarChats(true);
+    return cargarChats(true);
   },
   // Lo mismo con la conversación abierta: cargarChatActual repinta, _v154pCargarChat la pide.
   conversation: () => typeof window._v154pCargarChat === 'function' ? window._v154pCargarChat(true) : cargarChatActual(true)

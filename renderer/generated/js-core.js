@@ -127,6 +127,9 @@ async function _revisarLineas(){
     let d = r.data; try{ if(typeof d==='string') d=JSON.parse(d); }catch(_e){}
     window._lineasEstado = d;
     _pintarAvisoLineas(d);
+    // Es el momento exacto para revisar si la que se cayó es la que muestra el Portal: si lo
+    // es, NodoWsp la cambia sola por otra que esté andando (renderer/extensions/oficina-whatsapp.js).
+    try{ window.NodoWsp && window.NodoWsp.revisar(); }catch(_e){}
   }catch(_e){ /* mudo a propósito: es informativo, no puede trabar la operación */ }
 }
 setInterval(_revisarLineas, 5*60*1000);
@@ -228,6 +231,55 @@ function formatFecha(fechaRaw){ return NodoDomain.formatos.formatFecha(fechaRaw)
 function formatearHoraChat(fechaRaw){ return NodoDomain.formatos.formatearHoraChat(fechaRaw); }
 function inicioDiaArgentina(){ return NodoDomain.formatos.inicioDiaArgentina(); }
 function _parseFechaCSV(str){ return NodoDomain.formatos.parseFechaCSV(str); }
+
+// Pedir un texto dentro de NODO. prompt() NO existe en Electron: falla callado y el botón "no hace
+// nada". Pasó con los botones de identidad (8/11), la validación manual y el enlace de acceso. Esto
+// es lo que se usa en su lugar; las reglas de botones están en docs/BOTONES.md.
+//   const motivo = await nodoPedirTexto({ titulo, texto, valor, confirmar:'Anotar', requerido:true });
+//   null = canceló (botón Cancelar o Esc). Enter confirma.
+window.nodoPedirTexto = function(opciones){
+  const o = opciones || {};
+  const esc = function(v){ return String(v == null ? '' : v).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); };
+  return new Promise(function(resolve){
+    let cerrado = false;
+    const previo = document.getElementById('nodoPedirTexto');
+    if(previo) previo.remove();
+    const capa = document.createElement('div');
+    capa.id = 'nodoPedirTexto';
+    capa.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(5,8,12,.72);display:flex;align-items:center;justify-content:center;padding:18px';
+    const boton = 'border-radius:8px;padding:8px 14px;font-weight:800;font-size:13px;cursor:pointer;';
+    capa.innerHTML = '<div role="dialog" aria-modal="true" style="width:min(440px,100%);box-sizing:border-box;background:#111821;border:1px solid #2b3442;border-radius:12px;padding:16px;color:#e6edf3;font:13px/1.45 system-ui,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.5)">'
+      + (o.titulo ? '<div style="font-weight:800;font-size:14px;margin-bottom:6px">' + esc(o.titulo) + '</div>' : '')
+      + (o.texto ? '<div style="color:#c9d1d9;margin-bottom:10px">' + esc(o.texto) + '</div>' : '')
+      + '<input type="text" autocomplete="off" style="width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid #3b4654;background:#0b0f14;color:#fff;font-size:14px">'
+      + '<div data-msg style="min-height:18px;margin-top:6px;font-size:12px;color:#fbbf24"></div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:6px">'
+      +   '<button type="button" data-no style="' + boton + 'border:1px solid #3b4654;background:transparent;color:#e6edf3">Cancelar</button>'
+      +   '<button type="button" data-si style="' + boton + 'border:0;background:#238636;color:#fff">' + esc(o.confirmar || 'Aceptar') + '</button>'
+      + '</div></div>';
+    document.body.appendChild(capa);
+    const input = capa.querySelector('input'), si = capa.querySelector('[data-si]'),
+          no = capa.querySelector('[data-no]'), msg = capa.querySelector('[data-msg]');
+    input.value = o.valor == null ? '' : String(o.valor);
+    const cerrar = function(valor){
+      if(cerrado) return;
+      cerrado = true;
+      try{ capa.remove(); }catch(_e){}
+      resolve(valor);
+    };
+    si.onclick = function(){
+      const v = String(input.value || '').trim();
+      if(o.requerido && !v){ msg.textContent = o.faltaTexto || 'Escribí algo para seguir.'; try{ input.focus(); }catch(_e){} return; }
+      cerrar(v);
+    };
+    no.onclick = function(){ cerrar(null); };
+    input.onkeydown = function(e){
+      if(e.key === 'Enter'){ e.preventDefault(); si.onclick(); }
+      else if(e.key === 'Escape'){ e.preventDefault(); cerrar(null); }
+    };
+    setTimeout(function(){ try{ input.focus(); input.select(); }catch(_e){} }, 0);
+  });
+};
 
 let todosLosJugadores = [];
 
@@ -1262,12 +1314,11 @@ const _lecturasPanel = {
   // La primera carga la hace la etapa 2; hasta entonces este reloj no pide nada.
   wallets: () => { if(nodoArranqueHabilitado('billeteras')) return cargarBilleteras(false); },
   chats: () => {
-    // Durante el cambio de caminos, el reloj de la lista también trae las conversaciones del
-    // canal nuevo. Sin await ni encadenado: si ese lado no contesta, la lista de siempre se
-    // dibuja igual (Juan, 2/10).
+    // Una sola lectura por vuelta: cargarChatsPortal usa _chatCanalNuevo cuando el canal beta está
+    // activo y, cuando no, comparte las filas de panel_core_get_chat_sesiones_json con _chatCanalNuevo.recibir.
+    if(typeof window.nodoCargarChatsPortal === 'function') return window.nodoCargarChatsPortal(true);
     try{ if(window._chatCanalNuevo) window._chatCanalNuevo.cargar(); }catch(_e){}
-    // cargarChats ya sólo repinta (chat-hilos.js): la que pide la lista al servidor es ésta.
-    return typeof window.nodoCargarChatsPortal === 'function' ? window.nodoCargarChatsPortal(true) : cargarChats(true);
+    return cargarChats(true);
   },
   // Lo mismo con la conversación abierta: cargarChatActual repinta, _v154pCargarChat la pide.
   conversation: () => typeof window._v154pCargarChat === 'function' ? window._v154pCargarChat(true) : cargarChatActual(true)
@@ -2871,7 +2922,15 @@ function nodoUpdaterStatus(payload){
   else if(st==="available") el.innerHTML="<button class=\"mini-btn blue\" onclick=\"nodoDescargarActualizacion()\" style=\"padding:2px 8px;font-size:11px;font-weight:700\">⬇️ v"+escapeHtml(payload.version||"")+" Descargar</button>";
   else if(st==="downloading") el.innerHTML="<span style='color:#60a5fa;font-weight:700'>⬇️ "+(payload.percent||0)+"%</span>";
   else if(st==="downloaded") el.innerHTML="<button class=\"mini-btn green\" onclick=\"nodoInstalarActualizacion()\" style=\"padding:2px 8px;font-size:11px;font-weight:800\">🚀 Reiniciar e instalar</button>";
-  else if(st==="error") el.innerHTML='<span style="color:#f87171" title="'+escapeHtml(payload.message||"")+'">⚠️ Error</span>';
+  else if(st==="error") _updaterFallo(el, payload.message);
+}
+// El operador ve "Fallo al actualizar" y nada más: ni códigos, ni el texto de GitHub, ni un globito
+// técnico al pasar el mouse. Con un 504 de GitHub el detalle traía la lista entera de versiones y la
+// 2.1.5 lo pintaba hasta tapar la pantalla de P10C (8/11). El detalle, corto, sólo a la consola.
+const UPDATER_FALLO = "Fallo al actualizar";
+function _updaterFallo(el, detalle){
+  try{ if(detalle) console.warn("[updater]", String(detalle).slice(0,200)); }catch(_e){}
+  if(el) el.innerHTML="<span style='color:#f87171;font-weight:600'>"+UPDATER_FALLO+"</span>";
 }
 // Canal único de actualización unificado
 function nodoGetCanal(){ return "main"; }
@@ -2947,7 +3006,8 @@ function _updaterAnclar(){
       // se queda lo más a la izquierda que entra.
       const w=el.offsetWidth;
       const r = w>0 ? Math.min(right, Math.max(12, ancho-w-8)) : right;
-      el.style.top="10px"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=r+"px";
+      // Se corre hacia abajo si está la barra roja de sesión cerrada (--nodo-aviso-h).
+      el.style.top="calc(10px + var(--nodo-aviso-h, 0px))"; el.style.bottom="auto"; el.style.left="auto"; el.style.right=r+"px";
     });
   }catch(_e){}
 }
@@ -2977,13 +3037,17 @@ async function nodoBuscarActualizacion(){
   if(el) el.innerHTML="<span style='color:#94a3b8'>Buscando...</span>";
   const r = await window.updaterAPI.check();
   if(!r || !r.ok){
-    if(el) el.textContent = (r&&r.reason==="dev-mode") ? "Solo disponible en app instalada." : "No se pudo buscar actualización.";
+    if(r&&r.reason==="dev-mode"){ if(el) el.textContent="Solo disponible en app instalada."; }
+    else _updaterFallo(el, r&&r.message);
   }
 }
 async function nodoDescargarActualizacion(){
   const el=document.getElementById("updaterStatusTxt");
   if(el) el.textContent="⬇️ Descargando...";
-  try{ await window.updaterAPI.download(); }catch(_e){ if(el) el.textContent="Error al descargar."; }
+  try{
+    const r=await window.updaterAPI.download();
+    if(r && r.ok===false) _updaterFallo(el, r.message);
+  }catch(_e){ _updaterFallo(el, _e && _e.message); }
 }
 async function nodoInstalarActualizacion(){
   try{ await window.updaterAPI.install(); }catch(_e){}
@@ -3658,6 +3722,13 @@ async function nexoSync(verbose){
   if(!window.nexoFile || !window.nexoFile.write || _nexoSyncing) return; // sin bridge (no desktop) → nada
   _nexoSyncing=true;
   try{
+    if(typeof window.nexoFile.estado === 'function'){
+      const st = await window.nexoFile.estado();
+      if(st && st.instalado === false){
+        if(verbose){ console.log('[nexo] Nexo NO instalado (no existe %APPDATA%\\nexo-desktop) → no se consultó ni escribió'); try{toast('Nexo no está instalado en esta PC','yellow');}catch(_e){} }
+        return;
+      }
+    }
     const opsFull = await _nexoCargarOpsCompletas();      // historia COMPLETA de Supabase (cacheada 15 min)
     const payload = _nexoBuildPayload(opsFull);
     if(!payload.usuarios.length){ if(verbose) console.log('[nexo] nada para enviar todavía'); return; }
@@ -6481,7 +6552,7 @@ async function cargarHistorial(){
   // Refrescar la vista unificada de solicitudes si ya tiene datos cargados
   try{ if(solicitudes.length || _historialData.length) renderHistorialUnificado(); }catch(_e){}
   // Cargar operaciones de agente (CSV) en paralelo → alimentan el CRM/segmentación
-  try{ cargarOperacionesAgente(); }catch(_e){}
+  try{ if(window._crmCargado) cargarOperacionesAgente(); }catch(_e){}
   }catch(error){
     health?.record(healthStage,'ERROR',healthStage==='RENDER'?'HISTORIAL_RENDER_FAILED':health.errorCode(error));
     throw error;
@@ -6511,14 +6582,20 @@ async function cargarOperacionesAgente(forzar){
   return _crmEnCurso;
 }
 async function _cargarOperacionesAgenteAhora(){
+  const health = window.NodoSalud?.begin('CRM');
   const pcs = (typeof pcAliasesHist==="function" ? pcAliasesHist() : [String(pcOperativa||"")]);
+  let resumenErr = null, resumenOk = false;
   try{
     const { data, error } = await supabaseClient.rpc("panel_crm_agente_resumen", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });
     // El error iba derecho a la basura. Es una consulta de 3 segundos y cuando se pasa del tope el
     // servidor devuelve 500: el CRM se quedaba sin datos y nadie se enteraba.
-    if(error) console.warn('[crm] agente_resumen fallo', error);
+    if(error){ console.warn('[crm] agente_resumen fallo', error); resumenErr = error; }
+    else if(Array.isArray(data)){ resumenOk = true; }
     window._agenteResumen = error ? (window._agenteResumen||[]) : (data||[]);
-  }catch(e){ console.warn('[crm] agente_resumen fallo', e); window._agenteResumen = window._agenteResumen||[]; }
+  }catch(e){ console.warn('[crm] agente_resumen fallo', e); resumenErr = e; window._agenteResumen = window._agenteResumen||[]; }
+  health?.reply(resumenErr);
+  if(resumenErr) health?.record('DATA', 'ERROR', health.errorCode(resumenErr));
+  else if(resumenOk) health?.record('DATA', 'OK', 'CRM_RESUMEN_OK');
   // Flags push/app por jugador → para mostrar 🔔/📱 en el CRM
   try{
     const { data, error } = await supabaseClient.rpc("panel_crm_flags", { p_pc_codigos: pcs, p_secret: window.PANEL_DATA_SECRET });
@@ -9734,6 +9811,7 @@ window.nodoAbrirAjustes = function(){
     nodoSincronizarAjustesTonos();
     try{ window.nodoCargarBackendAgentes && window.nodoCargarBackendAgentes(); }catch(_e){}
     try{ window.verificarEstadoBackoffice && window.verificarEstadoBackoffice(); }catch(_e){}
+    try{ window.NodoWsp && window.NodoWsp.revisar(); }catch(_e){}
     try{ nodoPintarEstadoSistema(); }catch(_e){}
   }catch(_e){}
 };
@@ -10818,8 +10896,11 @@ function abrirModalVincular(usuarioSugerido, telefono, prefill, desdeChat){
 // decide el operador: es la misma persona (se anota el cambio con su motivo), es otra persona (no
 // hereda el usuario viejo), o no hay evidencia (queda pendiente, sin acceso). Nada se aplica solo.
 const _ALTA_ID_REVISAR = ['CAMBIO_TELEFONO','TELEFONO_ANTERIOR','TELEFONO_DE_OTRO','USUARIO_REEMPLAZADO'];
-function _altaIdentidadBloque(uDecl, tDecl, id){
-  if(!id || _ALTA_ID_REVISAR.indexOf(id.veredicto) < 0) return '';
+// Devuelve las PARTES (título, historia, botones), no una tarjeta: van adentro de la tarjeta de
+// siempre. Antes reemplazaba la tarjeta entera y el operador perdía lo que veía en la 2.1.5 —el
+// "no ve el CBU", de quién es el teléfono y en qué oficina, los "usar…" y "seguir con…" (Juan, 8/11).
+function _altaIdentidadPartes(uDecl, tDecl, id){
+  if(!id || _ALTA_ID_REVISAR.indexOf(id.veredicto) < 0) return null;
   const esc=escapeHtml, u=id.usuario||{}, t=id.telefono||{}, d=t.dueno||null;
   const fecha=function(x){ const f=new Date(x||''); return isNaN(f)?'':f.toLocaleDateString('es-AR',{day:'2-digit',month:'2-digit',year:'2-digit'}); };
   const nombre=function(x){ return '<b>'+esc(String(x||''))+'</b>'; };
@@ -10837,7 +10918,8 @@ function _altaIdentidadBloque(uDecl, tDecl, id){
   } else if(id.veredicto==='TELEFONO_ANTERIOR'){
     lineas.push(nombre(usuario)+' pide con '+num(telConsulta)+', un número que antes era suyo. Hoy tiene registrado '+num(u.telefono)+'.');
   } else if(id.veredicto==='TELEFONO_DE_OTRO'){
-    lineas.push(nombre(usuario)+' está asociado al teléfono '+num(u.telefono)+actividad(u)+'.');
+    lineas.push(u.telefono ? nombre(usuario)+' está asociado al teléfono '+num(u.telefono)+actividad(u)+'.'
+                           : nombre(usuario)+' no tiene teléfono registrado'+actividad(u)+'.');
     lineas.push('El teléfono de esta consulta, '+num(telConsulta)+', hoy figura con '+nombre(d&&d.usuario)+actividad(d)+'.');
   } else {
     lineas.push('Este usuario es antiguo. Anteriormente estaba asociado al teléfono '+num(u.telefono)+'.');
@@ -10854,8 +10936,6 @@ function _altaIdentidadBloque(uDecl, tDecl, id){
   if(fuerte) lineas.push('<b style="color:#ff7b72">'+esc(usuario)+' tiene '+Number(u.operaciones||0)+' operaciones'+(u.tiene_cbu?' y cuenta de cobro':'')+': decidí vos antes de validar.</b>');
   if(u.vigente) lineas.push('<span style="color:#8b949e">El último usuario validado con ese número es '+nombre(u.vigente)+'. Es un dato, no se aplica solo.</span>');
   lineas.push('<span style="color:#8b949e">No se redirecciona automáticamente.</span>');
-  const col = fuerte ? { c:'#ff7b72', bg:'rgba(248,81,73,.12)', bd:'rgba(248,81,73,.50)', ico:'🚨' }
-                     : { c:'#e3b341', bg:'rgba(227,179,65,.11)', bd:'rgba(227,179,65,.42)', ico:'⚠️' };
   const titulo = id.veredicto==='CAMBIO_TELEFONO' ? 'Cambio de número'
                : id.veredicto==='TELEFONO_ANTERIOR' ? 'Número anterior'
                : id.veredicto==='TELEFONO_DE_OTRO' ? 'Número de otro usuario' : 'Usuario antiguo';
@@ -10866,40 +10946,49 @@ function _altaIdentidadBloque(uDecl, tDecl, id){
   };
   const misma = id.veredicto==='USUARIO_REEMPLAZADO' ? 'Es '+esc(usuario)+': este número reemplaza al anterior'
               : 'Es '+esc(usuario)+': '+esc(telConsulta)+' pasa a ser su número';
-  return '<div style="border:1px solid '+col.bd+';border-radius:10px;background:#0d1117;overflow:hidden">'
-    +   '<div style="display:flex;align-items:center;gap:7px;padding:5px 10px;background:'+col.bg+';border-bottom:1px solid '+col.bd+'">'
-    +     '<span style="font-size:12px;line-height:1">'+col.ico+'</span>'
-    +     '<span style="font-weight:800;font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:'+col.c+'">'+titulo+' · revisión humana</span>'
-    +   '</div>'
-    +   '<div style="padding:7px 10px;font-size:12px;line-height:1.45;color:#c9d1d9">'+lineas.map(function(l){ return '<div style="margin-bottom:3px">'+l+'</div>'; }).join('')
-    +     '<div style="margin-top:6px">'
-    +       boton('MISMA', misma, '#238636')
-    +       boton('OTRA', 'Es otra persona', '#1f6feb')
-    +       boton('PENDIENTE', 'Sin evidencia: queda pendiente', '#30363d')
-    +     '</div>'
-    +   '</div>'
-    + '</div>';
+  return {
+    titulo: titulo,
+    fuerte: fuerte,
+    historia: lineas.map(function(l){ return '<div style="margin-bottom:3px">'+l+'</div>'; }).join(''),
+    botones: '<div style="margin-top:6px">'
+      +   boton('MISMA', misma, '#238636')
+      +   boton('OTRA', 'Es otra persona', '#1f6feb')
+      +   boton('PENDIENTE', 'Sin evidencia: queda pendiente', '#30363d')
+      + '</div>'
+  };
 }
+// El motivo se pide con nodoPedirTexto, NUNCA con prompt(): en Electron prompt() no existe y los tres
+// botones "no hacían nada" (Juan, 8/11). Reglas de botones: docs/BOTONES.md.
 window.altaIdentidadDecidir = async function(dec, el){
   const usuario=(el&&el.getAttribute('data-u'))||'', tel=(el&&el.getAttribute('data-t'))||'', ver=(el&&el.getAttribute('data-v'))||'';
-  if(!usuario) return;
+  if(!usuario){ toast('No se pudo leer el usuario de la tarjeta. Volvé a buscarlo.','red'); return; }
+  if(el && el.disabled) return;
   const _op=(typeof operador!=='undefined' && operador && (operador.usuario||operador.nombre)) || '';
   const pc=String((typeof pcOperativa!=='undefined'&&pcOperativa)||window.pcOperativa||'');
   if(dec==='MISMA'){
-    const sugerido = ver==='USUARIO_REEMPLAZADO' ? 'volvió con otro número' : 'perdió el número';
-    const motivo = prompt('¿Por qué '+tel+' pasa a ser el número de '+usuario+'? Queda en su historia.', sugerido);
+    const motivo = await window.nodoPedirTexto({
+      titulo: 'Es '+usuario+': '+tel+' pasa a ser su número',
+      texto: '¿Por qué? Queda anotado en su historia.',
+      valor: ver==='USUARIO_REEMPLAZADO' ? 'volvió con otro número' : 'perdió el número',
+      confirmar: 'Confirmar', requerido: true, faltaTexto: 'Escribí el motivo: queda registrado.'
+    });
     if(motivo===null) return;
-    if(!String(motivo).trim()){ toast('Escribí el motivo: queda registrado.','yellow'); return; }
-    return ejecutarVincular(usuario, tel, true, { motivo:String(motivo).trim(), confirmado:true });
+    return ejecutarVincular(usuario, tel, true, { motivo:motivo, confirmado:true });
   }
   const decision = dec==='OTRA' ? 'OTRA_PERSONA' : 'SIN_EVIDENCIA';
-  const motivo = prompt(dec==='OTRA' ? 'Es otra persona: no hereda '+usuario+'. ¿Algo para dejar anotado?' : 'Queda pendiente, sin acceso. ¿Qué falta?',
-    dec==='OTRA' ? 'el número es de otra persona' : 'no hay datos suficientes');
+  const motivo = await window.nodoPedirTexto({
+    titulo: dec==='OTRA' ? 'Es otra persona' : 'Sin evidencia: queda pendiente',
+    texto: dec==='OTRA' ? 'No hereda '+usuario+'. ¿Algo para dejar anotado?' : 'Queda pendiente, sin acceso. ¿Qué falta?',
+    valor: dec==='OTRA' ? 'el número es de otra persona' : 'no hay datos suficientes',
+    confirmar: 'Anotar'
+  });
   if(motivo===null) return;
+  if(el) el.disabled = true;
   try{
-    const r=await supabaseClient.rpc('panel_identidad_decision',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pc,p_usuario:usuario,p_telefono:tel,p_decision:decision,p_motivo:String(motivo||'').trim()||null,p_operador:_op});
+    const r=await supabaseClient.rpc('panel_identidad_decision',{p_secret:window.PANEL_DATA_SECRET,p_pc_codigo:pc,p_usuario:usuario,p_telefono:tel,p_decision:decision,p_motivo:motivo||null,p_operador:_op});
     if(r.error || !(r.data&&r.data.ok)) throw new Error((r.error&&r.error.message)||(r.data&&r.data.mensaje)||'error');
-  }catch(e){ toast('No se pudo anotar la decisión: '+(e.message||e),'red'); return; }
+  }catch(e){ toast('No se pudo anotar la decisión. Probá de nuevo.','red'); console.warn('[identidad] decisión', e&&e.message); return; }
+  finally{ if(el) el.disabled = false; }
   if(dec==='OTRA'){
     toast('Anotado: es otra persona. Creá o validá su cuenta; no hereda '+usuario+'.','blue');
     try{ abrirModalVincular('', tel, false, true); }catch(_e){}
@@ -10909,6 +10998,10 @@ window.altaIdentidadDecidir = async function(dec, el){
 };
 function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
   const esc=escapeHtml, tN=_altaNormTel(tDecl);
+  // Cambio de número o de usuario (lo dice el servidor): va ADENTRO de esta tarjeta, entre las filas y
+  // el pie. Antes la reemplazaba entera y el operador dejaba de ver todo lo de arriba (Juan, 8/11).
+  // Lo ya validado se ve como siempre.
+  const _id = (resuelto && resuelto.usuario) ? null : _altaIdentidadPartes(uDecl, tDecl, r.identidad);
   const telsDe=function(c){ return ((c&&c.telefonos)||[]).map(_altaNormTel).filter(Boolean); };
   const uOk=r.usuario.exacto, tOk=r.telefono.exacto;
   const duenoTel = tOk?_altaNormU(tOk.usuario):null;
@@ -10999,6 +11092,9 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
         sub(_nota)
         + (_mostrar.length ? '<div>'+_mostrar.map(function(c){ const tl=telsDe(c);
             return chip(c.usuario, tl[0]||tN, esc(c.usuario)+(tl.length?(' · '+esc(tl[0])):''), 'ambar'); }).join('')+'</div>' : ''));
+    } else if(_id){
+      // El servidor sabe que existe (por eso hay revisión): nunca decir "no hay cuenta" acá.
+      filas+=fila('Usuario', esc(uDecl), '✓ en sistema', '#e3b341', '');
     } else {
       filas+=fila('Usuario', esc(uDecl), '✗ no hay cuenta con este usuario', '#8b949e', '');
     }
@@ -11113,7 +11209,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
 
   // Ni el usuario ni el teléfono están en ninguna cuenta: decirlo con todas las letras. Juan (12/09):
   // "el chabón declaró eso y no había usuario, el desplegable de coinciden debe decir 'sin usuario'".
-  const _sinNada = !uOk && !tOk && !(r.usuario.similares||[]).length && !(r.telefono.similares||[]).length
+  const _sinNada = !_id && !uOk && !tOk && !(r.usuario.similares||[]).length && !(r.telefono.similares||[]).length
                    && (uDecl || tN.length >= 6);
   if(!pie && _sinNada){
     pie = 'No hay ninguna cuenta con ' + (uDecl ? 'este usuario' : '') + (uDecl && tN.length >= 6 ? ' ni con ' : '')
@@ -11124,7 +11220,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
   // mensaje de ingreso, volver al chat, pegarlo, validar y volver a validar. Todo eso ya lo hace
   // el modal de alta (crea, vincula el teléfono, agenda y le manda los datos por el chat): lo
   // único que faltaba era llegar hasta él con lo que el cliente ya declaró.
-  const _esAltaNueva = !uOk && !tOk && (uDecl || tN.length>=6);
+  const _esAltaNueva = !_id && !uOk && !tOk && (uDecl || tN.length>=6);
   let acciones = '';
   if(_esAltaNueva){
     // La comilla se arma aparte: el valor viaja DENTRO de un onclick, y una comilla suelta en el
@@ -11155,8 +11251,9 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
     // muestran la cuenta REAL con la que quedó validado, no lo que el cliente escribió.
     alerta=false; conflicto=false; acciones=''; titulo='';
   }
-  const nivel = (resuelto && resuelto.usuario) ? 'validado'
-              : conflicto ? 'conflicto' : alerta ? 'revisar' : (uOk||tOk) ? 'ok' : 'nuevo';
+  let nivel = (resuelto && resuelto.usuario) ? 'validado'
+            : conflicto ? 'conflicto' : alerta ? 'revisar' : (uOk||tOk) ? 'ok' : 'nuevo';
+  if(_id) nivel = (_id.fuerte || nivel==='conflicto') ? 'conflicto' : 'revisar';
   const T = {
     ok:        { c:'#3fb950', bg:'rgba(63,185,80,.10)',  bd:'rgba(63,185,80,.38)',  ico:'✅' },
     validado:  { c:'#3fb950', bg:'rgba(63,185,80,.14)',  bd:'rgba(63,185,80,.50)',  ico:'✅' },
@@ -11164,7 +11261,8 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
     revisar:   { c:'#e3b341', bg:'rgba(227,179,65,.11)', bd:'rgba(227,179,65,.42)', ico:'⚠️' },
     conflicto: { c:'#ff7b72', bg:'rgba(248,81,73,.12)',  bd:'rgba(248,81,73,.50)',  ico:'🚨' }
   }[nivel];
-  const etiqueta = nivel==='validado'  ? 'Validado'
+  const etiqueta = _id                 ? _id.titulo+' · revisión humana'
+                 : nivel==='validado'  ? 'Validado'
                  : nivel==='conflicto' ? 'No coinciden'
                  : (nivel==='revisar' && _typoPropio) ? 'Teléfono mal tipeado'
                  : (nivel==='revisar' && _telCompartido) ? 'Teléfono en dos cuentas'
@@ -11173,10 +11271,9 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
                  : (uOk&&tOk)          ? 'Coinciden'
                  : uOk                 ? 'Usuario en sistema' : 'Teléfono en sistema';
 
-  // Si el servidor dice que hay un cambio de número o de usuario, esa tarjeta manda: la de abajo
-  // podía decir "coinciden" o "no hay cuenta" sobre el mismo caso. Lo ya validado se ve como siempre.
-  const _idBloque = (resuelto && resuelto.usuario) ? '' : _altaIdentidadBloque(uDecl, tDecl, r.identidad);
-  if(_idBloque) return { html:_idBloque, alerta:true, nivel:'revisar' };
+  const seccionId = _id
+    ? '<div style="padding:6px 10px 8px;border-top:1px solid '+T.bd+';font-size:12px;line-height:1.45;color:#c9d1d9">'+_id.historia+_id.botones+'</div>'
+    : '';
 
   const html =
       '<div style="border:1px solid '+T.bd+';border-radius:10px;background:#0d1117;overflow:hidden">'
@@ -11186,6 +11283,7 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
     +     (titulo?'<span style="margin-left:auto;font-size:8.5px;letter-spacing:.6px;text-transform:uppercase;color:#6e7681;white-space:nowrap">'+esc(titulo)+'</span>':'')
     +   '</div>'
     +   '<div style="padding:5px 10px 7px">'+filas+acciones+'</div>'
+    +   seccionId
     +   (pie?'<div style="padding:6px 10px;border-top:1px solid '+T.bd+';background:'+T.bg+';font-size:11.5px;line-height:1.35;color:'+T.c+'">'+pie+'</div>':'')
     + '</div>';
   return { html:html, alerta:(nivel==='conflicto'||nivel==='revisar'), nivel:nivel };
@@ -11270,10 +11368,13 @@ async function _altaPrevalRender(){
   box.__ultima=marca;
   box.innerHTML='<div class="small" style="color:#8b949e">Chequeando antecedentes…</div>';
   try{
-    const { data, error } = await supabaseClient.rpc('panel_prevalidar_usuario',{
-      p_secret: window.PANEL_DATA_SECRET,
-      p_pc_codigo:(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'',
-      p_telefono: tel, p_usuario: usr||null });
+    const pc=(typeof pcOperativa!=='undefined'?pcOperativa:'')||window.pcOperativa||'';
+    const { data, error } = typeof window.nodoPrevalidarConsultar==='function'
+      ? await window.nodoPrevalidarConsultar(tel, usr||null, pc)
+      : await supabaseClient.rpc('panel_prevalidar_usuario',{
+          p_secret: window.PANEL_DATA_SECRET,
+          p_pc_codigo: pc,
+          p_telefono: tel, p_usuario: usr||null });
     if(box.__ultima!==marca) return;           // el operador siguió escribiendo
     if(error) throw new Error(error.message||'');
     if(data && data.ok===false) throw new Error(data.error||'');
@@ -11934,24 +12035,35 @@ window._drexMarcarSinSesion = function(motivo){
 
 // Cartel FIJO mientras la sesión esté caída. El modal se puede cerrar; esto no se va hasta que se
 // entra de verdad. Es el «cartel de sesión cerrada como mínimo» que faltaba.
+// Mientras el cartel está, NODO se corre hacia abajo lo que mide (antes lo tapaba: Juan, 8/11). La altura
+// va en --nodo-aviso-h y base.css corre el panel, el menú, el chat y los avisos.
+function _drexAvisoAltura(b){
+  try{
+    const raiz = document.documentElement;
+    if(b){ raiz.style.setProperty('--nodo-aviso-h', (b.offsetHeight || 0) + 'px'); document.body.classList.add('nodo-con-aviso'); }
+    else { raiz.style.setProperty('--nodo-aviso-h', '0px'); document.body.classList.remove('nodo-con-aviso'); }
+  }catch(_e){}
+}
+try{ window.addEventListener('resize', function(){ const b = document.getElementById('drexSinSesionBanner'); if(b) _drexAvisoAltura(b); }); }catch(_e){}
 window._drexAvisarSinSesion = function(){
   try{
     let b = document.getElementById('drexSinSesionBanner');
-    if(!window._drexSinSesion){ if(b) b.remove(); return; }
+    if(!window._drexSinSesion){ if(b) b.remove(); _drexAvisoAltura(null); return; }
     if(!b){
       b = document.createElement('div');
       b.id = 'drexSinSesionBanner';
       b.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99999;background:#7f1d1d;'
-        + 'color:#fff;padding:10px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;'
-        + 'font-size:14px;box-shadow:0 2px 10px rgba(0,0,0,.45)';
+        + 'color:#fff;padding:7px 14px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;'
+        + 'font-size:13px;box-shadow:0 2px 10px rgba(0,0,0,.45)';
       document.body.appendChild(b);
     }
     b.innerHTML = '<span style="font-size:18px">🔒</span>'
       + '<b>La sesión de Agentes está cerrada</b>'
       + '<span style="font-weight:400;opacity:.9">No se puede cargar ni retirar hasta entrar.</span>'
       + '<button onclick="_mostrarModalLoginDrex()" style="margin-left:auto;background:#fff;'
-      + 'color:#7f1d1d;border:0;border-radius:8px;padding:6px 14px;font-weight:700;cursor:pointer">'
+      + 'color:#7f1d1d;border:0;border-radius:8px;padding:5px 14px;font-weight:700;cursor:pointer">'
       + 'Entrar a Agentes</button>';
+    _drexAvisoAltura(b);
   }catch(_e){}
 };
 
@@ -13603,17 +13715,18 @@ async function _chuniorConfirmarPuesto(value, text){
     window.pcOperativa = pcCodigoNuevo;          // espejo para los overrides que leen window
     window.oficinaId   = oficinaIdNueva;
 
-    // Aplicar el proxy de esta oficina (la config/clave se resuelve en el main, blindada).
-    // Mostramos el resultado para diagnóstico (antes se ignoraba → no se sabía si aplicó).
+    // Aplicar el proxy de esta oficina a Agentes y Chunior (la clave se resuelve en el main).
     try{
       if(window.ctrlElectron && ctrlElectron.proxyApply){
-        Promise.resolve(ctrlElectron.proxyApply(pcCodigoNuevo)).then(function(r){
-          if(r && r.ok && r.enabled) toast("🌐 Proxy de oficina aplicado (Agentes saldrá por proxy)","green");
-          else if(r && r.reason==="missing-secret") toast("⚠️ Esta PC no tiene la clave de la oficina → proxy NO aplicado. Agentes puede fallar.","red");
-          else if(r && r.enabled===false) toast("🌐 Esta oficina no tiene proxy en el admi → salida directa.","blue");
-        }).catch(function(){});
+        const r = await ctrlElectron.proxyApply(pcCodigoNuevo);
+        if(r && r.ok && r.enabled) toast("🌐 Proxy de oficina aplicado a Chunior y Agentes","green");
+        else if(r && r.reason==="missing-secret") toast("⚠️ Esta PC no tiene la clave de la oficina → Chunior y Agentes pueden fallar.","red");
+        else if(r && r.ok===false) toast("⚠️ No se pudo configurar la conexión de esta oficina. Chunior puede no cargar.","red");
+        else if(r && r.enabled===false) toast("🌐 Esta oficina no tiene proxy en el admi → salida directa.","blue");
       }
-    }catch(_e){}
+    }catch(_e){
+      toast("⚠️ No se pudo configurar la conexión de esta oficina. Chunior puede no cargar.","red");
+    }
 
     // En el primer ingreso, historial, titulares bloqueados y billeteras de Chunior los trae el
     // arranque por etapas, de a uno y después de dibujar el Inicio (login-y-realtime.js). Antes
@@ -16867,16 +16980,17 @@ async function procesarColaVerificacion(){
 if(window.ctrlElectron){
   setInterval(function(){
     if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
+    if(!document.getElementById("viewVerificaciones")) return;
     return procesarColaVerificacion();
   }, 5000);
-  // Actualiza badge de pendientes cada 10s
+  // Actualiza badge de pendientes cada 10s (sólo si el badge existe en la vista)
   setInterval(async ()=>{
     if(window.nodoArranqueHabilitado && !window.nodoArranqueHabilitado('verificaciones')) return;
+    const badge = document.getElementById("badgeVerif");
+    if(!badge) return;
     const { count } = await supabaseClient.from("verificaciones")
       .select("id", { count:"exact", head:true })
       .eq("pc_codigo", pcOperativa).eq("estado","PENDIENTE");
-    const badge = document.getElementById("badgeVerif");
-    if(!badge) return;
     if(count){ badge.classList.remove("hidden"); badge.textContent=count; }
     else badge.classList.add("hidden");
   }, 10000);

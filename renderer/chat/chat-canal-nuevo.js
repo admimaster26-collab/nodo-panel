@@ -189,6 +189,15 @@
 
   window._chatCanalNuevo = {
     cargar: cargarSesiones,
+    recibir(filas, pc){
+      const target = U(pc || window.pcOperativa || '');
+      if(!target || !Array.isArray(filas)) return;
+      syncOffice();
+      if(_pc === target && !_page){
+        _sesiones = filas;
+        _ultima = Date.now();
+      }
+    },
     tickets: ticketsDelCanalNuevo,
     mensajesDe: mensajesDe,
     paginaMensajes: chatId => _mensajes.get(S(chatId)),

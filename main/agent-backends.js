@@ -7,6 +7,8 @@ function createAgentBackends({ app, rootDir, env = process.env }) {
     casinodrex: {
       url:        'https://bo.casinodrex.com/agents/user_search',
       newUserUrl: 'https://bo.casinodrex.com/agents/new_user',
+      // Funcionalidades y permisos: ahí vive el WhatsApp que el jugador ve en el Portal.
+      whatsappUrl:'https://bo.casinodrex.com/agents/features',
       preload:    'agent-preload.js',
       spa:        false,
       label:      'Casinodrex',
@@ -15,6 +17,7 @@ function createAgentBackends({ app, rootDir, env = process.env }) {
     bet300: {
       url:        'https://agentesbet.io/',
       newUserUrl: 'https://agentesbet.io/',
+      whatsappUrl:null,          // este backoffice no tiene esa pantalla
       preload:    'agent-preload-bet300.js',
       spa:        true,
       label:      'BET300 (agentesbet.io)',
