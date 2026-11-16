@@ -4,7 +4,7 @@
 })(globalThis, function(Refresh){
   'use strict';
 
-  function create({ client, getOffice, getAliases, hasOpenChat, refresh, senal,
+  function create({ client, getOffice, getAliases, hasOpenChat, refresh, senal, chatChanged = () => {},
     notify = () => {}, playSound = () => {}, logger = console, timers = globalThis }) {
     const channels = new Map();
     const intervals = [];
@@ -63,6 +63,9 @@
     function subscribeChatBroadcast() {
       subscribe('chatBroadcast', 'nodo:chat', 'broadcast', { event: 'cambio' }, msg => {
         if(!isMyOffice(msg && msg.payload && msg.payload.pc)) return;
+        // El servidor avisa que escribió un jugador: la lista se lee YA, sin esperar el reloj de 15 s
+        // (16/11: el mensaje tardaba hasta 15 s en aparecer porque este aviso se ignoraba).
+        try { chatChanged(); } catch(_) {}
         reads.request('chats');
         if(hasOpenChat()) reads.request('conversation');
       });

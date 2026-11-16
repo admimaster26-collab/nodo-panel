@@ -35,6 +35,8 @@
 
   let _sesiones = [];
   let _ultima = 0;
+  // Avisos del servidor ("escribió un jugador") recibidos, y cuántos había cuando salió la lectura en vuelo.
+  let _avisos = 0, _avisosEnVuelo = 0;
   let _enCurso = null;
   let _pc = '';
   let _page = null;
@@ -76,7 +78,16 @@
     const pc = syncOffice(), revision = _revision;
     const ahora = Date.now();
     if(!forzar && (ahora - _ultima) < VIVE_MS) return _sesiones;
-    if(_enCurso) return _enCurso;
+    if(_enCurso){
+      // El aviso llegó con una lectura ya en vuelo, que puede no traer ese mensaje: se la espera y se lee
+      // otra vez. Sin esto el aviso se perdía y el mensaje aparecía recién con el reloj siguiente.
+      if(_avisos !== _avisosEnVuelo){
+        const otraVez = function(){ return cargarSesiones(false); };
+        return _enCurso.then(otraVez, otraVez);
+      }
+      return _enCurso;
+    }
+    const avisosAlPedir = _avisos; _avisosEnVuelo = avisosAlPedir;
     const flight = pedirSesiones(pc,_query).then(function(result){
       if(_pc === pc && revision === _revision && U(window.pcOperativa) === pc){
         if(result.page && _moreLoaded){
@@ -85,7 +96,8 @@
           _sesiones=[...map.values()];
           _page={...result.page,has_more:_page.has_more,next_before_id:_page.next_before_id};
         }else{ _sesiones=result.rows; _page=result.page; }
-        _ultima = Date.now();
+        // Si en el medio llegó un aviso, esta respuesta puede ser anterior a ese mensaje: no cuenta como al día.
+        _ultima = _avisos === avisosAlPedir ? Date.now() : 0;
       }
       return _sesiones;
     }).finally(function(){ if(_enCurso === flight) _enCurso = null; });
@@ -189,6 +201,10 @@
 
   window._chatCanalNuevo = {
     cargar: cargarSesiones,
+    // Llegó el aviso del servidor de que escribió un jugador: la próxima lectura va al servidor aunque
+    // la anterior sea de hace menos de 15 s. Antes el aviso caía dentro de esa ventana y se ignoraba,
+    // y el mensaje aparecía recién con el reloj siguiente (hasta 15 s después; Juan, 16/11).
+    invalidar(){ _ultima = 0; _avisos++; },
     recibir(filas, pc){
       const target = U(pc || window.pcOperativa || '');
       if(!target || !Array.isArray(filas)) return;

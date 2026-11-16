@@ -1363,6 +1363,8 @@ function _panelRealtime(){
     hasOpenChat: () => !!((window.V154P && window.V154P.chatActual) || window.chatActualId || chatActualId
       || (window.__nodoChatCurrentTicket && window.__nodoChatCurrentTicket._beta)),
     refresh: _lecturasPanel,
+    // Aviso del servidor de un mensaje nuevo: la próxima lectura de la lista no se saltea.
+    chatChanged: () => { try{ window._chatCanalNuevo && window._chatCanalNuevo.invalidar && window._chatCanalNuevo.invalidar(); }catch(_e){} },
     // Devuelve una firma corta de cómo está la bandeja. Mientras no cambie, no se baja la lista.
     // Si la RPC no está (panel viejo contra base vieja) devuelve null y queda sólo el reloj de 60 s.
     senal: async () => {

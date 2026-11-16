@@ -318,3 +318,25 @@ El bot (`soporte_auto_mensaje_v1`) no vive en ningún canal: son dos disparadore
 `nodo_beta_chat_*`. Por eso en P1 seguía contestando con NODO beta. Desde el 16/11 no contesta en las
 oficinas que figuran en `nodo_beta.beta_clientes` (hoy P1): `servidor/bot-apagado-en-beta.sql`, con su
 vuelta atrás. Las demás oficinas siguen igual. Cómo comprobarlo: `docs/PRUEBA_PORTAL_NODO.md`.
+
+## 12 · La lista de chats se lee al aviso, no al reloj (16/11)
+
+Juan notó demora al recibir el mensaje del jugador y al llegarle la respuesta. Medido contra el servidor real
+(P1, `scripts/medir-demora-chat.cjs`):
+
+| Sentido | Antes | Ahora |
+|---|---|---|
+| Jugador → lista de chats de NODO | 1,1 s · 24,8 s · 18,5 s (tres mensajes) | 0,8 s · 0,9 s · 1,0 s |
+| Respuesta del cajero → Portal (canal nuevo) | 0,8 a 4,4 s | igual: es el reloj de 5 s del Portal |
+
+- **Causa en NODO.** El servidor avisa al instante cuando escribe un jugador (`nodo:chat`), pero el aviso pedía
+  la lista por el mismo camino que el reloj y caía dentro de los 15 s de `chat-canal-nuevo.js`: se ignoraba.
+  Además la marca se pone al terminar la lectura, así que el reloj de 15 s salteaba una vuelta de cada dos:
+  la lista se leía cada 30 s. Ahora el aviso invalida la lista (`_chatCanalNuevo.invalidar`) y se lee en el
+  momento; un aviso que llega con una lectura en vuelo no se pierde. No se agregó ninguna lectura periódica:
+  sólo una por mensaje real.
+- **Portal.** Los avisos automáticos de NODO ("tu clave fue actualizada", "ya validamos tu cuenta") van al hilo
+  del usuario, que se leía cada 15 s. Mientras el jugador espera una respuesta (pidió algo, espera que lo
+  validen o escribió hace menos de 2 minutos) se lee en cada vuelta de 5 s; fuera de eso sigue cada 15 s.
+- **Lo que queda.** La respuesta del cajero tarda hasta 5 s por el reloj del Portal. Bajarlo sin gastar más
+  necesita un aviso del servidor al Portal (como `nodo:chat`), que hoy no existe.

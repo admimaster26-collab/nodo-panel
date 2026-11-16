@@ -164,3 +164,19 @@ test('senal · si la RPC no esta, no rompe nada', async () => {
   assert.equal(s.reads.requests, 0, 'sin senal no inventa lecturas; queda el reloj de 60 s');
   s.service.stop();
 });
+// Juan, 16/11: "noté tardanza en el recibo de mensaje del usuario". El aviso del servidor caía dentro de la
+// ventana de 15 s de la lista y se ignoraba: ahora avisa (chatChanged) para que la lectura no se saltee.
+test('el aviso de mensaje nuevo pide la lista sin esperar el reloj', async () => {
+  let cambios = 0;
+  const Realtime = require('../renderer/runtime/realtime.js');
+  const channels = [];
+  const timers = { setInterval: () => 0, clearInterval: () => {}, setTimeout: (fn) => { fn(); return 0; }, clearTimeout: () => {} };
+  const client = { channel: () => { const ch = { on(_t, _f, fn) { ch.fn = fn; return ch; }, subscribe() { return ch; } }; channels.push(ch); return ch; }, removeChannel() {} };
+  const service = Realtime.create({ client, timers, getOffice: () => 'P1', getAliases: () => ['P1'], hasOpenChat: () => false,
+    refresh: { requests() {}, wallets() {}, chats() {}, conversation() {} }, chatChanged: () => { cambios++; } });
+  service.subscribeChatBroadcast();
+  channels[0].fn({ payload: { pc: 'P2' } });
+  assert.equal(cambios, 0, 'otra oficina: nada');
+  channels[0].fn({ payload: { pc: 'P1', op: 'MSG' } });
+  assert.equal(cambios, 1);
+});

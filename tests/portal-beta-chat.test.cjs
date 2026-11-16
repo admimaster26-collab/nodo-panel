@@ -208,3 +208,16 @@ test('ID grande de conversación se conserva como texto en RPC',async()=>{
 test('un mensaje de guía local no muestra tilde de envío ni de visto',()=>{
   const h=harness();const node=h.ctx.addMsg('opción','user',null,{local:true});assert.equal(node.tick,undefined);
 });
+// Juan, 16/11: "noté tardanza en la respuesta de nodo". Los avisos automáticos de NODO ("tu clave fue
+// actualizada", "ya validamos tu cuenta") llegan por el hilo del usuario, que se leía cada 15 s.
+test('esperando una respuesta el hilo del jugador se lee en cada vuelta; sin espera, cada 15 s',async()=>{
+  const hilo=async name=>name==='landing_portal_chat_thread_get'?{data:{chat_thread:[]}}:beta();
+  const cuantas=h=>h.calls.filter(c=>c.name==='landing_portal_chat_thread_get').length;
+  const tranquilo=harness(hilo);
+  await tranquilo.ctx.pollOperatorMessages();await tranquilo.ctx.pollOperatorMessages();
+  assert.equal(cuantas(tranquilo),0,'sin espera no se suma una lectura en cada vuelta');
+  const espera=harness(hilo);
+  espera.ctx.state._escribioAt=Date.now();
+  await espera.ctx.pollOperatorMessages();
+  assert.equal(cuantas(espera),1,'recién escribió: el hilo se lee ya');
+});

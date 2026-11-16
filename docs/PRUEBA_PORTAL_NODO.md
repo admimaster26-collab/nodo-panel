@@ -81,6 +81,14 @@ de NODO la mira Juan en su NODO (punto 5) y el modelo prueba el lado del operado
 7. **Dejar limpio.** Las consultas de prueba quedan abiertas en P1 con el usuario `ayuda-1111111111`:
    cerrarlas desde NODO con "Cerrar consulta" (sirve además para probar ese botón).
 
+### Medir demoras
+
+`node scripts/medir-demora-chat.cjs <perfil-del-navegador>` manda tres mensajes como jugador y tres como cajero y dice
+cuánto tardó cada uno en verse del otro lado. Para probar código nuevo de NODO sin iniciar sesión: levantar un
+NODO propio (`--remote-debugging-port=9337 --user-data-dir=<temporal>`) y, por DevTools, fijar la oficina
+(`pcOperativa='P1'; window.pcOperativa='P1'`), llamar `iniciarBroadcastChat()` y `nodoCargarChatsPortal(true)`.
+Así corre el chat de verdad contra el servidor sin tocar Chunior ni las solicitudes. Cerrarlo al terminar.
+
 ## 5. Lo que encontró esta prueba el 16/11 y cómo quedó
 
 | Problema que vio Juan | Causa | Arreglo |
@@ -90,6 +98,7 @@ de NODO la mira Juan en su NODO (punto 5) y el modelo prueba el lado del operado
 | El bot contestaba en NODO 1.6 | El bot es un disparador sobre la tabla `chat_mensajes` (y `landing_solicitudes`): no está en ningún canal, así que contestaba igual con los canales nuevos. No se duplicó: nunca se sacó de abajo. | Servidor: `_soporte_bot_apagado` en los dos disparadores. En oficinas beta (hoy P1) no contesta; las demás, igual que antes. Publicado y ensayado; vuelta atrás en `servidor/bot-apagado-en-beta.vuelta-atras.sql`. |
 | "El chat no aparece" | Si el arranque del Portal terminaba después del pedido (conexión lenta), mandaba al jugador a Inicio y el chat quedaba tapado. | `Portal`: el arranque no saca a nadie del chat. Inicio, mientras espera, dice "Tu cajero ya tiene tu pedido" con un botón al chat, sin "Ya me activaron". |
 | El chat ofrecía "Validar mi cuenta" / "Soy nuevo" esperando al operador | El asistente se pintaba antes de que saliera el pedido y no se acordaba de él al volver. | `Portal`: mientras sale no habla; después sólo espera ("Tu mensaje le llegó a tu cajero…"), avisa cuando lo vieron y lo recuerda un día en el teléfono. |
+| El mensaje del jugador tardaba en aparecer en NODO (hasta 25 s medidos) | El aviso del servidor caía dentro de los 15 s de la lista y se ignoraba; el reloj leía una vuelta de cada dos. | `renderer/chat/chat-canal-nuevo.js` + `renderer/runtime/realtime.js`: el aviso invalida la lista y se lee en el momento (0,8 a 1,0 s medidos). Detalle en `docs/CANALES.md` §12. |
 | Estado del sistema: "Tareas de fondo · No respondió bien" | Todas las operaciones en Agentes se anotaban juntas. | `renderer/runtime/integration-health.js`: una fila por operación (cargar, retirar, crear usuarios, cambiar claves, buscar, saldo) con el motivo en castellano. |
 
 ## 6. Qué decir al terminar

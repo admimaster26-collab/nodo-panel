@@ -1162,6 +1162,14 @@ let portalChatVuelo=null, portalChatHistorialVuelo=null, portalChatContexto='', 
 let portalChatRevisarEn=0, portalChatCursor=null, portalChatInicializado=false, portalChatCerradoHasta=0;
 let portalChatGlobos=new Map(), portalChatHiloEn=0, portalChatViejos=[];
 let portalChatSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
+// Mientras el jugador espera una respuesta (pidió algo, espera que lo validen o escribió hace menos de dos
+// minutos), el hilo de su usuario se lee en cada vuelta y no cada 15 s. Los avisos automáticos de NODO
+// ("tu clave fue actualizada", "ya validamos tu cuenta") llegan por ese hilo y tardaban hasta 15 s más en
+// verse (Juan, 16/11). Fuera de esa espera sigue cada 15 s: con todos los jugadores, una lectura más pesa.
+function portalChatEsperaRespuesta(){
+  try{ if(Date.now()-Number(state._escribioAt||0)<120000)return true; }catch(_e){}
+  try{ return !!guiaPedidoEnCurso()||guiaEsperandoValidacion(); }catch(_e){ return false; }
+}
 function portalChatEstado(){return {...portalChatSalud,ruta:portalChatRuta,enCurso:!!portalChatVuelo};}
 function portalChatClave(){return JSON.stringify([state.publicCode||'',state.pcCodigo||'',state.usuario||'',state.telefono||'',state.chatId||'',state.chatToken||'']);}
 function portalChatPreparar(){
@@ -1175,7 +1183,7 @@ function portalChatPreparar(){
     portalChatGlobos=new Map();state.misGlobos=new Map();
     state.seenMsgIds=new Set();state._threadRendered=new Set();
     state.shownTexts=new Set();state._opMsgSeen=new Set();
-    portalChatContexto=key;portalChatRuta='probe';portalChatRevisarEn=0;portalChatCerradoHasta=0;portalChatHiloEn=Date.now()+15000;
+    portalChatContexto=key;portalChatRuta='probe';portalChatRevisarEn=0;portalChatCerradoHasta=0;portalChatHiloEn=portalChatEsperaRespuesta()?0:Date.now()+15000;
     portalChatCursor=null;portalChatInicializado=false;portalChatHistorialVuelo=null;
     portalChatSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
     const button=$('chatEarlier');if(button)button.remove();
@@ -1366,7 +1374,7 @@ async function pollPortalConversation(){
             // Cada 15 segundos y no cada 5: con todos los jugadores, una lectura más en cada vuelta pesa.
             let hiloUsuario=null;
             if(Date.now()>=portalChatHiloEn){
-              portalChatHiloEn=Date.now()+15000;
+              portalChatHiloEn=Date.now()+(portalChatEsperaRespuesta()?4000:15000);
               const delUsuario=await rpc('landing_portal_chat_thread_get',{p_usuario:state.usuario,p_public_code:state.publicCode,p_telefono:state.telefono||''});
               if(!current())return;
               hiloUsuario=delUsuario&&!delUsuario.error?(normalize(delUsuario.data)||delUsuario.data):null;
@@ -3731,6 +3739,7 @@ async function enviarSolicitudClave(){
 async function enviarMensajeSoporte(txt,imagenUrl=null,solicitudId=null){
   const mensaje=String(txt||"").trim();
   if(!mensaje&&!imagenUrl)return {ok:false,error:"El mensaje está vacío."};
+  state._escribioAt=Date.now();   // espera respuesta: el hilo se lee más seguido un rato (portalChatEsperaRespuesta)
   if(state._sendingSupport)return {ok:false,error:"Esperá a que termine el envío anterior."};
   state._sendingSupport=true;
   const context=[state.publicCode,state.pcCodigo,state.usuario].join("|");
@@ -5083,6 +5092,8 @@ function _reanudarPollsVisibles(){
   if(abierto){
     if(state.chatId) startChatPoll();
     if(state.usuario) startPortalThreadPoll();
+    // Al volver a la pestaña se lee ya, no en la próxima vuelta (hasta 5 s después).
+    try{ pollPortalConversation(); }catch(_e){}
   }
   if(tieneSolicitudPendiente()) startEstadoPoll();
 }
