@@ -45,7 +45,7 @@ async function crearUsuarioPanel(){
   const nombre        = document.getElementById("jugNuevoNombre")?.value?.trim();
   const telefono      = document.getElementById("jugNuevoTelefono")?.value?.replace(/\D/g,"")||"";
   const pc            = document.getElementById("jugNuevoPc")?.value?.trim().toUpperCase()||pcOperativa;
-  const clave         = document.getElementById("jugNuevoClave")?.value?.trim()||"12345a";
+  const clave         = document.getElementById("jugNuevoClave")?.value?.trim()||"1a2b3c4d";
 
   if(!usuario_nuevo||!nombre||!telefono){setBox("jugCrearMsg",`<div class="err-box">Completá usuario, nombre y teléfono.</div>`);return}
 
@@ -290,15 +290,15 @@ function abrirEditarUsuario(u){
 }
 
 function copiarDatosUsuario(u){
-  const txt=`Usuario: ${u.usuario}\nNombre: ${u.nombre}\nTeléfono: ${u.telefono||""}\nPC: ${u.pc_codigo||""}\nClave: ${u.clave||"12345a"}`;
+  const txt=`Usuario: ${u.usuario}\nNombre: ${u.nombre}\nTeléfono: ${u.telefono||""}\nPC: ${u.pc_codigo||""}\nClave: ${u.clave||"1a2b3c4d"}`;
   // Antes: .catch(()=>{}) — si fallaba, el operador no se enteraba de nada.
   window.nodoCopiar(txt, { etiqueta: "Datos copiados" });
 }
 
 async function resetearClaveUsuario(id, nombreUsuario){
-  if(!confirm(`¿Resetear clave de "${nombreUsuario}" a 12345a?`)) return;
-  const {error}=await supabaseClient.from("usuarios").update({clave:"12345a"}).eq("id",id);
-  if(!error) toast(`Clave de ${nombreUsuario} reseteada a 12345a`,"green");
+  if(!confirm(`¿Resetear clave de "${nombreUsuario}" a 1a2b3c4d?`)) return;
+  const {error}=await supabaseClient.from("usuarios").update({clave:"1a2b3c4d"}).eq("id",id);
+  if(!error) toast(`Clave de ${nombreUsuario} reseteada a 1a2b3c4d`,"green");
 }
 
 async function cargarJugadores(){
@@ -449,7 +449,7 @@ function renderTablaJugadores(lista){
       </td>
       <td>
         <div style="display:flex;flex-direction:column;gap:4px">
-          <button class="mini-btn blue" onclick='copiarDatosUsuario(${JSON.stringify({usuario:u.usuario,nombre:u.nombre,telefono:u.telefono,pc_codigo:u.pc_codigo,clave:u.clave||"12345a"})})'>📋 Copiar</button>
+          <button class="mini-btn blue" onclick='copiarDatosUsuario(${JSON.stringify({usuario:u.usuario,nombre:u.nombre,telefono:u.telefono,pc_codigo:u.pc_codigo,clave:u.clave||"1a2b3c4d"})})'>📋 Copiar</button>
           <button class="mini-btn green" onclick='abrirEditarUsuario(${JSON.stringify({id:u.id,usuario:u.usuario,nombre:u.nombre||"",telefono:u.telefono||"",dni:u.dni||"",nombre_transferencia:u.nombre_transferencia||"",cbu_alias:u.cbu_alias||"",pc_codigo:u.pc_codigo||"",clave:u.clave||""})})'>✏ Editar</button>
           <button class="mini-btn yellow" onclick="resetearClaveUsuario('${id}','${u.usuario}')">🔑 Reset</button>
         </div>

@@ -160,7 +160,7 @@ const api = {};
         // Normalmente ya se ejecutó sola (ver _claveAutoTick en automatizaciones.js): si llegó
         // hasta acá es porque el operador la bloqueó o porque la automática falló.
         if(String(s.TIPO||s.TIPO_SOLICITUD||"").toUpperCase()==="CAMBIO_CLAVE"){
-          const _clave = s.PASSWORD_NUEVO || "12345a";
+          const _clave = s.PASSWORD_NUEVO || "1a2b3c4d";
           const _bloq  = !!(deps.window._clavesBloqueadas && deps.window._clavesBloqueadas[String(id)]);
           return `<div class="v154p-card">
             <div>

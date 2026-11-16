@@ -128,9 +128,10 @@ function harness(options={}){
   return {ctx,elements,storage,messages,sent,rpcCalls,creadas,navigation,vueltas,opciones,tocar,del,dijo,campo};
 }
 function abierto(options){const h=harness(options);h.ctx.guiaMostrar();return h;}
-function retiroV1Rpc(ultima_solicitud,instrumento=null){
+// pide_dni: el switch aparte del DNI por oficina (16/11). Apagado por defecto, como en el servidor.
+function retiroV1Rpc(ultima_solicitud,instrumento=null,pide_dni=false){
   return async name=>name==='landing_portal_retiro_contexto_v1'
-    ? {data:{ok:true,contract:'retiro.instrumentos.v1',enabled:true,instrumento,ultima_solicitud}}
+    ? {data:{ok:true,contract:'retiro.instrumentos.v1',enabled:true,pide_dni,instrumento,ultima_solicitud}}
     : {data:{ok:true,verdict:'ACCESO',estado:'VINCULADO'}};
 }
 
@@ -342,7 +343,7 @@ test('esperando la validación no se le ofrece nada que no sirva',async()=>{
   assert.deepEqual(h.opciones(),[],'ni "Ya me activaron" ni "Hablar con mi cajero"');
   h.ctx.guiaIr('inicio');
   assert.deepEqual(h.opciones(),[]);
-  assert.ok(h.dijo('Tu cajero ya tiene tus datos'));
+  assert.ok(h.dijo('le llegó a tu cajero'));
 });
 test('si el operador contestó o el chat se cerró, el mismo pedido vuelve a salir',async()=>{
   const contesto=abierto();
@@ -532,9 +533,9 @@ test('retiro beta pendiente: la autoayuda explica la verificación única y no p
   assert.ok(h.dijo('Es por única vez para esta cuenta'));
   assert.ok(!h.elements.get('guiaMonto'),'no crea un segundo retiro mientras se valida');
 });
-test('retiro beta rechazado: la autoayuda ofrece corregir cuenta y vuelve a pedir DNI',async()=>{
+test('retiro beta rechazado, en una oficina con el switch del DNI prendido: ofrece corregir y vuelve a pedir DNI',async()=>{
   const h=abierto({rpc:retiroV1Rpc({id:378407,estado:'RECHAZADA',estado_validacion:'RECHAZADO',codigo:'DNI_MISMATCH',monto:20000,
-    creada_at:new Date().toISOString(),actualizada_at:new Date().toISOString()}),datosRetiro:{beta:true,validado:false}});
+    creada_at:new Date().toISOString(),actualizada_at:new Date().toISOString()},null,true),datosRetiro:{beta:true,validado:false}});
   await h.tocar('Un retiro');await h.tocar('Pedí y no me pagaron');
   assert.ok(h.dijo('el DNI rechazado no se puede volver a enviar'));
   await h.tocar('Corregir DNI o cuenta');
@@ -585,10 +586,26 @@ test('si el servidor no toma la carga, los datos siguen ahí para reintentar',as
   assert.equal(h.vueltas.length,0);assert.equal(h.elements.get('guiaMonto').value,'5000');
   assert.equal(h.elements.get('guiaEnviar').disabled,false,'el botón no queda trabado');
 });
+// Juan, 16/11: "aparecen los botones de acción cuando no deberían". Con algo en curso el menú no ofrece
+// otra operación: sólo ver cómo va y, en una carga, subir el comprobante.
 test('con una solicitud en revisión no ofrece otra ficha',async()=>{
-  const h=abierto({enCurso:true,state:{pendingTipo:'CARGA'}});
-  await h.tocar('Una carga');await h.tocar('Quiero cargar');
-  assert.ok(h.dijo('en revisión'));assert.ok(!h.elements.get('guiaMonto'));
+  const h=abierto({enCurso:true,state:{pendingTipo:'CARGA',solicitudId:'378404'}});
+  assert.ok(h.dijo('está revisando tu carga'));assert.ok(!h.dijo('Es automático'),'sin el saludo de "resuelvo cargas y retiros"');
+  assert.deepEqual(h.opciones(),['📎 Subir el comprobante','¿Cómo va mi carga?']);
+  assert.ok(!h.elements.get('guiaMonto'));
+  const r=abierto({enCurso:true,state:{pendingTipo:'RETIRO',solicitudId:'378405'}});
+  assert.deepEqual(r.opciones(),['¿Cómo va mi retiro?']);
+});
+test('cambio de clave en curso: sin menú ni "Ver opciones" hasta que el cajero contesta por la clave',async()=>{
+  const h=abierto();
+  h.ctx.claveEnCursoMarcar();h.ctx.guiaIr('inicio');
+  assert.ok(h.dijo('está cambiando tu clave'));assert.deepEqual(h.opciones(),[]);
+  h.ctx.guiaCederAPersona(new Date().toISOString(),'Dame un minuto');
+  assert.deepEqual(h.opciones(),[],'un mensaje que no es de la clave no la cierra');
+  h.ctx.guiaCederAPersona(new Date(Date.now()-10*60*1000).toISOString(),'✅ Tu clave fue actualizada correctamente.');
+  assert.deepEqual(h.opciones(),[],'el aviso de un cambio anterior tampoco');
+  h.ctx.guiaCederAPersona(new Date().toISOString(),'✅ Tu clave fue actualizada correctamente.');
+  assert.deepEqual(h.opciones(),['Ver opciones'],'terminó: vuelve la salida');
 });
 // Juan, 2/11: un jugador sin validar veía la cuenta, transfería, y recién al tocar "Ya transferí ·
 // Pedir la carga" le decían que no estaba habilitado. Se iba sin cargar. Ahora el servidor se consulta
@@ -739,9 +756,25 @@ test('no me acuerdo el usuario: sin cuenta confirmada no se lo dice ni repite lo
 test('sin validar y con sus datos ya en manos de una persona: no se los vuelve a pedir',async()=>{
   const h=abierto({state:{usuario:'juan',_altaSoporteEnviado:true},rpc:resolver('NO_REGISTRADO','')});
   await new Promise(r=>setTimeout(r,5));
-  assert.ok(h.dijo('Tu cajero ya tiene tus datos'));
+  assert.ok(h.dijo('le llegó a tu cajero'));
   assert.deepEqual(h.opciones(),[]);
   assert.ok(!h.elements.get('guiaTelefono'));
+});
+// Juan, 16/11: entró con "Tengo usuario pero no puedo entrar" y el asistente le ofreció "Validar mi cuenta" y
+// "Soy nuevo" mientras el cajero todavía no había apretado Validar. Mientras sale el pedido no habla; después
+// sólo espera, y la única novedad que se le dice es la que confirma el servidor: que su cajero lo vio.
+test('pedido de ayuda de acceso: mientras sale no hay menú; después espera y avisa una sola vez que lo vieron',async()=>{
+  const h=harness({state:{usuario:'ayuda-1111111111',telefono:'1111111111',nivelAcceso:'SOPORTE',_altaSoporteEnviando:true},rpc:resolver('NO_REGISTRADO','')});
+  h.ctx.guiaMostrar();
+  assert.deepEqual(h.opciones(),[],'mientras sale, nada');
+  assert.ok(!h.dijo('Validala'),'no le pide validar lo que está pidiendo');
+  h.ctx.state._altaSoporteEnviando=false;h.ctx.altaPedidaGuardar();
+  assert.equal(h.ctx.altaPedida(),true,'queda recordado en el teléfono');
+  h.ctx.guiaIr('inicio');
+  assert.ok(h.dijo('le llegó a tu cajero'));
+  assert.deepEqual(h.opciones(),[]);
+  h.ctx.guiaAvisarVisto();h.ctx.guiaAvisarVisto();
+  assert.equal(h.del('guide').filter(t=>t.includes('ya vio tu mensaje')).length,1,'una sola vez');
 });
 test('monto mal: pide el número, le avisa al operador y JAMÁS crea otra solicitud',async()=>{
   const h=abierto({rows:[CARGA_PENDIENTE]});
@@ -807,25 +840,25 @@ test('comprobante: si PostgREST devuelve PGRST202 (schema cache), el envío sigu
 
 test('los botones de las fichas vuelven aunque haya una solicitud pendiente',async()=>{
   const h=abierto({state:{pendingTipo:'CARGA',solicitudId:'378404'},rows:[CARGA_PENDIENTE],upload:async()=>null});
-  await h.tocar('Una carga');await h.tocar('Transferí y no me apareció');
+  await h.tocar('Subir el comprobante');
   h.elements.get('guiaArchivo').files=[{type:'image/png',size:10}];
   await h.ctx.guiaEnviarComprobante();
   assert.equal(h.elements.get('guiaEnviar').disabled,false,'se puede reintentar');
   assert.equal(h.elements.get('guiaEnviar').textContent,'Enviar comprobante');
 });
 test('con una pendiente en el teléfono y el servidor sin contestar, no se ofrece otra ficha',async()=>{
-  for(const accion of ['Quiero cargar']){
-    const h=abierto({state:{pendingTipo:'CARGA',solicitudId:'378404'},leerActiva:{ok:false,fila:null}});
-    await h.tocar('Una carga');await h.tocar(accion);
-    assert.ok(!h.elements.get('guiaMonto'),'sin respuesta no se crea otra a ciegas');
-    assert.equal(h.ctx.state.solicitudId,'378404','y no se borra lo que el teléfono sabe');
-  }
+  const h=abierto({state:{pendingTipo:'CARGA',solicitudId:'378404'},leerActiva:{ok:false,fila:null}});
+  await new Promise(r=>setTimeout(r,5));
+  assert.ok(!h.opciones().some(o=>/Una carga|Un retiro|Quiero/.test(o)),'sin respuesta no se ofrece otra a ciegas');
+  assert.equal(h.ctx.state.solicitudId,'378404','y no se borra lo que el teléfono sabe');
   const r=abierto({state:{pendingTipo:'RETIRO',solicitudId:'378404'},leerActiva:{ok:false,fila:null}});
-  await r.tocar('Un retiro');await r.tocar('Quiero retirar');
-  assert.ok(!r.elements.get('guiaMonto'));
+  await new Promise(x=>setTimeout(x,5));
+  assert.ok(!r.opciones().some(o=>/Una carga|Un retiro|Quiero/.test(o)));
 });
 test('si el servidor confirma que no hay ninguna, la marca vieja se limpia y sale la ficha',async()=>{
   const h=abierto({state:{pendingTipo:'CARGA',solicitudId:'378404'},leerActiva:{ok:true,fila:null}});
+  await new Promise(r=>setTimeout(r,10));
+  assert.ok(h.opciones().includes('💰 Una carga'),'al abrir el chat se le pregunta al servidor y vuelve el menú');
   await h.tocar('Una carga');await h.tocar('Quiero cargar');
   assert.ok(h.elements.get('guiaMonto'));assert.equal(h.ctx.state.solicitudId,'');
 });
@@ -835,7 +868,8 @@ test('pedir por el chat conserva la conversación abierta',async()=>{
   h.ctx.crearSolicitudRetiro=async(...a)=>{pedidos.push(a[4]);return {ok:true,solicitudId:'2'};};
   await h.tocar('Una carga');await h.tocar('Quiero cargar');
   h.campo('guiaMonto','5000');h.campo('guiaTitular','Neo Test');await h.ctx.guiaEnviarCarga();
-  await h.tocar('Otra consulta');await h.tocar('Un retiro');await h.tocar('Quiero retirar');
+  assert.ok(!h.opciones().includes('‹ Otra consulta'),'con la carga en curso no se ofrece otra cosa');
+  h.ctx.guiaIr('inicio');await h.tocar('Un retiro');await h.tocar('Quiero retirar');
   h.campo('guiaMonto','20000');h.campo('guiaDestino','mi.alias.mp');h.campo('guiaTitular','Neo Test');await h.ctx.guiaEnviarRetiro();
   assert.deepEqual(pedidos,[true,true]);
 });

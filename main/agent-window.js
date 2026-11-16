@@ -5,6 +5,7 @@ const { vigilarPreload } = require('./preload-listo');
 
 function createAgentWindowService({ BrowserWindow, icon, partition, backends, headers, requests }) {
   let agentWindow = null;
+  let agentWindowPreload = null;
   let navEsperadaDrex = false;
   // D-101 · El operador está entrando a Agentes: NADA navega esta ventana. Navegar descarga la
   // página, el iniciarSesion en vuelo no contesta nunca y el panel lo muestra como "se recargó
@@ -39,6 +40,7 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
   function loginEnCurso() { return loginDesde > 0 && Date.now() - loginDesde < LOGIN_TOPE_MS; }
   function marcarLogin(activo) { loginDesde = activo ? Date.now() : 0; }
   function createAgentWindow(url = backends.current.url) {
+    const backendPreload = backends.current.preload;
     agentWindow = new BrowserWindow({
       width:  1400,
       height: 900,
@@ -52,7 +54,7 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
       icon:   icon,
       show:   false,
       webPreferences: {
-        preload:              backends.current.preload,
+        preload:              backendPreload,
         partition:            partition, // sesión dedicada → el proxy solo afecta a Agentes
         contextIsolation:     true,
         nodeIntegration:      false,
@@ -60,6 +62,8 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
         backgroundThrottling: false,
       }
     });
+    agentWindowPreload = backendPreload;
+    const createdWindow = agentWindow;
 
     headers.configure(agentWindow);
 
@@ -90,15 +94,24 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
         requests.rejectAll(new Error('La página de Agentes se recargó durante la operación. Revisá el resultado antes de reintentar.'));
       }
     });
-    agentWindow.on('closed', () => {
-      agentWindow = null;
+    createdWindow.on('closed', () => {
+      if (agentWindow === createdWindow) {
+        agentWindow = null;
+        agentWindowPreload = null;
+      }
       requests.rejectAll(new Error('La ventana de Agentes se cerró durante la operación. Revisá el resultado antes de reintentar.'));
     });
 
     return agentWindow;
   }
   function getAgentWindow(url = backends.current.url) {
-    if (agentWindow && !agentWindow.isDestroyed()) return agentWindow;
+    if (agentWindow && !agentWindow.isDestroyed()) {
+      if (agentWindowPreload === backends.current.preload) return agentWindow;
+      if (requests.pending.size) {
+        throw new Error('No se puede cambiar de backoffice mientras hay una operación en curso. Probá de nuevo cuando termine.');
+      }
+      close();
+    }
     return createAgentWindow(url);
   }
 
@@ -167,11 +180,21 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
       console.warn('[main] NO se navega la ventana de Agentes: el operador está entrando (D-101).');
       return;
     }
-    // BET300 es una SPA (Vue): la ruta interna cambia (/, /login, rutas del router) pero es LA MISMA
-    // app. Comparar por ORIGIN → se reconoce como "misma página" y se REUSA sin recargar (agentesbet.io
-    // es más lento que casinodrex; recargar en cada búsqueda hacía que buscarUsuario pasara el timeout).
+    // BET300 usa una SPA sin pantallas distintas para estas operaciones: se reutiliza por ORIGIN.
+    // AdminOnline también es SPA, pero /agents/control y /config/socials son rutas distintas; su
+    // backend activa spaPathAware para cargar la pantalla que pidió la automatización.
     const sameUrl = (a, b) => {
-      if (backends.current.spa) { try { return new URL(a).origin === new URL(b).origin; } catch (_e) { return false; } }
+      if (backends.current.spa) {
+        try {
+          const actual = new URL(a), destino = new URL(b);
+          if (actual.origin !== destino.origin) return false;
+          if (backends.current.spaPathAware) {
+            const ruta = value => String(value || '/').replace(/\/+$/, '') || '/';
+            return ruta(actual.pathname) === ruta(destino.pathname);
+          }
+          return true;
+        } catch (_e) { return false; }
+      }
       return String(a || '').split('#')[0].split('?')[0] === String(b || '').split('#')[0].split('?')[0];
     };
     navEsperadaDrex = true;
@@ -206,7 +229,12 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
     }
   }
 
-  function close() { if (agentWindow && !agentWindow.isDestroyed()) agentWindow.destroy(); agentWindow = null; }
+  function close() {
+    const win = agentWindow;
+    agentWindow = null;
+    agentWindowPreload = null;
+    if (win && !win.isDestroyed()) win.destroy();
+  }
 
   return { get: getAgentWindow, close, navigate: navigateAgentTo, ready: whenAgentReady,
            marcarLogin, loginEnCurso, consola: leerConsola,

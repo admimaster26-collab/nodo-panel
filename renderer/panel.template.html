@@ -146,7 +146,7 @@
               <div style="display:flex;gap:8px">
                 <button class="btn btn-primary" onclick="ejecutarOperacionManual()" style="flex:2">Ejecutar</button>
                 <button class="mini-btn red" id="btnAbortarOp" onclick="abortarOperacionActual()" title="Frenar la operación en curso (solo corta ANTES de aplicar plata)" style="padding:10px 14px;display:none">⛔ Cancelar</button>
-                <button class="mini-btn yellow" onclick="blanquearClaveManual()" title="Resetear clave del usuario a 12345a" style="padding:10px 14px">🔑 Blanquear clave</button>
+                <button class="mini-btn yellow" onclick="blanquearClaveManual()" title="Resetear clave del usuario a 1a2b3c4d" style="padding:10px 14px">🔑 Blanquear clave</button>
                 <button class="mini-btn blue" onclick="abrirModalCrearUsuario()" title="Crear nuevo usuario en el casino" style="padding:10px 14px">➕ Crear</button>
                 <button class="mini-btn" onclick="abrirModalVincular('', '', false, false)" title="Validar un usuario y vincularlo a su teléfono" style="padding:10px 14px;background:#12b76a;color:#fff;border:none">✔️ Validar</button>
               </div>
@@ -430,7 +430,7 @@
                 <input id="chatCargarMonto" type="number" min="1" placeholder="Monto" style="width:90px;margin:0;padding:6px 10px;font-size:12px">
                 <button class="mini-btn green" onclick="chatAccionCargar()" title="Cargar saldo al usuario del chat">⚡ Cargar</button>
                 <button class="mini-btn red" onclick="chatAccionRetirar()" title="Retirar saldo al usuario del chat">🏧 Retirar</button>
-                <button class="mini-btn yellow" onclick="chatAccionResetClave()" title="Resetear clave a 12345a">🔑 Reset</button>
+                <button class="mini-btn yellow" onclick="chatAccionResetClave()" title="Resetear clave a 1a2b3c4d">🔑 Reset</button>
                 <button class="mini-btn blue" onclick="chatAccionVincular()" title="Validar el usuario en Agentes y agregarlo a la base (vínculo usuario/teléfono)">🔗 Vincular</button>
               </div>
               <span id="chatEstado" class="badge badge-muted">-</span>
@@ -556,7 +556,7 @@
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px">
-          <button id="agentBackendBtn" class="mini-btn blue" onclick="nodoCambiarBackendAgentes()" style="padding:10px;justify-content:center;text-align:center" title="Cambiar backend de agentes">🎰 Alternar Agente</button>
+          <button id="agentBackendBtn" class="mini-btn blue" onclick="nodoCambiarBackendAgentes()" style="padding:10px;justify-content:center;text-align:center" title="Elegir backoffice">🎰 Elegir backoffice</button>
           <button id="abrirBackofficeBtn" class="mini-btn gray" onclick="abrirBackoffice()" style="padding:10px;justify-content:center;text-align:center" title="Abrir ventana de backoffice">🖥 Abrir Ventana</button>
         </div>
       </div>

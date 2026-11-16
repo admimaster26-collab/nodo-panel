@@ -26,8 +26,10 @@
   var ESTADO = null;          // lo último que contestó el servidor
   var ULTIMA_ROTACION = null;
   var TRABAJANDO = false;
-  var BACKOFFICE = null;      // lo último que dijo la pantalla de Integraciones
+  var BACKOFFICE = null;      // último estado de WhatsApp del backoffice
   var BACKOFFICE_AT = 0;
+  var BACKOFFICE_VERIFICADO = false;
+  var BACKOFFICE_ERROR = "";
   var REVISANDO = false;
 
   function _pc(){
@@ -60,6 +62,13 @@
   }
   // Para comparar dos números escritos distinto: los últimos 10 dígitos son el número de verdad,
   // esté con 549, con 54, con 0 adelante o pelado.
+  // AdminOnline guarda +54 y los 10 digitos; NODO guarda el numero de WhatsApp completo, que para un
+  // celular argentino lleva el 9 (549...). Asi se copia de uno al otro sin romper el boton del jugador.
+  function _numeroParaNodo(num){
+    var d = String(num || "").replace(/[^0-9]/g, "");
+    if(d.length === 12 && d.indexOf("54") === 0) d = "549" + d.slice(2);
+    return d;
+  }
   function _clave(num){
     var d = String(num || "").replace(/[^0-9]/g, "");
     return d.length >= 10 ? d.slice(-10) : "";
@@ -80,12 +89,22 @@
   // ── Revisión ────────────────────────────────────────────────────────────────────────────
   // Lee el estado y actúa sola en los dos casos que no necesitan a nadie: rotar la línea que
   // se cayó, y dejar la señal del número que no es de ninguna línea.
-  // En Integraciones del backoffice está el número que la oficina configuró para sus propios
-  // jugadores. Si se puede leer, se lee: preguntarle al operador algo que la máquina puede
-  // averiguar sola es exactamente lo que no queremos. No se consulta en cada vuelta (abre la
-  // pantalla en un iframe): una vez cada 20 minutos alcanza, y cuando hace falta se fuerza.
-  // Cada cuánto se puede mover la pantalla del operador para ir a mirar el número.
-  var CADA_CUANTO_NAVEGAR = 6 * 60 * 60 * 1000;
+  // El watchdog de líneas corre cada 5 minutos. Se vuelve a leer en cada ciclo, y se navega
+  // a Personalizar página si la ventana está en otra sección. Si el operador está ocupado,
+  // _colaOcupada evita moverle la pantalla.
+  // El apuro de 4 minutos es SOLO para AdminOnline, que se lee dentro de su propia aplicacion sin
+  // recargar. En Casinodrex y BET300 mover la ventana de Agentes cada 4 minutos le corre la
+  // pantalla al operador y arriesga el bloqueo por recargas: ahi sigue siendo cada 6 horas.
+  function _backendElegido(){ var st = window._agentBackendState; return String((st && st.backend) || "casinodrex"); }
+  function _cadaCuantoNavegar(){ return _backendElegido() === "adminonline" ? 4 * 60 * 1000 : 6 * 60 * 60 * 1000; }
+  // El nombre que lee el operador es el del backoffice elegido, sin la aclaracion entre parentesis.
+  function _nombreBackoffice(){
+    var st = window._agentBackendState;
+    var l = String((st && st.label) || "").replace(/ *[(].*$/, "").replace(/[<>&"']/g, "").trim();
+    return l || "Casinodrex";
+  }
+  function _pantallaWhatsapp(){ return _backendElegido() === "adminonline" ? "Personalizar página" : "Funcionalidades y permisos"; }
+  var CADA_CUANTO_LEER = 4 * 60 * 1000;
   function _ultimaNavegada(){ try{ return Number(localStorage.getItem("nodoWspNavegadaAt")) || 0; }catch(_e){ return 0; } }
   function _anotarNavegada(){ try{ localStorage.setItem("nodoWspNavegadaAt", String(Date.now())); }catch(_e){} }
   // La misma cola que usa el watchdog para leer las fichas. Es la que evita que una lectura de
@@ -100,32 +119,67 @@
       return window._drexEncolar("leerWhatsappOficina(wsp)", llamar, { silencioso: true });
     return llamar();
   }
+  function _pedirEdicionBackoffice(numero){
+    var llamar = function(){
+      return window.ctrlElectron.drexAutomation("guardarWhatsappOficina", { numero: numero, navegar: true });
+    };
+    if(typeof window._drexEncolar === "function")
+      return window._drexEncolar("guardarWhatsappOficina(wsp)", llamar, { silencioso: false });
+    return llamar();
+  }
 
   // forzar = true: además de leer, se le pide a main que lleve la ventana de Agentes a
-  // Funcionalidades y permisos. La pantalla del operador se mueve poco y por algo: cuando no hay
+  // Personalizar página. La pantalla del operador se mueve poco y por algo: cuando no hay
   // número guardado, cuando lo pide él con el botón, o una vez cada seis horas — si no, un
   // número cambiado en el backoffice no se entera nunca (pasó: el panel mostraba uno viejo).
   // En el medio lee gratis: si la ventana ya está en esa pantalla, aprovecha y no navega nada.
   async function _mirarBackoffice(forzar){
-    if(!forzar && (Date.now() - BACKOFFICE_AT) < 20 * 60 * 1000) return BACKOFFICE;
-    if(!window.ctrlElectron || !window.ctrlElectron.drexAutomation) return BACKOFFICE;
-    if(_colaOcupada()) return BACKOFFICE;       // hay una operación en curso: este dato espera
-    var navegar = !!forzar || (Date.now() - _ultimaNavegada()) > CADA_CUANTO_NAVEGAR;
+    if(!forzar && BACKOFFICE_VERIFICADO && (Date.now() - BACKOFFICE_AT) < CADA_CUANTO_LEER) return BACKOFFICE;
+    if(!window.ctrlElectron || !window.ctrlElectron.drexAutomation){
+      BACKOFFICE_VERIFICADO = false;
+      BACKOFFICE_ERROR = "No está abierta la ventana de " + _nombreBackoffice() + ".";
+      return null;
+    }
+    if(_colaOcupada() && !forzar){
+      BACKOFFICE_VERIFICADO = false;
+      BACKOFFICE_ERROR = "La lectura espera a que termine la operación en curso.";
+      return null;       // hay una operación en curso: este dato espera
+    }
+    var navegar = !!forzar || (Date.now() - _ultimaNavegada()) > _cadaCuantoNavegar();
     try{
       if(navegar) _anotarNavegada();            // se anota aunque falle: no se reintenta en loop
       var r = await _pedirLectura(navegar);
-      if(r && r.ok === true){
-        BACKOFFICE = { numero: String(r.numero || "").trim(), habilitado: r.habilitado };
-        BACKOFFICE_AT = Date.now();
-      }else if(r && (r.ocupado || r.needsLogin || r.motivo === "OTRA_PANTALLA")){
-        // Está operando, se cayó la sesión, o la ventana está en otra pantalla: NO es que la
-        // oficina no tenga número. No se guarda nada y se vuelve a intentar en el próximo paso.
-        BACKOFFICE_AT = 0;
-      }else{
-        BACKOFFICE = null; BACKOFFICE_AT = Date.now();
+      // Si la sesión está en Control de agentes u otra pantalla, AdminOnline confirma la ruta
+      // incorrecta. Navegamos a la ruta real de Personalizar página y leemos esa pantalla ahora.
+      if(r && r.motivo === "OTRA_PANTALLA" && !navegar){
+        _anotarNavegada();
+        r = await _pedirLectura(true);
       }
-    }catch(_e){ BACKOFFICE_AT = 0; }
-    return BACKOFFICE;
+      if(r && r.ok === true){
+        BACKOFFICE = {
+          numero: String(r.numero || "").trim(),
+          pais: String(r.pais || ""),
+          habilitado: r.habilitado,
+          numeroValido: r.numeroValido !== false,
+          puedeEditar: r.puedeEditar === true
+        };
+        BACKOFFICE_AT = Date.now();
+        BACKOFFICE_VERIFICADO = true;
+        BACKOFFICE_ERROR = "";
+      }else{
+        BACKOFFICE_VERIFICADO = false;
+        BACKOFFICE_AT = 0;
+        BACKOFFICE_ERROR = r && r.needsLogin ? "La sesión de " + _nombreBackoffice() + " venció."
+          : r && r.ocupado ? "La ventana de " + _nombreBackoffice() + " está ocupada."
+          : r && r.motivo === "OTRA_PANTALLA" ? "No pude abrir Personalizar página para leer el número."
+          : _nombreBackoffice() + " no devolvió una lectura del número.";
+      }
+    }catch(_e){
+      BACKOFFICE_VERIFICADO = false;
+      BACKOFFICE_AT = 0;
+      BACKOFFICE_ERROR = "Falló la lectura de " + _nombreBackoffice() + ".";
+    }
+    return BACKOFFICE_VERIFICADO ? BACKOFFICE : null;
   }
 
   async function revisar(){
@@ -148,14 +202,22 @@
         // que la oficina eligió justamente para eso: ponerlo es mejor que dejarlo apagado, y no
         // hace falta que nadie lo escriba a mano.
         var bo = await _mirarBackoffice(true);
-        if(bo && bo.numero){
-          await _guardarPublicado(bo.numero, "traído del backoffice");
+        if(bo && bo.numero && bo.numeroValido !== false){
+          await _guardarPublicado(_numeroParaNodo(bo.numero), "traído del backoffice");
           ESTADO = await _rpc("panel_oficina_wsp_estado");
           pintarTilde(); pintar();
           return ESTADO;
         }
       }else if(d.numero_pagina){
-        await _mirarBackoffice(false);
+        var leido = await _mirarBackoffice(false);
+        // Con AdminOnline lo que ve el jugador es lo de AdminOnline (Juan, 16/11): si cambio alla, NODO lo
+        // sigue solo. Solo con una lectura verificada y un numero valido; nunca con una lectura fallida.
+        if(_backendElegido() === "adminonline" && leido && BACKOFFICE_VERIFICADO && leido.numero
+           && leido.numeroValido !== false && _clave(leido.numero) && _clave(leido.numero) !== _clave(d.numero_pagina)){
+          await _guardarPublicado(_numeroParaNodo(leido.numero), "cambiado en " + _nombreBackoffice());
+          ESTADO = await _rpc("panel_oficina_wsp_estado");
+          d = ESTADO || d;
+        }
       }
 
       if(d.pide === "ROTAR"){
@@ -201,12 +263,32 @@
 
     // El backoffice manda sobre cualquier otra pregunta: no tiene sentido preguntar si el
     // número sigue andando cuando ni siquiera es el que la oficina tiene configurado.
-    var boNum = (BACKOFFICE && BACKOFFICE.numero) ? BACKOFFICE.numero : "";
-    var desacuerdo = !!(boNum && d.numero_pagina && _clave(boNum) !== _clave(d.numero_pagina));
+    var boNum = (BACKOFFICE_VERIFICADO && BACKOFFICE && BACKOFFICE.numero) ? BACKOFFICE.numero : "";
+    var boInvalido = !!(BACKOFFICE_VERIFICADO && BACKOFFICE && boNum && BACKOFFICE.numeroValido === false);
+    var claveBo = boNum ? _clave(boNum) : "";
+    var clavePublicado = d.numero_pagina ? _clave(d.numero_pagina) : "";
+    var coincide = !!(boNum && !boInvalido && claveBo && clavePublicado && claveBo === clavePublicado);
+    var desacuerdo = !!(boNum && !boInvalido && d.numero_pagina && !coincide);
 
     // 1) Qué pasa, en una línea, y el botón que corresponde a este momento.
     var titulo = "", color = "#94a3b8", acciones = "";
-    if(desacuerdo){
+    if(!BACKOFFICE_VERIFICADO){
+      color = "#facc15";
+      titulo = BACKOFFICE_ERROR || "No pude verificar el número en " + _nombreBackoffice() + ".";
+      acciones = '<button class="mini-btn blue" onclick="nodoWspLeerBackoffice()" style="padding:9px">Revisar en ' + _nombreBackoffice() + '</button>'
+      // El numero que ve el jugador se puede cambiar SIEMPRE, este o no verificado el backoffice.
+      if(d.numero_pagina) acciones += '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Cambiarlo</button>';
+      if(pide === "CARGAR_NUMERO"){
+        color = "#f87171";
+        titulo = "No hay WhatsApp publicado: al jugador no le aparece el botón para escribirte.";
+        acciones = '<button class="mini-btn blue" onclick="nodoWspLeerBackoffice()" style="padding:9px">📄 Traerlo del backoffice</button>'
+                 + '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Escribirlo a mano</button>';
+      }
+    }else if(boInvalido){
+      color = "#f87171";
+      titulo = "El número guardado en " + _nombreBackoffice() + " tiene un formato inválido.";
+      acciones = '<button class="mini-btn blue" onclick="nodoWspEditarBackoffice(this)" style="padding:9px">✏️ Corregir en ' + _nombreBackoffice() + '</button>';
+    }else if(desacuerdo){
       color = "#f87171";
       titulo = "El número de la página no es el que tenés puesto en el backoffice.";
       acciones = '<button class="mini-btn blue" onclick="nodoWspUsarBackoffice()" style="padding:9px">⬇️ Poner el del backoffice</button>'
@@ -219,6 +301,27 @@
     }else if(pide === "MAPEAR"){
       color = "#facc15";
       titulo = "¿Cuál de tus líneas es el número publicado? Con eso lo puedo cambiar solo cuando se caiga.";
+    }else if(BACKOFFICE_VERIFICADO && BACKOFFICE && !boNum){
+      color = "#f87171";
+      titulo = _nombreBackoffice() + " no tiene un número de WhatsApp cargado.";
+      acciones = '<button class="mini-btn blue" onclick="nodoWspEditarBackoffice(this)" style="padding:9px">Cargar número en ' + _nombreBackoffice() + '</button>';
+    }else if(coincide && BACKOFFICE.habilitado === true){
+      color = pide === "CONFIRMAR" ? "#facc15" : "#22c55e";
+      titulo = pide === "CONFIRMAR"
+        ? "El número coincide y el contacto está activo en " + _nombreBackoffice() + ". ¿El WhatsApp publicado sigue andando?"
+        : "El número coincide y el contacto está activo en " + _nombreBackoffice() + ".";
+      acciones = pide === "CONFIRMAR"
+        ? '<button class="mini-btn green" onclick="nodoWspConfirmar()" style="padding:9px">✅ Sí, sigue andando</button>'
+          + '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Cambiarlo</button>'
+        : '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Cambiarlo</button>';
+    }else if(coincide && BACKOFFICE.habilitado === false){
+      color = "#f87171";
+      titulo = "El número coincide, pero el contacto está apagado en " + _nombreBackoffice() + ".";
+      acciones = '<button class="mini-btn blue" onclick="nodoWspEditarBackoffice(this)" style="padding:9px">Activar en ' + _nombreBackoffice() + '</button>';
+    }else if(coincide){
+      color = "#facc15";
+      titulo = "El número coincide, pero " + _nombreBackoffice() + " no confirmó si el contacto está activo.";
+      acciones = '<button class="mini-btn blue" onclick="nodoWspLeerBackoffice()" style="padding:9px">Revisar estado en ' + _nombreBackoffice() + '</button>';
     }else if(pide === "CONFIRMAR"){
       color = "#facc15";
       titulo = "¿El WhatsApp publicado sigue andando? Lo preguntamos una vez por día, en un turno distinto cada día.";
@@ -226,7 +329,7 @@
                + '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Cambiarlo</button>';
     }else{
       color = "#22c55e";
-      titulo = publicado ? "El WhatsApp publicado está andando." : "Sin novedades.";
+      titulo = publicado ? "No hay una verificación reciente de " + _nombreBackoffice() + "." : "Sin novedades.";
       acciones = '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Cambiarlo</button>';
     }
 
@@ -234,21 +337,45 @@
 
     if(publicado){
       html += '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0">'
-            + '<span style="color:#94a3b8">Lo que ve el jugador</span>'
-            + '<span style="color:' + (desacuerdo ? "#f87171" : "#e2e8f0") + ';font-weight:700">' + _esc(publicado)
+            + '<span style="color:#94a3b8">' + (_backendElegido() === "adminonline" ? "Guardado en NODO" : "Lo que ve el jugador") + '</span>'
+            + '<span style="color:' + ((desacuerdo || boInvalido) ? "#f87171" : "#e2e8f0") + ';font-weight:700">' + _esc(publicado)
             + (d.linea_pagina ? ' <span style="color:#64748b;font-weight:400">· ' + _esc(d.linea_pagina.nombre || "") + '</span>' : '')
             + '</span></div>';
     }
-    if(boNum){
+    if(BACKOFFICE_VERIFICADO && boNum){
       html += '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0">'
-            + '<span style="color:#94a3b8">En el backoffice</span>'
-            + '<span style="color:' + (desacuerdo ? "#facc15" : "#22c55e") + ';font-weight:700">' + _esc(_lindo(boNum))
-            + (desacuerdo ? '' : ' <span style="font-weight:400">· coincide</span>') + '</span></div>';
+            + '<span style="color:#94a3b8">' + (_backendElegido() === "adminonline" ? "Lo que ve el jugador" : "En " + _nombreBackoffice()) + '</span>'
+            + '<span style="color:' + (boInvalido ? "#f87171" : desacuerdo ? "#facc15" : coincide ? "#22c55e" : "#e2e8f0") + ';font-weight:700">' + _esc(_lindo(boNum))
+            + (boInvalido ? ' <span style="font-weight:400">· formato inválido</span>'
+              : coincide ? ' <span style="font-weight:400">· coincide</span>'
+              : desacuerdo ? ' <span style="font-weight:400">· distinto</span>' : '') + '</span></div>';
       if(BACKOFFICE.habilitado === false){
         html += '<div class="alert-box" style="background:#2a2416;color:#f0d99b;border-left:3px solid #c9a227;margin:8px 0">'
               + 'En el backoffice el contacto por WhatsApp está <b>apagado</b>: por más que el número esté bien, '
-              + 'al jugador no le aparece el botón. Tildalo en Funcionalidades y permisos.</div>';
+              + 'al jugador no le aparece el botón. Tildalo en Personalizar página.</div>';
       }
+    }
+
+    if(BACKOFFICE_VERIFICADO && BACKOFFICE && !boNum){
+      html += '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0">'
+            + '<span style="color:#94a3b8">' + (_backendElegido() === "adminonline" ? "Lo que ve el jugador" : "En " + _nombreBackoffice()) + '</span>'
+            + '<span style="color:#facc15;font-weight:700">Sin número cargado</span></div>';
+      if(BACKOFFICE.habilitado === false){
+        html += '<div class="alert-box" style="background:#2a2416;color:#f0d99b;border-left:3px solid #c9a227;margin:8px 0">'
+              + 'En ' + _nombreBackoffice() + ' el contacto por WhatsApp está apagado. Activá el permiso en ' + _pantallaWhatsapp() + '.</div>';
+      }
+    }
+    if(boInvalido){
+      html += '<div class="alert-box" style="background:#2a1717;color:#fecaca;border-left:3px solid #ef4444;margin:8px 0">'
+            + _nombreBackoffice() + ' acepta hasta 10 dígitos en este campo. Corregilo antes de publicarlo.</div>';
+    }
+    if(!BACKOFFICE_VERIFICADO){
+      html += '<div class="alert-box" style="background:#2a2416;color:#f0d99b;border-left:3px solid #c9a227;margin:8px 0">'
+            + 'El número todavía no está verificado en ' + _nombreBackoffice() + '. No puedo decir que coincide ni que está activo.</div>';
+    }
+    if(BACKOFFICE_VERIFICADO && BACKOFFICE && BACKOFFICE.puedeEditar){
+        if(acciones.indexOf("nodoWspEditarBackoffice") < 0) html += '<div style="margin-top:7px"><button class="mini-btn gray" onclick="nodoWspEditarBackoffice(this)" style="padding:7px 9px">'
+            + (boNum ? '✏️ Cambiar número en ' + _nombreBackoffice() : '✏️ Cargar número en ' + _nombreBackoffice()) + '</button></div>';
     }
 
     if(ULTIMA_ROTACION && ULTIMA_ROTACION.cambio){
@@ -284,10 +411,14 @@
         html += '<div class="small" style="color:#64748b;margin-top:6px">Con el número de 4 líneas que estén andando ya lo cambio solo cuando una se caiga'
               + (conNum ? ' (van ' + conNum + ').' : '.') + '</div>';
       }
-    }else{
+    }else if(_backendElegido() !== "adminonline"){
       html += '<div class="small" style="color:#64748b;margin-top:10px;padding-top:8px;border-top:1px solid #1e293b">'
-            + 'No tengo lectura de tus líneas de WhatsApp, así que no lo puedo revisar solo: por eso te pregunto.</div>';
+            + 'Si el WhatsApp de la página deja de contestar, cambialo acá.</div>';
     }
+
+    // Con AdminOnline el número se cambia allá y NODO lo copia solo: un "Cambiarlo" acá se pisaría en la
+    // próxima revisión. Queda únicamente el botón de cambiarlo en AdminOnline.
+    if(_backendElegido() === "adminonline") acciones = acciones.replace(/<button[^>]*nodoWspEscribirNumero[^>]*>[^<]*<[/]button>/g, "");
 
     if(acciones){
       html += '<div style="display:flex;gap:8px;margin-top:12px">' + acciones + '</div>';
@@ -303,12 +434,14 @@
     finally{ TRABAJANDO = false; }
   }
 
-  // Lo trae de la pantalla de Integraciones del backoffice, sin moverle la ventana al operador.
-  // Vuelve a leer Integraciones ahora mismo y cuenta qué encontró.
+  // Lee el número directamente de Personalizar página en la ventana de Agentes.
+  // Lee Personalizar página ahora mismo y cuenta qué encontró.
   window.nodoWspLeerBackoffice = function(){
     return _unaSola(async function(){
       var box = document.getElementById("ajustesWhatsapp");
-      if(box) box.innerHTML = '<div class="small" style="color:#94a3b8">Buscándolo en el backoffice…</div>';
+      if(box) box.innerHTML = _colaOcupada()
+        ? '<div class="small" style="color:#facc15">La lectura quedó en cola; espero que termine la operación en curso…</div>'
+        : '<div class="small" style="color:#94a3b8">Buscándolo en el backoffice…</div>';
       BACKOFFICE_AT = 0;
       var bo = await _mirarBackoffice(true);
       if(!bo){
@@ -325,8 +458,68 @@
     return _unaSola(async function(){
       var bo = await _mirarBackoffice(false);
       if(!bo || !bo.numero){ _avisar("Ahora no tengo el número del backoffice."); return; }
-      await _guardarPublicado(bo.numero, "traído del backoffice");
+      if(bo.numeroValido === false){ _avisar("El número de " + _nombreBackoffice() + " no es válido. Corregilo antes de publicarlo."); return; }
+      await _guardarPublicado(_numeroParaNodo(bo.numero), "traído del backoffice");
     });
+  };
+
+  window.nodoWspEditarBackoffice = function(boton){
+    if(TRABAJANDO) return;
+    if(boton) boton.disabled = true;
+    var tarea = _unaSola(async function(){
+      if(!window.ctrlElectron || !window.ctrlElectron.drexAutomation){
+        _avisar("No puedo abrir " + _nombreBackoffice() + " desde esta pantalla."); return;
+      }
+      var actual = String(BACKOFFICE && BACKOFFICE.numero || "").replace(/[^0-9]/g, "");
+      var prefijoPais = String(BACKOFFICE && BACKOFFICE.pais || "").replace(/[^0-9]/g, "");
+      if(prefijoPais && actual.slice(0, prefijoPais.length) === prefijoPais) actual = actual.slice(prefijoPais.length);
+      if(actual.length > 10) actual = actual.slice(-10);
+      var valor = await window.nodoPedirTexto({
+        titulo: "WhatsApp de " + _nombreBackoffice(),
+        texto: "Escribí entre 7 y 10 dígitos, sin el código de país. Se conserva el país seleccionado (" + String(BACKOFFICE && BACKOFFICE.pais || "+54") + "). Esto cambia el contacto de " + _nombreBackoffice() + "; el número que ve el jugador se configura por separado.",
+        valor: actual,
+        confirmar: "Guardar en " + _nombreBackoffice(),
+        requerido: true,
+        faltaTexto: "Escribí el número para guardarlo."
+      });
+      if(valor == null) return;
+      var digitos = String(valor).replace(/[^0-9]/g, "");
+      if(digitos.length < 7 || digitos.length > 10){
+        _avisar("El número debe tener entre 7 y 10 dígitos, sin el código de país."); return;
+      }
+      try{
+        var r = await _pedirEdicionBackoffice(digitos);
+        if(!r || r.ok !== true){
+          console.warn("[wsp] No se pudo guardar el WhatsApp de " + _nombreBackoffice(), r && r.motivo);
+          if(r && r.needsLogin) _avisar("La sesión de " + _nombreBackoffice() + " venció. Iniciá sesión y probá de nuevo.");
+          else if(r && r.motivo === "NUMERO_INVALIDO") _avisar("El número debe tener entre 7 y 10 dígitos.");
+          else if(r && r.motivo === "SIN_CONFIRMACION") _avisar("No pude confirmar el guardado. Revisá " + _nombreBackoffice() + " antes de volver a intentarlo.");
+          else _avisar("No pude guardar el número en " + _nombreBackoffice() + ". Revisá esa pantalla antes de volver a intentarlo.");
+          return;
+        }
+        BACKOFFICE = {
+          numero: String(r.numero || "").trim(),
+          pais: String(r.pais || (BACKOFFICE && BACKOFFICE.pais) || ""),
+          habilitado: r.habilitado,
+          numeroValido: r.numeroValido !== false,
+          puedeEditar: true
+        };
+        BACKOFFICE_AT = Date.now();
+        BACKOFFICE_VERIFICADO = true;
+        BACKOFFICE_ERROR = "";
+        try{ pintar(); }catch(_e){}           // si hay una revision de fondo en curso, revisar() no repinta
+        _avisar((r.sinCambio ? "Ese número ya estaba guardado en " + _nombreBackoffice() : "Listo: se guardó en " + _nombreBackoffice()) + ": " + _lindo(BACKOFFICE.numero) + ".");
+        if(_backendElegido() === "adminonline" && BACKOFFICE.numero){
+          try{ await _guardarPublicado(_numeroParaNodo(BACKOFFICE.numero), "cambiado en " + _nombreBackoffice()); }catch(_e){}
+        }
+        await revisar();
+        try{ pintar(); }catch(_e){}
+      }catch(e){
+        console.warn("[wsp] Falló el guardado del WhatsApp de " + _nombreBackoffice(), e && e.name);
+        _avisar("No pude guardar el número en " + _nombreBackoffice() + ". Revisá la pantalla antes de volver a intentarlo.");
+      }
+    });
+    return tarea.finally(function(){ if(boton) boton.disabled = false; });
   };
 
   window.nodoWspEscribirNumero = function(){

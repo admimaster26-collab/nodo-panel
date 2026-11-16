@@ -12,8 +12,9 @@ const ALLOWED_AUTOMATION_METHODS = new Set([
   'iniciarSesion',
   'recuperarFlujo',
   'abortarOperacion',
-  // Lee el WhatsApp publicado en Funcionalidades y permisos. No opera: sólo mira la pantalla.
-  'leerWhatsappOficina'
+  // WhatsApp de Personalizar página: lectura y guardado explícito del número en AdminOnline.
+  'leerWhatsappOficina',
+  'guardarWhatsappOficina'
 ]);
 
 contextBridge.exposeInMainWorld('ctrlElectron', {

@@ -218,6 +218,8 @@ async function callDrex(method, ...args){
     }
     }catch(_cnE){
       _wHealth?.reply(_cnE);
+      // Estado del sistema: cuál operación falló (cargar, retirar, crear…), no "tareas de fondo".
+      try{ window.NodoSalud?.agentes?.(method, null, _cnE); }catch(_e){}
       // El corte puede venir de main (timeout, recarga, ventana cerrada) o del preload. De quién
       // fue lo deduce la caja negra por la firma del mensaje: lo que no reconoce queda
       // 'desconocida' en vez de colgárselo a alguien.
@@ -231,6 +233,7 @@ async function callDrex(method, ...args){
       // es una falla (mismo criterio que _esChequeo, unas líneas más abajo).
       const _cnChequeo = (method==='estadoPagina' || method==='iniciarSesion');
       _wHealth?.record('EFFECT', (_r && _r.ok === false && !_cnChequeo) ? 'ERROR' : 'OK', (_r && _r.ok === false && !_cnChequeo) ? 'WORKER_DREX_FAILED' : 'WORKER_DREX_OK');
+      if(!_cnChequeo) window.NodoSalud?.agentes?.(method, _r, null);
       if(_r && _r.ok === false && !_cnChequeo){
         if(window._cnFalla) window._cnFalla(method, _r.message || 'devolvió ok:false', { ms:_cnMs, pantalla:_cnPant, capa:'preload' });
       } else if(window._cnPaso){
@@ -431,9 +434,9 @@ async function verificarEstadoBackoffice(){
   }
 }
 
-// ── Switch de backend de Agentes (Casinodrex ⇄ BET300) ───────────────────────
+// ── Selector de backoffice de Agentes (Casinodrex ⇄ BET300) ───────────────────────
 // El proxy de la oficina NO cambia: vive en la sesión persist:nodo-agentes (misma partición
-// para ambos backends). Cambiar de backend solo relanza la ventana de agentes con el preload/URL
+// para todos los backends). Elegir otro backoffice solo relanza la ventana de agentes con el preload/URL
 // del casino elegido; la salida de red (proxy) queda igual. Se PERSISTE en userData (sobrevive updates).
 window._agentBackendState = null;
 async function nodoCargarBackendAgentes(){
@@ -445,13 +448,90 @@ async function nodoCargarBackendAgentes(){
     if(btn && st && st.ok){ btn.textContent = '🎰 Backoffice: '+st.label; btn.dataset.backend = st.backend; }
   }catch(_e){}
 }
+function nodoElegirBackofficeAgentes(opciones, actual){
+  return new Promise(function(resolve){
+    const anterior = document.getElementById('nodoSelectorBackoffice');
+    if(anterior) anterior.remove();
+    let cerrado = false;
+    const capa = document.createElement('div');
+    capa.id = 'nodoSelectorBackoffice';
+    capa.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(5,8,12,.72);display:flex;align-items:center;justify-content:center;padding:18px';
+    const caja = document.createElement('div');
+    caja.setAttribute('role','dialog');
+    caja.setAttribute('aria-modal','true');
+    caja.setAttribute('aria-labelledby','nodoSelectorBackofficeTitulo');
+    caja.setAttribute('aria-describedby','nodoSelectorBackofficeAyuda');
+    caja.style.cssText = 'width:min(440px,100%);box-sizing:border-box;background:#111821;border:1px solid #2b3442;border-radius:12px;padding:16px;color:#e6edf3;font:13px/1.45 system-ui,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.5)';
+    const titulo = document.createElement('div');
+    titulo.id = 'nodoSelectorBackofficeTitulo';
+    titulo.textContent = 'Elegir backoffice';
+    titulo.style.cssText = 'font-weight:800;font-size:14px;margin-bottom:6px';
+    const ayuda = document.createElement('div');
+    ayuda.id = 'nodoSelectorBackofficeAyuda';
+    ayuda.textContent = 'Si cambiás de backoffice, se reiniciará la ventana de Agentes. Si no tenés la sesión guardada, vas a tener que iniciar sesión de nuevo.';
+    ayuda.style.cssText = 'color:#c9d1d9;margin-bottom:10px';
+    const etiqueta = document.createElement('label');
+    etiqueta.textContent = 'Backoffice';
+    etiqueta.style.cssText = 'display:block;margin-bottom:5px;font-weight:700';
+    const select = document.createElement('select');
+    select.setAttribute('aria-label','Backoffice');
+    select.style.cssText = 'width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid #3b4654;background:#0b0f14;color:#fff;font-size:14px';
+    opciones.forEach(function(op){
+      const option = document.createElement('option');
+      option.value = op.id;
+      option.textContent = op.label;
+      select.appendChild(option);
+    });
+    if(opciones.some(function(op){ return op.id===actual; })) select.value = actual;
+    etiqueta.appendChild(select);
+    const botones = document.createElement('div');
+    botones.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:14px';
+    const estiloBoton = 'border-radius:8px;padding:8px 14px;font-weight:800;font-size:13px;cursor:pointer;';
+    const cancelar = document.createElement('button');
+    cancelar.type = 'button';
+    cancelar.textContent = 'Cancelar';
+    cancelar.style.cssText = estiloBoton+'border:1px solid #3b4654;background:transparent;color:#e6edf3';
+    const cambiar = document.createElement('button');
+    cambiar.type = 'button';
+    cambiar.textContent = 'Cambiar';
+    cambiar.style.cssText = estiloBoton+'border:0;background:#238636;color:#fff';
+    botones.append(cancelar,cambiar);
+    caja.append(titulo,ayuda,etiqueta,botones);
+    capa.appendChild(caja);
+    document.body.appendChild(capa);
+    const focoAnterior = document.activeElement;
+    const cerrar = function(valor){
+      if(cerrado) return;
+      cerrado = true;
+      document.removeEventListener('keydown', alTecla);
+      try{ capa.remove(); }catch(_e){}
+      try{ if(focoAnterior && focoAnterior.isConnected) focoAnterior.focus(); }catch(_e){}
+      resolve(valor);
+    };
+    const confirmar = function(){ cerrar(select.value || null); };
+    const alTecla = function(e){
+      if(e.key === 'Escape'){ e.preventDefault(); cerrar(null); }
+      else if(e.key === 'Enter' && e.target === select){ e.preventDefault(); confirmar(); }
+      else if(e.key === 'Tab' && e.shiftKey && e.target === select){ e.preventDefault(); cambiar.focus(); }
+      else if(e.key === 'Tab' && !e.shiftKey && e.target === cambiar){ e.preventDefault(); select.focus(); }
+    };
+    cancelar.addEventListener('click',function(){ cerrar(null); });
+    cambiar.addEventListener('click',confirmar);
+    capa.addEventListener('click',function(e){ if(e.target === capa) cerrar(null); });
+    document.addEventListener('keydown',alTecla);
+    select.focus();
+  });
+}
 async function nodoCambiarBackendAgentes(){
   if(!enElectron || !window.ctrlElectron || !window.ctrlElectron.setAgentBackend){ toast('Solo en la app de escritorio','yellow'); return; }
   const st = window._agentBackendState;
-  const ops = (st && st.opciones) || [{id:'casinodrex',label:'Casinodrex'},{id:'bet300',label:'BET300 (agentesbet.io)'}];
+  const ops = (st && st.opciones) || [{id:'casinodrex',label:'Casinodrex'},{id:'bet300',label:'BET300 (agentesbet.io)'},{id:'adminonline',label:'AdminOnline (adminonline.me)'}];
   const actual = (st && st.backend) || 'casinodrex';
-  const otro = ops.find(function(o){ return o.id!==actual; }) || ops[0];
-  if(!confirm('¿Cambiar el backoffice de Agentes a "'+otro.label+'"?\n\nSe RELANZA la ventana de agentes (el proxy de la oficina NO cambia). Si no tenés la sesión guardada de ese backoffice, vas a tener que iniciar sesión de nuevo.')) return;
+  if(!ops.length){ toast('No hay backoffices disponibles','red'); return; }
+  const seleccionado = await nodoElegirBackofficeAgentes(ops, actual);
+  if(!seleccionado || seleccionado === actual) return;
+  const otro = ops.find(function(o){ return o.id===seleccionado; });
+  if(!otro){ toast('No se pudo elegir el backoffice','red'); return; }
   const btn=document.getElementById('agentBackendBtn'); if(btn){ btn.disabled=true; btn.textContent='🎰 Relanzando…'; }
   try{
     const r = await window.ctrlElectron.setAgentBackend(otro.id);

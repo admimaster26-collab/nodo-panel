@@ -253,7 +253,9 @@ Ahora `revisar()` consulta Integraciones **antes** de preguntarle nada a nadie:
 | El contacto está destildado en el backoffice | lo avisa: el número puede estar bien y el botón no aparecerle igual al jugador |
 | La ventana de Agentes está operando o pide login | no concluye nada: no leerlo no es lo mismo que no coincidir |
 
-Se consulta como máximo una vez cada 20 minutos y se fuerza cuando hace falta de verdad.
+La descripción anterior del intervalo quedó reemplazada por la corrección del 16/11: el watchdog
+de líneas vuelve a consultar cada 5 minutos, y lleva la ventana a Personalizar página cuando está
+en otra sección. La cola de operaciones sigue impidiendo moverla mientras el operador trabaja.
 
 **Y un error de lectura:** el código de área argentino tiene 2 dígitos **sólo** en el 11. Se
 estaba partiendo siempre de a 2, así que un número de Mar del Plata (`549 223 670 0367`) se
@@ -281,9 +283,10 @@ piden con `{navegar:true}`. La llamada va por **la misma cola que usa el watchdo
 fichas** (`_drexEncolar`, `silencioso:true`), que es la que evita navegar encima de una carga o
 un retiro; si la cola está ocupada, se saltea la vuelta.
 
-Cuándo se le mueve la pantalla al operador: cuando la oficina no tiene número publicado, cuando
-lo pide él con el botón, o **una vez cada 6 horas** (`nodoWspNavegadaAt` en localStorage). En el
-medio lee gratis: si la ventana ya está ahí, aprovecha y no navega nada.
+La regla anterior de seis horas quedó reemplazada por la corrección del 16/11. Verificar desde la
+misma ventana real de AdminOnline requiere abrir `/config/socials` si está en otra pantalla; el
+watchdog lo hace cada 5 minutos, protegido por la cola del operador. Si la lectura falla, no se
+usa un dato viejo para afirmar coincidencia o actividad.
 
 **Verificado en el NODO real (15/11):** con navegación, `{ok:true, habilitado:true}` en **1.538
 ms**. Y apareció lo que el módulo tenía que encontrar: P1 publica un número terminado en **1171**
@@ -297,3 +300,21 @@ ninguna**: el intento quedó frenado por el clasificador y no se rodeó. Queda a
 sirven, las *lecturas* del preload (saldo, número, buscar usuario) podrían dejar de depender del
 DOM. Las *escrituras* son otra discusión: por la UI pasan por las validaciones del backoffice.
 
+### Corrección del 16/11 · la lectura debe ser actual y no confundir formato inválido
+
+En la captura de NODO, AdminOnline tenía un teléfono de 11 dígitos en un campo cuyo máximo es 10.
+El render marcaba «· coincide» porque trataba cualquier estado que no fuera desacuerdo como una
+coincidencia; además, el intervalo de seis horas dejaba al watchdog leyendo otra sección o un dato
+anterior. Ahora cada revisión del watchdog intenta una lectura actual: si AdminOnline está en otra
+ruta, navega a `/config/socials` y lee el formulario; si la cola está ocupada, indica que no pudo
+verificar. «Coincide» sólo aparece al comparar dos números válidos, y el estado verde informa que
+el contacto está habilitado en AdminOnline. Eso verifica la configuración de la página; la conexión
+de la línea de WhatsApp se sigue confirmando aparte con el estado de WTK/operador.
+
+## 11 · El bot de palabras no es un canal (16/11)
+
+El bot (`soporte_auto_mensaje_v1`) no vive en ningún canal: son dos disparadores sobre las **tablas**
+`chat_mensajes` y `landing_solicitudes`. Contesta sin importar si NODO lee por los canales viejos o por
+`nodo_beta_chat_*`. Por eso en P1 seguía contestando con NODO beta. Desde el 16/11 no contesta en las
+oficinas que figuran en `nodo_beta.beta_clientes` (hoy P1): `servidor/bot-apagado-en-beta.sql`, con su
+vuelta atrás. Las demás oficinas siguen igual. Cómo comprobarlo: `docs/PRUEBA_PORTAL_NODO.md`.

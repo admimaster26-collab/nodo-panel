@@ -2,11 +2,11 @@
 // Lo que hay que mandarle para que entre: usuario, clave y un enlace que lo deja adentro YA
 // VALIDADO (token propio, 30 minutos, uno solo por usuario). La clave NO se inventa: sale de la
 // última que le pusimos —RESET_CLAVE del panel o CAMBIO_CLAVE del portal—. La clave estándar de
-// la operación es 12345a: si figura otra, o no sabemos ninguna, se refresca de un toque desde
+// la operación es 1a2b3c4d (hasta el 16/11 era 12345a; el sistema de juego nuevo pide 8 o más): si figura otra, o no sabemos ninguna, se refresca de un toque desde
 // acá mismo, que es donde el operador ya está parado. Medido: sólo el 3,9 % de los usuarios
 // tenía clave conocida, así que refrescarla es el camino normal, no la excepción.
 window.PLATAFORMA_URL = localStorage.getItem("nodo_plataforma_url") || "https://bet-300.pw";
-window.CLAVE_ESTANDAR = "12345a";
+window.CLAVE_ESTANDAR = "1a2b3c4d";
 
 window.pjDatosIngreso = async function(usuario){
   const u = String(usuario||"").trim();

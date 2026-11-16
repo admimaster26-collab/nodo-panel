@@ -603,6 +603,11 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
     } else {
       filas+=fila('Usuario', esc(uDecl), '✗ no hay cuenta con este usuario', '#8b949e', '');
     }
+  } else {
+    // El título del chat dice "ayuda-<teléfono>" o "nuevo-<teléfono>": es un nombre provisorio que pone
+    // el Portal, no un usuario. Se dice acá para que nadie lo busque en Agentes.
+    filas+=fila('Usuario', '—', 'no lo escribió', '#8b949e',
+      sub('El nombre del chat es provisorio: el jugador dio sólo el teléfono. Si dice tener cuenta, pedile el usuario.'));
   }
   // ── 2) TELÉFONO declarado (INDEPENDIENTE del usuario) ──
   if(tN.length>=6){
@@ -932,7 +937,7 @@ function _altaModalResultado(usuario, telefono){
   const uEsc=String(usuario).replace(/'/g,"\\'");
   // Si venimos del alta, la clave real llega por acá. Sin esto el botón de copiar los datos
   // ofrecía "12345a" fijo — mentira cuando el operador puso otra clave al crear la cuenta.
-  let _clave='12345a';
+  let _clave='1a2b3c4d';
   try{ if(window._altaClaveNueva){ _clave=String(window._altaClaveNueva); window._altaClaveNueva=null; } }catch(_e){}
   const cEsc=String(_clave).replace(/'/g,"\\'");
   abrirModal('✅ Usuario validado y agendado',
@@ -985,9 +990,19 @@ window._altaCotejoConsulta = async function(ticket){
       if(x && x[1].trim()){ ingU=x[1].trim(); ingT=x[2].trim(); }
     });
   }catch(_e){}
-  const mU=txt.match(/usuario\s*[:\-]?\s*([A-Za-z0-9._-]{3,})/i);
+  // El usuario declarado se toma SÓLO con rótulo ("Usuario: juan123", "mi usuario es juan123"). Sin
+  // rótulo se agarraba la palabra que seguía a "usuario" en cualquier frase: el pedido del Portal
+  // "Tengo usuario pero no puedo entrar. Usuario: juan123" daba "pero", y "usuario nuevo" daba
+  // "nuevo" (Juan, 16/11: "no siempre es la misma palabra"). Vale el último rótulo, que es el más
+  // reciente. "ayuda-<teléfono>" y "nuevo-<teléfono>" los inventa el Portal cuando el jugador NO dio
+  // usuario: no son un usuario declarado y no se cotejan como tal.
+  const _inventado=function(u){ return /^(ayuda|nuevo)-\d+$/i.test(String(u||'').trim()); };
+  const _rotulados=Array.from(txt.matchAll(/usuario\s*(?:[:=]|\s+es\b\s*:?)\s*([A-Za-z0-9._-]{3,})/gi))
+    .map(function(m){ return String(m[1]).replace(/[.,;-]+$/,''); })
+    .filter(function(u){ return u && !_inventado(u); });
   const mT=txt.match(/(?:tel|telefono|tel[eé]fono|cel|celular)\s*[:.\-]?\s*([\d\s().\-]{6,})/i);
-  let uDecl=mU?String(mU[1]).replace(/[.,;]+$/,''):String(ticket.usuario||'');
+  let uDecl=_rotulados.length ? _rotulados[_rotulados.length-1]
+    : (_inventado(ticket.usuario) ? '' : String(ticket.usuario||''));
   let tDecl=mT?String(mT[1]):String(ticket.telefono||ticket.TELEFONO||'');
   if(ingU){
     uDecl=ingU; tDecl=ingT||tDecl;

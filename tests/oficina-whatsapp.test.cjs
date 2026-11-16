@@ -18,6 +18,7 @@ function nodo(id) {
 function montar(respuestas, backoffice) {
   const llamadas = [];
   const alBackoffice = [];
+  const opcionesBackoffice = [];
   const tilde = nodo('navAjustesTilde');
   const caja = nodo('ajustesWhatsapp');
   const avisos = [];
@@ -36,7 +37,11 @@ function montar(respuestas, backoffice) {
     // La ventana de Agentes. Sin `backoffice` no hay puente, que es como corre en una PC que
     // todavía no abrió el backoffice.
     ctrlElectron: backoffice === undefined ? undefined : {
-      drexAutomation: async (metodo) => { alBackoffice.push(metodo); return backoffice; }
+      drexAutomation: async (metodo, opciones) => {
+        alBackoffice.push(metodo);
+        opcionesBackoffice.push(opciones || {});
+        return typeof backoffice === 'function' ? backoffice(metodo, opciones || {}, alBackoffice.length) : backoffice;
+      }
     },
     console,
     supabaseClient: {
@@ -52,7 +57,7 @@ function montar(respuestas, backoffice) {
   win.window = win;
   vm.createContext(win);
   vm.runInContext(codigo, win, { filename: FUENTE });
-  return { win, llamadas, tilde, caja, avisos, alBackoffice };
+  return { win, llamadas, tilde, caja, avisos, alBackoffice, opcionesBackoffice };
 }
 
 const LINEAS_P4 = [
@@ -133,7 +138,8 @@ test('cuando toca la constancia del turno aparece el boton, y no aparece cuando 
   const toca = montar({ panel_oficina_wsp_estado: estado({
     pide: 'CONFIRMAR', numero_pagina: '5491123450002',
     wtk: { responde: false, datos_viejos: true, lineas: 0, activas: 0, activas_con_numero: 0, rota_sola: false },
-    lineas: [], turno: { actual: 'TARDE', toca_hoy: 'TARDE', hay_que_preguntar: true } }) });
+    lineas: [], turno: { actual: 'TARDE', toca_hoy: 'TARDE', hay_que_preguntar: true } }) },
+    { ok: true, numero: '5491123450002', numeroValido: true, habilitado: true });
   await toca.win.NodoWsp.revisar();
   assert.match(toca.caja.innerHTML, /sigue andando/);
   assert.equal(toca.tilde.className, 'nav-tilde');
@@ -147,13 +153,13 @@ test('cuando toca la constancia del turno aparece el boton, y no aparece cuando 
   assert.equal(noToca.tilde.className, 'nav-tilde hidden');
 });
 
-test('sin lectura de las lineas no inventa un estado: dice que por eso pregunta', async () => {
+test('sin lectura de las lineas no inventa un estado: le dice al operador que lo cambie si deja de contestar', async () => {
   const m = montar({ panel_oficina_wsp_estado: estado({
     pide: 'NADA', numero_pagina: '5491123450002',
     wtk: { responde: false, datos_viejos: true, lineas: 0, activas: 0, activas_con_numero: 0, rota_sola: false },
     lineas: [] }) });
   await m.win.NodoWsp.revisar();
-  assert.match(m.caja.innerHTML, /No tengo lectura/);
+  assert.match(m.caja.innerHTML, /deja de contestar, cambialo/);
   assert.doesNotMatch(m.caja.innerHTML, /andando<\/span>/);  // no lista líneas que no leyó
 });
 
@@ -218,6 +224,7 @@ test('mira el backoffice SOLO, antes de preguntarle nada a nadie', async () => {
   await m.win.NodoWsp.revisar();
 
   assert.deepEqual(m.alBackoffice, ['leerWhatsappOficina'], 'tiene que leerlo sin que nadie apriete nada');
+  assert.equal(m.opcionesBackoffice[0].navegar, true, 'la revisión del watchdog debe abrir Personalizar página desde la pantalla actual');
   // Y como no coinciden, la pregunta correcta NO es "¿sigue andando?".
   assert.match(m.caja.innerHTML, /no es el que ten\u00e9s puesto en el backoffice/);
   assert.doesNotMatch(m.caja.innerHTML, /sigue andando\?/);
@@ -237,6 +244,28 @@ test('si coinciden lo dice, y recien ahi pregunta si sigue andando', async () =>
   assert.match(m.caja.innerHTML, /coincide/);
   // Coincidir no prueba que la línea esté viva: la constancia la sigue dando una persona.
   assert.match(m.caja.innerHTML, /sigue andando/);
+});
+
+test('si AdminOnline devuelve un formato inválido, nunca lo marca como coincidente ni activo', async () => {
+  const m = montar(
+    { panel_oficina_wsp_estado: estado({ numero_pagina: '5492236700367' }) },
+    { ok: true, numero: '92236700367', numeroValido: false, habilitado: true });
+  await m.win.NodoWsp.revisar();
+
+  assert.match(m.caja.innerHTML, /formato inválido/);
+  assert.doesNotMatch(m.caja.innerHTML, /· coincide/);
+  assert.doesNotMatch(m.caja.innerHTML, /contacto está activo/);
+});
+
+test('si la lectura no llega a Personalizar página, informa que el número no está verificado', async () => {
+  const m = montar(
+    { panel_oficina_wsp_estado: estado({ numero_pagina: '5492236700367' }) },
+    { ok: false, motivo: 'OTRA_PANTALLA' });
+  await m.win.NodoWsp.revisar();
+
+  assert.match(m.caja.innerHTML, /No pude abrir Personalizar página/);
+  assert.match(m.caja.innerHTML, /todavía no está verificado/);
+  assert.doesNotMatch(m.caja.innerHTML, /· coincide|contacto está activo|WhatsApp publicado está andando/);
 });
 
 test('sin numero publicado se pone el del backoffice solo, sin escribir nada a mano', async () => {
@@ -272,7 +301,34 @@ test('si la ventana de Agentes esta ocupada no se inventa que no hay numero', as
         wtk: { responde: false, datos_viejos: true, lineas: 0, activas: 0, activas_con_numero: 0, rota_sola: false },
         lineas: [], turno: { actual: 'TARDE', toca_hoy: 'TARDE', hay_que_preguntar: true } }) },
     { ok: false, ocupado: true });
+  let encoladas = 0;
+  m.win._drexCola = { activo: { nombre: 'cargarSaldo' }, pendientes: 1 };
+  m.win._drexEncolar = function(){ encoladas++; return Promise.resolve(); };
   await m.win.NodoWsp.revisar();
+  assert.equal(encoladas, 0, 'la revisión automática no se mete en una operación en curso');
   assert.doesNotMatch(m.caja.innerHTML, /no es el que ten\u00e9s puesto/, 'no leerlo no es lo mismo que no coincidir');
-  assert.match(m.caja.innerHTML, /sigue andando/);
+  assert.match(m.caja.innerHTML, /no está verificado|espera a que termine la operación/i);
+  assert.doesNotMatch(m.caja.innerHTML, /sigue andando/);
+});
+
+test('la lectura manual se encola detrás de una operación activa y luego verifica AdminOnline', async () => {
+  const m = montar(
+    { panel_oficina_wsp_estado: estado({ numero_pagina: '5492235181171' }) },
+    { ok: true, numero: '92236700367', numeroValido: false, habilitado: true });
+  m.win._drexCola = { activo: { nombre: 'obtenerSaldoAgente' }, pendientes: 1 };
+  const encoladas = [];
+  m.win._drexEncolar = function(nombre, fn, opciones){
+    encoladas.push({ nombre, silencioso: opciones && opciones.silencioso });
+    m.win._drexCola = { activo: null, pendientes: 0 };
+    return Promise.resolve().then(fn);
+  };
+
+  await m.win.nodoWspLeerBackoffice();
+
+  assert.equal(encoladas.length, 1);
+  assert.equal(encoladas[0].nombre, 'leerWhatsappOficina(wsp)');
+  assert.equal(encoladas[0].silencioso, true);
+  assert.equal(m.opcionesBackoffice[0].navegar, true);
+  assert.match(m.caja.innerHTML, /formato inválido/);
+  assert.doesNotMatch(m.caja.innerHTML, /· coincide/);
 });

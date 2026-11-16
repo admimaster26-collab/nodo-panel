@@ -226,7 +226,7 @@ async function main(){
     await evaluate(`goClave()`);await pause(150);
     await evaluate(`document.getElementById('btnEnviarClave').click()`);await pause(350);
     assert.equal(await llamadas('landing_portal_v16_crear_solicitud'),1,'Clave pide uno solo');
-    assert.equal(await evaluate(`window.__chatRpcCalls.find(c=>c.name==='landing_portal_v16_crear_solicitud').args.p_metadata.password_nuevo`),'12345a','con la clave por defecto');
+    assert.equal(await evaluate(`window.__chatRpcCalls.find(c=>c.name==='landing_portal_v16_crear_solicitud').args.p_metadata.password_nuevo`),'1a2b3c4d','con la clave por defecto');
     assert.equal(await evaluate(`state.screen`),'chat','Clave sigue yendo al chat');
 
     await send('Emulation.setDeviceMetricsOverride',{width:1280,height:900,deviceScaleFactor:1,mobile:false});

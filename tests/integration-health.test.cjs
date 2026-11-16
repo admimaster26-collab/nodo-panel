@@ -222,3 +222,23 @@ test('salud: toda rama del panel la acepta el servidor (si no, se pierde el lote
   const soloLocal=fuente.match(/SOLO_LOCAL=new Set\(\[([^\]]*)\]/)[1].split(',').map(x=>x.trim().replace(/'/g,''));
   assert.deepEqual(panel.filter(x=>!soloLocal.includes(x)).sort(),[...servidor].sort());
 });
+// Juan, 16/11: "si falla el retiro de fichas y no falla la carga, debe de saber el operador que el retiro
+// no anda pero la carga sí". Antes las dos caían en una sola fila, "Tareas de fondo · No respondió bien".
+test('salud: cada operación de Agentes es su propia fila, en castellano, sin "tareas de fondo"',()=>{
+  const {api}=harness();
+  const vacio=api.resumen().partes.map(p=>p.nombre);
+  assert.ok(!vacio.includes('Tareas de fondo'));assert.ok(vacio.includes('Operaciones en Agentes'));
+  api.record('WORKERS','EFFECT','ERROR',{code:'WORKER_DREX_FAILED'});
+  api.agentes('cargarSaldo',{ok:true},null);
+  api.agentes('retirarSaldo',{ok:false,message:'Timeout esperando el botón Retirar'},null);
+  api.agentes('cambiarClave',null,new Error('Agentes pidió ingresar de nuevo'));
+  const partes=api.resumen().partes;
+  assert.ok(!partes.some(p=>p.nombre==='Tareas de fondo'),'la fila que nadie entendía no vuelve');
+  assert.deepEqual(partes.find(p=>p.nombre==='Cargar fichas en Agentes'),{nombre:'Cargar fichas en Agentes',estado:'anda',detalle:''});
+  assert.deepEqual(partes.find(p=>p.nombre==='Retirar fichas en Agentes'),{nombre:'Retirar fichas en Agentes',estado:'falla',detalle:'Agentes tardó demasiado en contestar'});
+  assert.equal(partes.find(p=>p.nombre==='Cambiar claves en Agentes').detalle,'Agentes pidió volver a iniciar sesión');
+  for(const p of partes)assert.doesNotMatch(p.nombre+' '+p.detalle,/[A-Z]{3,}_[A-Z]/,'sin códigos a la vista: '+p.nombre);
+  api.agentes('retirarSaldo',{ok:true},null);
+  assert.equal(api.resumen().partes.find(p=>p.nombre==='Retirar fichas en Agentes').estado,'anda','vuelve a andar: se ve');
+  assert.equal(api.agentes('metodoInventado',{ok:true},null),false);
+});

@@ -92,12 +92,36 @@ ipcMain.handle('nodo:discord', (_e, estado) => {
 chunior.registerIpc(ipcMain);
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
+// El panel ES NODO. Las ventanas de Agentes y de verificacion estan ocultas: cerrando el panel con la
+// X, ellas mantenian vivo el proceso con la sesion del backoffice abierta, y NODO "cerrado" seguia
+// corriendo de fondo con el codigo viejo. Ahora cerrar el panel cierra todo. Y recargar el panel
+// recrea esas dos ventanas, para que tomen el preload y el estado nuevos; si hay una carga, un retiro
+// o una verificacion en curso, se espera a que termine: no se corta nada a la mitad (Juan, 16/11).
+// Chunior no se toca al recargar: su sesion no persiste y habria que volver a entrar.
+function atarVentanasAlPanel() {
+  const win = panel.current;
+  if (!win) return;
+  win.on('closed', () => { app.quit(); });
+  let cargas = 0;
+  win.webContents.on('did-finish-load', async () => {
+    if (++cargas === 1) return;   // la primera carga es el arranque
+    const tope = Date.now() + 120000;
+    while ((automationRequests.pending.size || verificationRequests.pending.size) && Date.now() < tope) {
+      await new Promise(r => setTimeout(r, 500));
+    }
+    try { verification.close(); } catch (_e) {}
+    try { agents.close(); } catch (_e) {}
+    console.log('[main] panel recargado: ventanas de Agentes y verificacion recreadas con el codigo actual');
+  });
+}
+
 app.whenReady().then(async () => {
   // Windows agrupa por AppUserModelID: sin esto la barra de tareas y las notificaciones del
   // sistema usan el ícono genérico de Electron en vez del de la app.
   try { app.setAppUserModelId('com.nodooperativo.app'); } catch (_e) {}
   await proxy.configure();
   panel.create();
+  atarVentanasAlPanel();
   const pcCodigoInicial = String(process.env.PC_CODIGO || '').trim();
   const proxyConfigurableAntesDeChunior = pcCodigoInicial &&
     process.env.PANEL_DATA_SECRET &&

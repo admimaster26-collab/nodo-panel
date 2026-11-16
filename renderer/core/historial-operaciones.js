@@ -611,7 +611,7 @@ function renderHistorial(lista){
       ? '<button class="mini-btn purple" onclick="cambiarBilleteraMovimiento(\x27'+escapeHtml(String(h.chunior_movimiento_id))+'\x27,\x27'+escapeHtml(histAccionId)+'\x27,\x27'+escapeHtml(String(h.billetera_id||''))+'\x27)" style="font-size:11px" title="Cambiar billetera del Mov. N° '+escapeHtml(String(h.chunior_movimiento_id))+'">💳 Cambiar billetera</button>'
       : ((puedeAccionarHistorial && _huboMovimiento) ? '<button class="mini-btn purple" onclick="cambiarBilleteraHistorialLocal('+changeLocalArgs+')" style="font-size:11px" title="Corregir la billetera donde quedó anotada esta operación">💳 Cambiar billetera</button>' : '');
     const claveBtn = (h.usuario && h.tipo !== 'RESET_CLAVE')
-      ? '<button class="mini-btn yellow" onclick="blanquearClaveUsuario(\x27'+escapeHtml(String(h.usuario))+'\x27)" style="font-size:11px" title="Blanquear clave de '+escapeHtml(String(h.usuario))+' a 12345a">🔑 Clave</button>'
+      ? '<button class="mini-btn yellow" onclick="blanquearClaveUsuario(\x27'+escapeHtml(String(h.usuario))+'\x27)" style="font-size:11px" title="Blanquear clave de '+escapeHtml(String(h.usuario))+' a 1a2b3c4d">🔑 Clave</button>'
       : '';
     // Botón de reintento. Aparece en dos casos:
     //   1) estado ERROR → verifica Drex/Chunior y reintenta lo que falte

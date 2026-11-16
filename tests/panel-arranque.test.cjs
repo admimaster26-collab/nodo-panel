@@ -308,7 +308,7 @@ test('los datos de ingreso no inventan una clave que no sabemos', async () => {
   await sb.pjDatosIngreso('lmaurod');
 
   assert.match(modal.cuerpo, /No sabemos cuál es/);
-  assert.match(modal.cuerpo, /Refrescar la clave a 12345a/, 'el camino real es refrescarla y pasarla');
+  assert.match(modal.cuerpo, /Refrescar la clave a 1a2b3c4d/, 'el camino real es refrescarla y pasarla');
   assert.ok(!/Copiar para mandar/.test(modal.cuerpo), 'sin clave no hay nada que copiar');
   assert.match(modal.cuerpo, /3517352547/, 'el teléfono sí lo sabemos');
 });
@@ -350,7 +350,7 @@ test('la clave que se pasa es siempre la estándar de la operación', async () =
   sb.toast = () => {};
   sb.abrirModal = () => {};
   await sb.pjDatosIngreso('lmaurod');
-  assert.equal(sb.CLAVE_ESTANDAR, '12345a');
+  assert.equal(sb.CLAVE_ESTANDAR, '1a2b3c4d', '16/11: el sistema de juego pide 8 o más; 12345a quedó obsoleta');
   assert.match(sb._pjTextoIngreso, /Clave: otracosa9/, 'se muestra la real, no una inventada');
 });
 

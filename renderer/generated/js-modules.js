@@ -2394,6 +2394,39 @@
     RETIRO_PARCIAL_RESPUESTA_INVALIDA:'El servidor no confirmó el progreso del retiro',
     NEXO_EXPORT_TRUNCATED:'Quedó incompleto',NEXO_LEGACY_TRUNCATED_8000:'Quedó incompleto'};
   const motivo=code=>MOTIVOS[code]||'No respondió bien';
+  // Lo que NODO hace en la ventana de Agentes, una operación por fila. Antes todo caía en una sola,
+  // "Tareas de fondo · No respondió bien", y nadie sabía qué era (Juan, 16/11: "si falla el retiro de
+  // fichas y no la carga, el operador debe saber que el retiro no anda pero la carga sí"). Se anota en
+  // esta PC (agentes()) y no viaja: el servidor sigue recibiendo WORKERS como antes.
+  const AGENTES=[['cargarSaldo','Cargar fichas en Agentes'],['retirarSaldo','Retirar fichas en Agentes'],
+    ['crearUsuario','Crear usuarios en Agentes'],['cambiarClave','Cambiar claves en Agentes'],
+    ['buscarUsuario','Buscar usuarios en Agentes'],['obtenerSaldoAgente','Saldo de la cuenta de Agentes']];
+  const agentesUltimo=new Map();
+  function motivoAgentes(r,err){
+    const t=String((err&&(err.message||err))||(r&&(r.message||r.error||r.motivo))||'');
+    if((r&&r.needsLogin)||/login|inici(ar|o) sesi|ingres(ar|o) de nuevo/i.test(t))return 'Agentes pidió volver a iniciar sesión';
+    if(r&&r.ocupado)return 'Agentes estaba ocupado con otra operación';
+    if(/timeout|tard[oó]|tiempo de espera/i.test(t))return 'Agentes tardó demasiado en contestar';
+    if(/destroyed|cerrad|closed|no hay ventana/i.test(t))return 'La ventana de Agentes estaba cerrada';
+    if(/saldo insuficiente|no alcanza|insufficient/i.test(t))return 'No alcanzaba el saldo';
+    if(/duplicado|ya existe/i.test(t))return 'Ese usuario ya existía';
+    return 'Agentes no confirmó que se hizo';
+  }
+  function agentes(method,r,err){
+    if(!AGENTES.some(a=>a[0]===method))return false;
+    const ok=!err&&!!r&&r.ok!==false;
+    agentesUltimo.set(method,{ok,at:Date.now(),motivo:ok?'':motivoAgentes(r,err)});
+    return true;
+  }
+  function partesAgentes(ahora){
+    const vistas=AGENTES.filter(a=>agentesUltimo.has(a[0]));
+    if(!vistas.length)return [{nombre:'Operaciones en Agentes',estado:'sin_actividad',detalle:''}];
+    return vistas.map(([method,nombre])=>{
+      const u=agentesUltimo.get(method),edad=ahora-u.at;
+      if(!u.ok)return {nombre,estado:'falla',detalle:u.motivo+(edad>FRESH_MS?' · '+hace(edad):''),...(edad>FRESH_MS?{hace:hace(edad)}:{})};
+      return edad<=FRESH_MS?{nombre,estado:'anda',detalle:''}:{nombre,estado:'anduvo',detalle:'',hace:hace(edad)};
+    });
+  }
   // Lo que se le dice cuando el servidor tiene algo más nuevo que el panel y no termina de llegar.
   const NO_LLEGA={BANDEJA:'No están llegando las solicitudes nuevas',CHAT:'No están llegando los mensajes nuevos',
     HISTORIAL:'No aparecen las operaciones nuevas'};
@@ -2437,6 +2470,9 @@
       }
       return parte;
     });
+    // "Tareas de fondo" se reemplaza por una fila por operación de Agentes (ver AGENTES).
+    const iw=partes.findIndex(p=>p.nombre===NOMBRES.WORKERS);
+    if(iw>=0)partes.splice(iw,1,...partesAgentes(ahora));
     if(s.transport==='ERROR')partes.unshift({nombre:'Aviso al servidor',estado:'falla',detalle:'No se pudo enviar el estado'});
     return {oficina:s.pc,partes};
   }
@@ -2455,7 +2491,7 @@
   async function refresh(){
     context();lastFlush=0;await flush();return show();
   }
-  return Object.freeze({record,begin,errorCode,flush,snapshot,show,refresh,resumen,motivo,lectura});
+  return Object.freeze({record,begin,errorCode,flush,snapshot,show,refresh,resumen,motivo,lectura,agentes});
 });
 // "Probar ahora" de Estado del sistema: consulta de verdad cada parte y dice cuál se cortó.
 //

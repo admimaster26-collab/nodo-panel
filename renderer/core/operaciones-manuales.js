@@ -811,7 +811,7 @@ async function ejecutarOperacionManual(){
 // Devuelve {ok, message}. Si onResultHtml viene, también lo escribe en ese div.
 async function _ejecutarBlanqueoClave(usuario, opciones){
   opciones = opciones || {};
-  const clave = opciones.clave || "12345a";
+  const clave = opciones.clave || "1a2b3c4d";
   const resEl = opciones.resultEl || null;
   if(!window.ctrlElectron){ alert("Solo disponible en la app de escritorio."); return { ok:false }; }
   if(!usuario){ toast("Usuario inválido.", "red"); return { ok:false }; }
@@ -857,7 +857,7 @@ async function blanquearClaveManual(){
   const usuario = (document.getElementById("manualUsuario")?.value || "").trim();
   const res     = document.getElementById("manualResultado");
   if(!usuario){ toast("Ingresá un usuario para blanquear la clave.", "red"); return; }
-  if(!confirm('¿Blanquear la clave de "'+usuario+'" → 12345a?')) return;
+  if(!confirm('¿Blanquear la clave de "'+usuario+'" → 1a2b3c4d?')) return;
   const r = await _ejecutarBlanqueoClave(usuario, { resultEl: res });
   if(r.ok){
     // Limpiar inputs después del éxito
@@ -869,7 +869,7 @@ async function blanquearClaveManual(){
 // Botón de cada fila del historial (toma el usuario directamente)
 async function blanquearClaveUsuario(usuario){
   if(!usuario){ toast("Usuario inválido.", "red"); return; }
-  if(!confirm('¿Blanquear la clave de "'+usuario+'" → 12345a?')) return;
+  if(!confirm('¿Blanquear la clave de "'+usuario+'" → 1a2b3c4d?')) return;
   await _ejecutarBlanqueoClave(usuario, {});
 }
 

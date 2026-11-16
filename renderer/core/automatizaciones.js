@@ -157,7 +157,7 @@ async function ejecutarAutoClave(id){
   if(!s){ alert("Solicitud no encontrada."); return; }
 
   const usuario     = s.USUARIO || s.USUARIO_JUGADOR || "";
-  const claveNueva  = s.PASSWORD_NUEVO || "12345a";
+  const claveNueva  = s.PASSWORD_NUEVO || "1a2b3c4d";
 
   if(!usuario){ alert("La solicitud no tiene usuario."); return; }
 
@@ -188,14 +188,24 @@ async function ejecutarAutoClave(id){
   toast(`Cambiando clave a "${claveNueva}"...`,"blue");
   const r = await callDrex("cambiarClave", claveNueva);
 
+  // Sin confirmación no es "rechazada" ni "hecha": puede haberse cambiado o no. Queda pendiente con
+  // "Realizar", el operador lo mira en Agentes y al jugador no se le dice nada todavía (16/11: el Portal
+  // decía "Tu clave fue actualizada" con el sistema de juego mostrando que no).
+  if(r && r.ok === false && (r.needsLogin || r.pageError || r.ocupado || r.motivo === 'SIN_CONFIRMAR' || !r.motivo)){
+    toast('No se pudo confirmar el cambio de clave de '+usuario+' en Agentes'
+      + (r.needsLogin ? ' (pidió volver a iniciar sesión)' : '') + '. Sigue pendiente: revisalo en Agentes.','red');
+    throw new Error('cambio de clave sin confirmar');
+  }
+  // El sistema de juego no la aceptó (por ejemplo, menos de 8 letras o números): se rechaza y se le explica.
   if(r && r.ok === false){
     await actualizarSolicitudSupabase(id, {
       estado: "RECHAZADA",
       operador_usuario: operador.usuario || operador.nombre || ""
     });
-    await _avisarClaveAlJugador(usuario,
-      `❌ No pudimos cambiar tu clave: ${r.message || "error al ejecutar"}. Contactanos para revisarlo.`);
-    toast("Error: "+(r.message||"falló el cambio"),"red");
+    await _avisarClaveAlJugador(usuario, r.motivo === 'CLAVE_CORTA'
+      ? `❌ No pudimos cambiar tu clave: tiene que tener al menos 8 letras o números. Pedila de nuevo con una más larga.`
+      : `❌ No pudimos cambiar tu clave: el sistema de juego no la aceptó. Escribinos por acá y lo revisamos.`);
+    toast("El sistema de juego no aceptó la clave de "+usuario+": "+(r.message||"sin detalle"),"red");
     await refrescarTodo(false);
     return;
   }
@@ -205,10 +215,12 @@ async function ejecutarAutoClave(id){
     operador_usuario: operador.usuario || operador.nombre || ""
   });
 
+  // La que quedó de verdad en el sistema de juego (la devuelve el agente), no sólo la que se pidió.
+  const claveFinal = (r && r.password) || claveNueva;
   await _avisarClaveAlJugador(usuario,
-    `✅ Tu clave fue actualizada correctamente.\n🔑 Nueva clave: *${claveNueva}*\nIngresá al casino con tu usuario y esta clave.`);
+    `✅ Tu clave fue actualizada correctamente.\n🔑 Nueva clave: *${claveFinal}*\nIngresá al casino con tu usuario y esta clave.`);
 
-  toast(`Clave cambiada · ${usuario} → ${claveNueva}`, "green");
+  toast(`Clave cambiada · ${usuario} → ${claveFinal}`, "green");
   await window.ctrlElectron.navigateAgent();
   await refrescarTodo(false);
 }
@@ -322,7 +334,7 @@ async function _claveAutoTick(){
   for(const s of lista){
     const id = String(s.ID || s.SOLICITUD_ID || '');
     const usuario = s.USUARIO || s.USUARIO_JUGADOR || '';
-    const clave = s.PASSWORD_NUEVO || '12345a';
+    const clave = s.PASSWORD_NUEVO || '1a2b3c4d';
     if(!usuario) continue;
 
     if(!window._clavesEnCuenta[id]){
@@ -366,7 +378,7 @@ async function _claveAutoTick(){
 }
 try{ setInterval(_claveAutoTick, 1000); }catch(_e){}
 
-async function resetClaveRapido(usuario, claveNueva="12345a"){
+async function resetClaveRapido(usuario, claveNueva="1a2b3c4d"){
   if(!window.ctrlElectron){ alert("Solo en la app de escritorio."); return; }
   if(!usuario){ alert("Sin usuario."); return; }
 
@@ -377,7 +389,8 @@ async function resetClaveRapido(usuario, claveNueva="12345a"){
   if(!b.exists){ toast(`Usuario "${usuario}" no encontrado.`,"red"); return; }
 
   const r = await callDrex("cambiarClave", claveNueva);
-  if(r && r.ok === false){ toast("Error: "+(r.message||"falló"),"red"); return; }
+  if(r && r.ok === false){ toast("No se cambió la clave de "+usuario+" en Agentes: "+(r.needsLogin?"pidió volver a iniciar sesión":(r.message||"no confirmó el cambio")),"red"); return; }
+  if(r && r.password) claveNueva = r.password;   // la que quedó de verdad
 
   // Sin esto la clave no quedaba en ningún lado: _resetClaveManual sí la registraba, este
   // camino no. Y es el que usan el chat y el perfil, así que después no se le podía decir
@@ -400,10 +413,10 @@ window.cambiarClaveJugador = function(usuario){
     '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Se la cambiamos en el agente y queda anotada, '
     + 'así después se la podés pasar desde «Datos de ingreso».</div>'
     + '<label>Clave nueva</label>'
-    + '<input id="claveNuevaJug" type="text" autocomplete="off" value="12345a">',
+    + '<input id="claveNuevaJug" type="text" autocomplete="off" value="1a2b3c4d">',
     async function(){
       const c = String((document.getElementById("claveNuevaJug")||{}).value||"").trim();
-      if(c.length < 6){ toast("La clave tiene que tener al menos 6 caracteres.","red"); return; }
+      if(c.length < 8){ toast("La clave tiene que tener al menos 8 letras o números (el sistema de juego no acepta menos).","red"); return; }
       cerrarModal();
       await resetClaveRapido(u, c);
       try{ pjDatosIngreso(u); }catch(_e){}   // volver a la ficha, ya con la clave

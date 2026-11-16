@@ -328,7 +328,7 @@ async function crearUsuarioPanel(){
   const nombre        = document.getElementById("jugNuevoNombre")?.value?.trim();
   const telefono      = document.getElementById("jugNuevoTelefono")?.value?.replace(/\D/g,"")||"";
   const pc            = document.getElementById("jugNuevoPc")?.value?.trim().toUpperCase()||pcOperativa;
-  const clave         = document.getElementById("jugNuevoClave")?.value?.trim()||"12345a";
+  const clave         = document.getElementById("jugNuevoClave")?.value?.trim()||"1a2b3c4d";
 
   if(!usuario_nuevo||!nombre||!telefono){setBox("jugCrearMsg",`<div class="err-box">Completá usuario, nombre y teléfono.</div>`);return}
 
@@ -573,15 +573,15 @@ function abrirEditarUsuario(u){
 }
 
 function copiarDatosUsuario(u){
-  const txt=`Usuario: ${u.usuario}\nNombre: ${u.nombre}\nTeléfono: ${u.telefono||""}\nPC: ${u.pc_codigo||""}\nClave: ${u.clave||"12345a"}`;
+  const txt=`Usuario: ${u.usuario}\nNombre: ${u.nombre}\nTeléfono: ${u.telefono||""}\nPC: ${u.pc_codigo||""}\nClave: ${u.clave||"1a2b3c4d"}`;
   // Antes: .catch(()=>{}) — si fallaba, el operador no se enteraba de nada.
   window.nodoCopiar(txt, { etiqueta: "Datos copiados" });
 }
 
 async function resetearClaveUsuario(id, nombreUsuario){
-  if(!confirm(`¿Resetear clave de "${nombreUsuario}" a 12345a?`)) return;
-  const {error}=await supabaseClient.from("usuarios").update({clave:"12345a"}).eq("id",id);
-  if(!error) toast(`Clave de ${nombreUsuario} reseteada a 12345a`,"green");
+  if(!confirm(`¿Resetear clave de "${nombreUsuario}" a 1a2b3c4d?`)) return;
+  const {error}=await supabaseClient.from("usuarios").update({clave:"1a2b3c4d"}).eq("id",id);
+  if(!error) toast(`Clave de ${nombreUsuario} reseteada a 1a2b3c4d`,"green");
 }
 
 async function cargarJugadores(){
@@ -732,7 +732,7 @@ function renderTablaJugadores(lista){
       </td>
       <td>
         <div style="display:flex;flex-direction:column;gap:4px">
-          <button class="mini-btn blue" onclick='copiarDatosUsuario(${JSON.stringify({usuario:u.usuario,nombre:u.nombre,telefono:u.telefono,pc_codigo:u.pc_codigo,clave:u.clave||"12345a"})})'>📋 Copiar</button>
+          <button class="mini-btn blue" onclick='copiarDatosUsuario(${JSON.stringify({usuario:u.usuario,nombre:u.nombre,telefono:u.telefono,pc_codigo:u.pc_codigo,clave:u.clave||"1a2b3c4d"})})'>📋 Copiar</button>
           <button class="mini-btn green" onclick='abrirEditarUsuario(${JSON.stringify({id:u.id,usuario:u.usuario,nombre:u.nombre||"",telefono:u.telefono||"",dni:u.dni||"",nombre_transferencia:u.nombre_transferencia||"",cbu_alias:u.cbu_alias||"",pc_codigo:u.pc_codigo||"",clave:u.clave||""})})'>✏ Editar</button>
           <button class="mini-btn yellow" onclick="resetearClaveUsuario('${id}','${u.usuario}')">🔑 Reset</button>
         </div>
@@ -2698,7 +2698,7 @@ async function ejecutarOperacionManual(){
 // Devuelve {ok, message}. Si onResultHtml viene, también lo escribe en ese div.
 async function _ejecutarBlanqueoClave(usuario, opciones){
   opciones = opciones || {};
-  const clave = opciones.clave || "12345a";
+  const clave = opciones.clave || "1a2b3c4d";
   const resEl = opciones.resultEl || null;
   if(!window.ctrlElectron){ alert("Solo disponible en la app de escritorio."); return { ok:false }; }
   if(!usuario){ toast("Usuario inválido.", "red"); return { ok:false }; }
@@ -2744,7 +2744,7 @@ async function blanquearClaveManual(){
   const usuario = (document.getElementById("manualUsuario")?.value || "").trim();
   const res     = document.getElementById("manualResultado");
   if(!usuario){ toast("Ingresá un usuario para blanquear la clave.", "red"); return; }
-  if(!confirm('¿Blanquear la clave de "'+usuario+'" → 12345a?')) return;
+  if(!confirm('¿Blanquear la clave de "'+usuario+'" → 1a2b3c4d?')) return;
   const r = await _ejecutarBlanqueoClave(usuario, { resultEl: res });
   if(r.ok){
     // Limpiar inputs después del éxito
@@ -2756,7 +2756,7 @@ async function blanquearClaveManual(){
 // Botón de cada fila del historial (toma el usuario directamente)
 async function blanquearClaveUsuario(usuario){
   if(!usuario){ toast("Usuario inválido.", "red"); return; }
-  if(!confirm('¿Blanquear la clave de "'+usuario+'" → 12345a?')) return;
+  if(!confirm('¿Blanquear la clave de "'+usuario+'" → 1a2b3c4d?')) return;
   await _ejecutarBlanqueoClave(usuario, {});
 }
 
@@ -3077,7 +3077,7 @@ function abrirModalCrearUsuario(prefUsuario, prefTelefono, desdeChat){
     '<label style="color:#c0cad8;font-size:12px;font-weight:700">TELÉFONO <span style="font-weight:400;text-transform:none;color:#777">(con código de área, sin 0 ni 15)</span></label>' +
     '<input id="nuevoJugTelefono" type="tel" inputmode="tel" placeholder="ej: 11 2345 6789" autocomplete="off" value="'+_pT+'" oninput="_altaNuevoCotejar()" style="margin-bottom:8px">' +
     '<label style="color:#c0cad8;font-size:12px;font-weight:700">CLAVE INICIAL <span style="font-weight:400;text-transform:none;color:#777">(mín 6 caracteres)</span></label>' +
-    '<input id="nuevoJugClave" type="text" placeholder="12345a" value="12345a" autocomplete="off" style="margin-bottom:4px">' +
+    '<input id="nuevoJugClave" type="text" placeholder="1a2b3c4d" value="1a2b3c4d" autocomplete="off" style="margin-bottom:4px">' +
     // El veredicto va ARRIBA del botón, no abajo: es lo que decide si hay que crear la cuenta o no.
     '<div id="nuevoJugCotejo" style="margin-top:8px"></div>' +
     '<div id="nuevoJugRes" style="min-height:16px;margin-top:4px"></div>',
@@ -3155,13 +3155,13 @@ window._altaValidarExistente = function(el){
 };
 async function _ejecutarCrearUsuario(){
   const usuario = (document.getElementById("nuevoJugUsuario")?.value || "").trim().toLowerCase().replace(/\s+/g, "");
-  const clave   = (document.getElementById("nuevoJugClave")?.value   || "").trim() || "12345a";
+  const clave   = (document.getElementById("nuevoJugClave")?.value   || "").trim() || "1a2b3c4d";
   const telefono= (document.getElementById("nuevoJugTelefono")?.value|| "").trim();
   const resEl   = document.getElementById("nuevoJugRes");
   const btn     = document.getElementById("modalSaveBtn");
   if(!usuario){ if(resEl) resEl.innerHTML = '<span style="color:var(--red);font-size:12px">Ingresá un usuario.</span>'; return; }
   if(String(telefono).replace(/\D/g,"").length < 6){ if(resEl) resEl.innerHTML = '<span style="color:var(--red);font-size:12px">Ingresá el teléfono: sin él la cuenta nace sin vincular y no va a poder operar en el portal.</span>'; return; }
-  if(clave.length < 6){ if(resEl) resEl.innerHTML = '<span style="color:var(--red);font-size:12px">La clave debe tener al menos 6 caracteres.</span>'; return; }
+  if(clave.length < 8){ if(resEl) resEl.innerHTML = '<span style="color:var(--red);font-size:12px">La clave tiene que tener al menos 8 letras o números (el sistema de juego no acepta menos).</span>'; return; }
   if(btn){ btn.disabled = true; btn.textContent = "Creando..."; }
   if(resEl) resEl.innerHTML = '<span style="color:#c0cad8;font-size:12px">Procesando...</span>';
   try {
@@ -4172,11 +4172,11 @@ window.sincronizarTitularesBloqueados = async function(){
 // Lo que hay que mandarle para que entre: usuario, clave y un enlace que lo deja adentro YA
 // VALIDADO (token propio, 30 minutos, uno solo por usuario). La clave NO se inventa: sale de la
 // última que le pusimos —RESET_CLAVE del panel o CAMBIO_CLAVE del portal—. La clave estándar de
-// la operación es 12345a: si figura otra, o no sabemos ninguna, se refresca de un toque desde
+// la operación es 1a2b3c4d (hasta el 16/11 era 12345a; el sistema de juego nuevo pide 8 o más): si figura otra, o no sabemos ninguna, se refresca de un toque desde
 // acá mismo, que es donde el operador ya está parado. Medido: sólo el 3,9 % de los usuarios
 // tenía clave conocida, así que refrescarla es el camino normal, no la excepción.
 window.PLATAFORMA_URL = localStorage.getItem("nodo_plataforma_url") || "https://bet-300.pw";
-window.CLAVE_ESTANDAR = "12345a";
+window.CLAVE_ESTANDAR = "1a2b3c4d";
 
 window.pjDatosIngreso = async function(usuario){
   const u = String(usuario||"").trim();
@@ -6741,7 +6741,7 @@ function renderHistorial(lista){
       ? '<button class="mini-btn purple" onclick="cambiarBilleteraMovimiento(\x27'+escapeHtml(String(h.chunior_movimiento_id))+'\x27,\x27'+escapeHtml(histAccionId)+'\x27,\x27'+escapeHtml(String(h.billetera_id||''))+'\x27)" style="font-size:11px" title="Cambiar billetera del Mov. N° '+escapeHtml(String(h.chunior_movimiento_id))+'">💳 Cambiar billetera</button>'
       : ((puedeAccionarHistorial && _huboMovimiento) ? '<button class="mini-btn purple" onclick="cambiarBilleteraHistorialLocal('+changeLocalArgs+')" style="font-size:11px" title="Corregir la billetera donde quedó anotada esta operación">💳 Cambiar billetera</button>' : '');
     const claveBtn = (h.usuario && h.tipo !== 'RESET_CLAVE')
-      ? '<button class="mini-btn yellow" onclick="blanquearClaveUsuario(\x27'+escapeHtml(String(h.usuario))+'\x27)" style="font-size:11px" title="Blanquear clave de '+escapeHtml(String(h.usuario))+' a 12345a">🔑 Clave</button>'
+      ? '<button class="mini-btn yellow" onclick="blanquearClaveUsuario(\x27'+escapeHtml(String(h.usuario))+'\x27)" style="font-size:11px" title="Blanquear clave de '+escapeHtml(String(h.usuario))+' a 1a2b3c4d">🔑 Clave</button>'
       : '';
     // Botón de reintento. Aparece en dos casos:
     //   1) estado ERROR → verifica Drex/Chunior y reintenta lo que falte
@@ -10220,6 +10220,7 @@ async function _watchdogLeer(){
         return window.ctrlElectron.drexAutomation('obtenerSaldoAgente');
       }, { silencioso:true });   // tarea de fondo: no molesta al operador con toasts
       _wdHealth?.record('ALIVE', r ? 'OK' : 'DEGRADED', 'WATCHDOG_POLL');
+      try{ window.NodoSalud?.agentes?.('obtenerSaldoAgente', r || { ok:false }, null); }catch(_e){}
       if(r){
         if(r.needsLogin) drexNeedsLogin = true;
         if(r.balance && typeof r.balance.value === 'number') drexFichas = r.balance.value;
@@ -10485,8 +10486,8 @@ async function chatAccionRetirar(){
 async function chatAccionResetClave(){
   const usuario = chatUsuarioActivo();
   if(!usuario){ toast("Sin chat activo","red"); return; }
-  if(!confirm(`Resetear clave de "${usuario}" a 12345a?`)) return;
-  await resetClaveRapido(usuario, "12345a");
+  if(!confirm(`Resetear clave de "${usuario}" a 1a2b3c4d?`)) return;
+  await resetClaveRapido(usuario, "1a2b3c4d");
 }
 
 // Valida al usuario en Agentes (casino) y lo agrega a la base de la oficina (vínculo usuario↔tel).
@@ -11098,6 +11099,11 @@ function _altaCotejoHtml(uDecl, tDecl, r, onPick, titulo, resuelto){
     } else {
       filas+=fila('Usuario', esc(uDecl), '✗ no hay cuenta con este usuario', '#8b949e', '');
     }
+  } else {
+    // El título del chat dice "ayuda-<teléfono>" o "nuevo-<teléfono>": es un nombre provisorio que pone
+    // el Portal, no un usuario. Se dice acá para que nadie lo busque en Agentes.
+    filas+=fila('Usuario', '—', 'no lo escribió', '#8b949e',
+      sub('El nombre del chat es provisorio: el jugador dio sólo el teléfono. Si dice tener cuenta, pedile el usuario.'));
   }
   // ── 2) TELÉFONO declarado (INDEPENDIENTE del usuario) ──
   if(tN.length>=6){
@@ -11427,7 +11433,7 @@ function _altaModalResultado(usuario, telefono){
   const uEsc=String(usuario).replace(/'/g,"\\'");
   // Si venimos del alta, la clave real llega por acá. Sin esto el botón de copiar los datos
   // ofrecía "12345a" fijo — mentira cuando el operador puso otra clave al crear la cuenta.
-  let _clave='12345a';
+  let _clave='1a2b3c4d';
   try{ if(window._altaClaveNueva){ _clave=String(window._altaClaveNueva); window._altaClaveNueva=null; } }catch(_e){}
   const cEsc=String(_clave).replace(/'/g,"\\'");
   abrirModal('✅ Usuario validado y agendado',
@@ -11480,9 +11486,19 @@ window._altaCotejoConsulta = async function(ticket){
       if(x && x[1].trim()){ ingU=x[1].trim(); ingT=x[2].trim(); }
     });
   }catch(_e){}
-  const mU=txt.match(/usuario\s*[:\-]?\s*([A-Za-z0-9._-]{3,})/i);
+  // El usuario declarado se toma SÓLO con rótulo ("Usuario: juan123", "mi usuario es juan123"). Sin
+  // rótulo se agarraba la palabra que seguía a "usuario" en cualquier frase: el pedido del Portal
+  // "Tengo usuario pero no puedo entrar. Usuario: juan123" daba "pero", y "usuario nuevo" daba
+  // "nuevo" (Juan, 16/11: "no siempre es la misma palabra"). Vale el último rótulo, que es el más
+  // reciente. "ayuda-<teléfono>" y "nuevo-<teléfono>" los inventa el Portal cuando el jugador NO dio
+  // usuario: no son un usuario declarado y no se cotejan como tal.
+  const _inventado=function(u){ return /^(ayuda|nuevo)-\d+$/i.test(String(u||'').trim()); };
+  const _rotulados=Array.from(txt.matchAll(/usuario\s*(?:[:=]|\s+es\b\s*:?)\s*([A-Za-z0-9._-]{3,})/gi))
+    .map(function(m){ return String(m[1]).replace(/[.,;-]+$/,''); })
+    .filter(function(u){ return u && !_inventado(u); });
   const mT=txt.match(/(?:tel|telefono|tel[eé]fono|cel|celular)\s*[:.\-]?\s*([\d\s().\-]{6,})/i);
-  let uDecl=mU?String(mU[1]).replace(/[.,;]+$/,''):String(ticket.usuario||'');
+  let uDecl=_rotulados.length ? _rotulados[_rotulados.length-1]
+    : (_inventado(ticket.usuario) ? '' : String(ticket.usuario||''));
   let tDecl=mT?String(mT[1]):String(ticket.telefono||ticket.TELEFONO||'');
   if(ingU){
     uDecl=ingU; tDecl=ingT||tDecl;
@@ -12163,6 +12179,8 @@ async function callDrex(method, ...args){
     }
     }catch(_cnE){
       _wHealth?.reply(_cnE);
+      // Estado del sistema: cuál operación falló (cargar, retirar, crear…), no "tareas de fondo".
+      try{ window.NodoSalud?.agentes?.(method, null, _cnE); }catch(_e){}
       // El corte puede venir de main (timeout, recarga, ventana cerrada) o del preload. De quién
       // fue lo deduce la caja negra por la firma del mensaje: lo que no reconoce queda
       // 'desconocida' en vez de colgárselo a alguien.
@@ -12176,6 +12194,7 @@ async function callDrex(method, ...args){
       // es una falla (mismo criterio que _esChequeo, unas líneas más abajo).
       const _cnChequeo = (method==='estadoPagina' || method==='iniciarSesion');
       _wHealth?.record('EFFECT', (_r && _r.ok === false && !_cnChequeo) ? 'ERROR' : 'OK', (_r && _r.ok === false && !_cnChequeo) ? 'WORKER_DREX_FAILED' : 'WORKER_DREX_OK');
+      if(!_cnChequeo) window.NodoSalud?.agentes?.(method, _r, null);
       if(_r && _r.ok === false && !_cnChequeo){
         if(window._cnFalla) window._cnFalla(method, _r.message || 'devolvió ok:false', { ms:_cnMs, pantalla:_cnPant, capa:'preload' });
       } else if(window._cnPaso){
@@ -12376,9 +12395,9 @@ async function verificarEstadoBackoffice(){
   }
 }
 
-// ── Switch de backend de Agentes (Casinodrex ⇄ BET300) ───────────────────────
+// ── Selector de backoffice de Agentes (Casinodrex ⇄ BET300) ───────────────────────
 // El proxy de la oficina NO cambia: vive en la sesión persist:nodo-agentes (misma partición
-// para ambos backends). Cambiar de backend solo relanza la ventana de agentes con el preload/URL
+// para todos los backends). Elegir otro backoffice solo relanza la ventana de agentes con el preload/URL
 // del casino elegido; la salida de red (proxy) queda igual. Se PERSISTE en userData (sobrevive updates).
 window._agentBackendState = null;
 async function nodoCargarBackendAgentes(){
@@ -12390,13 +12409,90 @@ async function nodoCargarBackendAgentes(){
     if(btn && st && st.ok){ btn.textContent = '🎰 Backoffice: '+st.label; btn.dataset.backend = st.backend; }
   }catch(_e){}
 }
+function nodoElegirBackofficeAgentes(opciones, actual){
+  return new Promise(function(resolve){
+    const anterior = document.getElementById('nodoSelectorBackoffice');
+    if(anterior) anterior.remove();
+    let cerrado = false;
+    const capa = document.createElement('div');
+    capa.id = 'nodoSelectorBackoffice';
+    capa.style.cssText = 'position:fixed;inset:0;z-index:2147483000;background:rgba(5,8,12,.72);display:flex;align-items:center;justify-content:center;padding:18px';
+    const caja = document.createElement('div');
+    caja.setAttribute('role','dialog');
+    caja.setAttribute('aria-modal','true');
+    caja.setAttribute('aria-labelledby','nodoSelectorBackofficeTitulo');
+    caja.setAttribute('aria-describedby','nodoSelectorBackofficeAyuda');
+    caja.style.cssText = 'width:min(440px,100%);box-sizing:border-box;background:#111821;border:1px solid #2b3442;border-radius:12px;padding:16px;color:#e6edf3;font:13px/1.45 system-ui,sans-serif;box-shadow:0 20px 60px rgba(0,0,0,.5)';
+    const titulo = document.createElement('div');
+    titulo.id = 'nodoSelectorBackofficeTitulo';
+    titulo.textContent = 'Elegir backoffice';
+    titulo.style.cssText = 'font-weight:800;font-size:14px;margin-bottom:6px';
+    const ayuda = document.createElement('div');
+    ayuda.id = 'nodoSelectorBackofficeAyuda';
+    ayuda.textContent = 'Si cambiás de backoffice, se reiniciará la ventana de Agentes. Si no tenés la sesión guardada, vas a tener que iniciar sesión de nuevo.';
+    ayuda.style.cssText = 'color:#c9d1d9;margin-bottom:10px';
+    const etiqueta = document.createElement('label');
+    etiqueta.textContent = 'Backoffice';
+    etiqueta.style.cssText = 'display:block;margin-bottom:5px;font-weight:700';
+    const select = document.createElement('select');
+    select.setAttribute('aria-label','Backoffice');
+    select.style.cssText = 'width:100%;box-sizing:border-box;padding:9px 10px;border-radius:8px;border:1px solid #3b4654;background:#0b0f14;color:#fff;font-size:14px';
+    opciones.forEach(function(op){
+      const option = document.createElement('option');
+      option.value = op.id;
+      option.textContent = op.label;
+      select.appendChild(option);
+    });
+    if(opciones.some(function(op){ return op.id===actual; })) select.value = actual;
+    etiqueta.appendChild(select);
+    const botones = document.createElement('div');
+    botones.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:14px';
+    const estiloBoton = 'border-radius:8px;padding:8px 14px;font-weight:800;font-size:13px;cursor:pointer;';
+    const cancelar = document.createElement('button');
+    cancelar.type = 'button';
+    cancelar.textContent = 'Cancelar';
+    cancelar.style.cssText = estiloBoton+'border:1px solid #3b4654;background:transparent;color:#e6edf3';
+    const cambiar = document.createElement('button');
+    cambiar.type = 'button';
+    cambiar.textContent = 'Cambiar';
+    cambiar.style.cssText = estiloBoton+'border:0;background:#238636;color:#fff';
+    botones.append(cancelar,cambiar);
+    caja.append(titulo,ayuda,etiqueta,botones);
+    capa.appendChild(caja);
+    document.body.appendChild(capa);
+    const focoAnterior = document.activeElement;
+    const cerrar = function(valor){
+      if(cerrado) return;
+      cerrado = true;
+      document.removeEventListener('keydown', alTecla);
+      try{ capa.remove(); }catch(_e){}
+      try{ if(focoAnterior && focoAnterior.isConnected) focoAnterior.focus(); }catch(_e){}
+      resolve(valor);
+    };
+    const confirmar = function(){ cerrar(select.value || null); };
+    const alTecla = function(e){
+      if(e.key === 'Escape'){ e.preventDefault(); cerrar(null); }
+      else if(e.key === 'Enter' && e.target === select){ e.preventDefault(); confirmar(); }
+      else if(e.key === 'Tab' && e.shiftKey && e.target === select){ e.preventDefault(); cambiar.focus(); }
+      else if(e.key === 'Tab' && !e.shiftKey && e.target === cambiar){ e.preventDefault(); select.focus(); }
+    };
+    cancelar.addEventListener('click',function(){ cerrar(null); });
+    cambiar.addEventListener('click',confirmar);
+    capa.addEventListener('click',function(e){ if(e.target === capa) cerrar(null); });
+    document.addEventListener('keydown',alTecla);
+    select.focus();
+  });
+}
 async function nodoCambiarBackendAgentes(){
   if(!enElectron || !window.ctrlElectron || !window.ctrlElectron.setAgentBackend){ toast('Solo en la app de escritorio','yellow'); return; }
   const st = window._agentBackendState;
-  const ops = (st && st.opciones) || [{id:'casinodrex',label:'Casinodrex'},{id:'bet300',label:'BET300 (agentesbet.io)'}];
+  const ops = (st && st.opciones) || [{id:'casinodrex',label:'Casinodrex'},{id:'bet300',label:'BET300 (agentesbet.io)'},{id:'adminonline',label:'AdminOnline (adminonline.me)'}];
   const actual = (st && st.backend) || 'casinodrex';
-  const otro = ops.find(function(o){ return o.id!==actual; }) || ops[0];
-  if(!confirm('¿Cambiar el backoffice de Agentes a "'+otro.label+'"?\n\nSe RELANZA la ventana de agentes (el proxy de la oficina NO cambia). Si no tenés la sesión guardada de ese backoffice, vas a tener que iniciar sesión de nuevo.')) return;
+  if(!ops.length){ toast('No hay backoffices disponibles','red'); return; }
+  const seleccionado = await nodoElegirBackofficeAgentes(ops, actual);
+  if(!seleccionado || seleccionado === actual) return;
+  const otro = ops.find(function(o){ return o.id===seleccionado; });
+  if(!otro){ toast('No se pudo elegir el backoffice','red'); return; }
   const btn=document.getElementById('agentBackendBtn'); if(btn){ btn.disabled=true; btn.textContent='🎰 Relanzando…'; }
   try{
     const r = await window.ctrlElectron.setAgentBackend(otro.id);
@@ -12738,7 +12834,7 @@ async function ejecutarAutoClave(id){
   if(!s){ alert("Solicitud no encontrada."); return; }
 
   const usuario     = s.USUARIO || s.USUARIO_JUGADOR || "";
-  const claveNueva  = s.PASSWORD_NUEVO || "12345a";
+  const claveNueva  = s.PASSWORD_NUEVO || "1a2b3c4d";
 
   if(!usuario){ alert("La solicitud no tiene usuario."); return; }
 
@@ -12769,14 +12865,24 @@ async function ejecutarAutoClave(id){
   toast(`Cambiando clave a "${claveNueva}"...`,"blue");
   const r = await callDrex("cambiarClave", claveNueva);
 
+  // Sin confirmación no es "rechazada" ni "hecha": puede haberse cambiado o no. Queda pendiente con
+  // "Realizar", el operador lo mira en Agentes y al jugador no se le dice nada todavía (16/11: el Portal
+  // decía "Tu clave fue actualizada" con el sistema de juego mostrando que no).
+  if(r && r.ok === false && (r.needsLogin || r.pageError || r.ocupado || r.motivo === 'SIN_CONFIRMAR' || !r.motivo)){
+    toast('No se pudo confirmar el cambio de clave de '+usuario+' en Agentes'
+      + (r.needsLogin ? ' (pidió volver a iniciar sesión)' : '') + '. Sigue pendiente: revisalo en Agentes.','red');
+    throw new Error('cambio de clave sin confirmar');
+  }
+  // El sistema de juego no la aceptó (por ejemplo, menos de 8 letras o números): se rechaza y se le explica.
   if(r && r.ok === false){
     await actualizarSolicitudSupabase(id, {
       estado: "RECHAZADA",
       operador_usuario: operador.usuario || operador.nombre || ""
     });
-    await _avisarClaveAlJugador(usuario,
-      `❌ No pudimos cambiar tu clave: ${r.message || "error al ejecutar"}. Contactanos para revisarlo.`);
-    toast("Error: "+(r.message||"falló el cambio"),"red");
+    await _avisarClaveAlJugador(usuario, r.motivo === 'CLAVE_CORTA'
+      ? `❌ No pudimos cambiar tu clave: tiene que tener al menos 8 letras o números. Pedila de nuevo con una más larga.`
+      : `❌ No pudimos cambiar tu clave: el sistema de juego no la aceptó. Escribinos por acá y lo revisamos.`);
+    toast("El sistema de juego no aceptó la clave de "+usuario+": "+(r.message||"sin detalle"),"red");
     await refrescarTodo(false);
     return;
   }
@@ -12786,10 +12892,12 @@ async function ejecutarAutoClave(id){
     operador_usuario: operador.usuario || operador.nombre || ""
   });
 
+  // La que quedó de verdad en el sistema de juego (la devuelve el agente), no sólo la que se pidió.
+  const claveFinal = (r && r.password) || claveNueva;
   await _avisarClaveAlJugador(usuario,
-    `✅ Tu clave fue actualizada correctamente.\n🔑 Nueva clave: *${claveNueva}*\nIngresá al casino con tu usuario y esta clave.`);
+    `✅ Tu clave fue actualizada correctamente.\n🔑 Nueva clave: *${claveFinal}*\nIngresá al casino con tu usuario y esta clave.`);
 
-  toast(`Clave cambiada · ${usuario} → ${claveNueva}`, "green");
+  toast(`Clave cambiada · ${usuario} → ${claveFinal}`, "green");
   await window.ctrlElectron.navigateAgent();
   await refrescarTodo(false);
 }
@@ -12903,7 +13011,7 @@ async function _claveAutoTick(){
   for(const s of lista){
     const id = String(s.ID || s.SOLICITUD_ID || '');
     const usuario = s.USUARIO || s.USUARIO_JUGADOR || '';
-    const clave = s.PASSWORD_NUEVO || '12345a';
+    const clave = s.PASSWORD_NUEVO || '1a2b3c4d';
     if(!usuario) continue;
 
     if(!window._clavesEnCuenta[id]){
@@ -12947,7 +13055,7 @@ async function _claveAutoTick(){
 }
 try{ setInterval(_claveAutoTick, 1000); }catch(_e){}
 
-async function resetClaveRapido(usuario, claveNueva="12345a"){
+async function resetClaveRapido(usuario, claveNueva="1a2b3c4d"){
   if(!window.ctrlElectron){ alert("Solo en la app de escritorio."); return; }
   if(!usuario){ alert("Sin usuario."); return; }
 
@@ -12958,7 +13066,8 @@ async function resetClaveRapido(usuario, claveNueva="12345a"){
   if(!b.exists){ toast(`Usuario "${usuario}" no encontrado.`,"red"); return; }
 
   const r = await callDrex("cambiarClave", claveNueva);
-  if(r && r.ok === false){ toast("Error: "+(r.message||"falló"),"red"); return; }
+  if(r && r.ok === false){ toast("No se cambió la clave de "+usuario+" en Agentes: "+(r.needsLogin?"pidió volver a iniciar sesión":(r.message||"no confirmó el cambio")),"red"); return; }
+  if(r && r.password) claveNueva = r.password;   // la que quedó de verdad
 
   // Sin esto la clave no quedaba en ningún lado: _resetClaveManual sí la registraba, este
   // camino no. Y es el que usan el chat y el perfil, así que después no se le podía decir
@@ -12981,10 +13090,10 @@ window.cambiarClaveJugador = function(usuario){
     '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Se la cambiamos en el agente y queda anotada, '
     + 'así después se la podés pasar desde «Datos de ingreso».</div>'
     + '<label>Clave nueva</label>'
-    + '<input id="claveNuevaJug" type="text" autocomplete="off" value="12345a">',
+    + '<input id="claveNuevaJug" type="text" autocomplete="off" value="1a2b3c4d">',
     async function(){
       const c = String((document.getElementById("claveNuevaJug")||{}).value||"").trim();
-      if(c.length < 6){ toast("La clave tiene que tener al menos 6 caracteres.","red"); return; }
+      if(c.length < 8){ toast("La clave tiene que tener al menos 8 letras o números (el sistema de juego no acepta menos).","red"); return; }
       cerrarModal();
       await resetClaveRapido(u, c);
       try{ pjDatosIngreso(u); }catch(_e){}   // volver a la ficha, ya con la clave

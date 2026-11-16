@@ -21,7 +21,7 @@ function abrirModalCrearUsuario(prefUsuario, prefTelefono, desdeChat){
     '<label style="color:#c0cad8;font-size:12px;font-weight:700">TELÉFONO <span style="font-weight:400;text-transform:none;color:#777">(con código de área, sin 0 ni 15)</span></label>' +
     '<input id="nuevoJugTelefono" type="tel" inputmode="tel" placeholder="ej: 11 2345 6789" autocomplete="off" value="'+_pT+'" oninput="_altaNuevoCotejar()" style="margin-bottom:8px">' +
     '<label style="color:#c0cad8;font-size:12px;font-weight:700">CLAVE INICIAL <span style="font-weight:400;text-transform:none;color:#777">(mín 6 caracteres)</span></label>' +
-    '<input id="nuevoJugClave" type="text" placeholder="12345a" value="12345a" autocomplete="off" style="margin-bottom:4px">' +
+    '<input id="nuevoJugClave" type="text" placeholder="1a2b3c4d" value="1a2b3c4d" autocomplete="off" style="margin-bottom:4px">' +
     // El veredicto va ARRIBA del botón, no abajo: es lo que decide si hay que crear la cuenta o no.
     '<div id="nuevoJugCotejo" style="margin-top:8px"></div>' +
     '<div id="nuevoJugRes" style="min-height:16px;margin-top:4px"></div>',
@@ -99,13 +99,13 @@ window._altaValidarExistente = function(el){
 };
 async function _ejecutarCrearUsuario(){
   const usuario = (document.getElementById("nuevoJugUsuario")?.value || "").trim().toLowerCase().replace(/\s+/g, "");
-  const clave   = (document.getElementById("nuevoJugClave")?.value   || "").trim() || "12345a";
+  const clave   = (document.getElementById("nuevoJugClave")?.value   || "").trim() || "1a2b3c4d";
   const telefono= (document.getElementById("nuevoJugTelefono")?.value|| "").trim();
   const resEl   = document.getElementById("nuevoJugRes");
   const btn     = document.getElementById("modalSaveBtn");
   if(!usuario){ if(resEl) resEl.innerHTML = '<span style="color:var(--red);font-size:12px">Ingresá un usuario.</span>'; return; }
   if(String(telefono).replace(/\D/g,"").length < 6){ if(resEl) resEl.innerHTML = '<span style="color:var(--red);font-size:12px">Ingresá el teléfono: sin él la cuenta nace sin vincular y no va a poder operar en el portal.</span>'; return; }
-  if(clave.length < 6){ if(resEl) resEl.innerHTML = '<span style="color:var(--red);font-size:12px">La clave debe tener al menos 6 caracteres.</span>'; return; }
+  if(clave.length < 8){ if(resEl) resEl.innerHTML = '<span style="color:var(--red);font-size:12px">La clave tiene que tener al menos 8 letras o números (el sistema de juego no acepta menos).</span>'; return; }
   if(btn){ btn.disabled = true; btn.textContent = "Creando..."; }
   if(resEl) resEl.innerHTML = '<span style="color:#c0cad8;font-size:12px">Procesando...</span>';
   try {

@@ -335,6 +335,54 @@ test('loaded agent page is reused for searches without refresh; unexpected navig
   assert.equal(requests.pending.size, 0);
 });
 
+test('agent window follows the selected preload and waits for pending operations before replacement', async () => {
+  const { Window, windows } = windowFakes();
+  const requests = createRequestRegistry(timersFake());
+  const backends = {
+    current: { url: 'https://agentesbet.io/', appSel: 'input', spa: true, preload: 'agent-preload-bet300.js' }
+  };
+  const agents = createAgentWindowService({
+    BrowserWindow: Window, icon: 'icon', partition: 'persist:nodo-agentes', backends,
+    headers: { configure() {} }, requests
+  });
+  const bet300 = agents.get();
+
+  backends.current = {
+    url: 'https://www.adminonline.me/agents/control', appSel: 'input', spa: true,
+    spaPathAware: true, preload: 'agent-preload-adminonline.js'
+  };
+
+  const operation = requests.run(bet300.webContents, 'run', {}, 10, 'timeout');
+  const rejected = assert.rejects(operation, /cleanup/);
+  assert.throws(() => agents.get(), /operación en curso/,
+    'no debe cerrar la ventana equivocada mientras hay una automatización pendiente');
+  assert.equal(bet300.isDestroyed(), false);
+  requests.rejectAll(new Error('cleanup'));
+  await rejected;
+
+  const adminonline = agents.get();
+  assert.equal(windows.length, 2);
+  assert.equal(bet300.isDestroyed(), true);
+  assert.equal(adminonline.options.webPreferences.preload, 'agent-preload-adminonline.js');
+  assert.deepEqual(adminonline.loaded, ['https://www.adminonline.me/agents/control']);
+});
+
+test('AdminOnline navigation distinguishes SPA routes and reuses the requested route', async () => {
+  const { Window, windows } = windowFakes();
+  const requests = createRequestRegistry(timersFake());
+  const controlUrl = 'https://www.adminonline.me/agents/control';
+  const whatsappUrl = 'https://www.adminonline.me/config/socials';
+  const backends = { current: { url: controlUrl, appSel: 'input', spa: true, spaPathAware: true, preload: 'adminonline.js' } };
+  const agents = createAgentWindowService({ BrowserWindow: Window, icon: 'icon', partition: 'persist:nodo-agentes', backends, headers: { configure() {} }, requests });
+
+  await agents.navigate(controlUrl);
+  assert.deepEqual(windows[0].loaded, [controlUrl]);
+  await agents.navigate(whatsappUrl);
+  assert.deepEqual(windows[0].loaded, [controlUrl, whatsappUrl], 'ruta de Personalizar pagina dentro del mismo dominio debe abrir el formulario');
+  await agents.navigate(whatsappUrl);
+  assert.equal(windows[0].loaded.length, 2, 'la misma ruta debe reutilizar la página ya cargada');
+});
+
 test('backend switch closes agent and verification windows and keeps the same proxy partition', async t => {
   const dir = tempDir(t);
   const { Window, windows } = windowFakes();
@@ -721,4 +769,15 @@ test('the handshake resolves true only when the preload actually greets', async 
   win.webContents.emit('ipc-message', {}, 'drex:preload-listo');
   assert.equal(await espera, true);
   assert.equal(preload.listo, true);
+});
+
+test('cerrar el panel cierra NODO y recargarlo recrea las ventanas ocultas sin cortar operaciones', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const f = src.slice(src.indexOf('function atarVentanasAlPanel'), src.indexOf('app.whenReady()'));
+  assert.match(f, /on\('closed', \(\) => \{ app\.quit\(\); \}\)/, 'el panel cerrado no puede dejar NODO corriendo de fondo');
+  assert.match(f, /automationRequests\.pending\.size/, 'espera a que termine la operacion en curso');
+  assert.match(f, /agents\.close\(\)/);
+  assert.match(f, /verification\.close\(\)/);
+  assert.doesNotMatch(f, /chunior/i.test(f.replace(/\/\/.*$/gm, '')) ? /chunior\./ : /^$/, 'Chunior no se recrea: perderia la sesion');
+  assert.match(src, /panel\.create\(\);\s*atarVentanasAlPanel\(\);/);
 });

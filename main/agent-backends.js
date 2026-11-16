@@ -22,15 +22,26 @@ function createAgentBackends({ app, rootDir, env = process.env }) {
       spa:        true,
       label:      'BET300 (agentesbet.io)',
       appSel:     'input[placeholder="Buscar usuario"], input[placeholder="Alias"], .v-navigation-drawer .v-list-item, .v-list-item--link'
+    },
+    adminonline: {
+      url:        'https://www.adminonline.me/agents/control',
+      newUserUrl: 'https://www.adminonline.me/agents/control',
+      // AdminOnline pone este formulario en Personalizar página; /whatsapp es otra pantalla.
+      whatsappUrl:'https://www.adminonline.me/config/socials',
+      preload:    'agent-preload-adminonline.js',
+      spa:        true,
+      spaPathAware: true,        // AdminOnline es SPA; control y personalización son rutas distintas
+      label:      'AdminOnline (adminonline.me)',
+      appSel:     'input[placeholder="Buscar por alias o ID"], input[type="tel"][placeholder="Ingrese número de WhatsApp"], input#alias, input#password'
     }
   };
   function _agentBackendFile(){ try { return path.join(app.getPath('userData'), 'nodo-agent-backend'); } catch (_e) { return ''; } }
   function _leerBackendGuardado(){
     // 1) Lo que eligió el operador desde el panel (archivo persistido) manda.
     try { const f = _agentBackendFile(); if (f && fs.existsSync(f)) { const v = String(fs.readFileSync(f, 'utf8')).trim().toLowerCase(); if (AGENT_BACKENDS[v]) return v; } } catch (_e) {}
-    // 2) Fallback al .env (AGENT_PLATFORM) para las PCs que ya lo usan. Default: casinodrex (intacto).
+    // 2) Fallback al .env (AGENT_PLATFORM) para oficinas configuradas. Default: casinodrex (intacto).
     const plataforma = String(env.AGENT_PLATFORM || '').trim().toLowerCase();
-    return plataforma === 'bet300' ? 'bet300' : 'casinodrex';
+    return Object.hasOwn(AGENT_BACKENDS, plataforma) ? plataforma : 'casinodrex';
   }
 
   let selected = _leerBackendGuardado();

@@ -32,8 +32,8 @@ async function chatAccionRetirar(){
 async function chatAccionResetClave(){
   const usuario = chatUsuarioActivo();
   if(!usuario){ toast("Sin chat activo","red"); return; }
-  if(!confirm(`Resetear clave de "${usuario}" a 12345a?`)) return;
-  await resetClaveRapido(usuario, "12345a");
+  if(!confirm(`Resetear clave de "${usuario}" a 1a2b3c4d?`)) return;
+  await resetClaveRapido(usuario, "1a2b3c4d");
 }
 
 // Valida al usuario en Agentes (casino) y lo agrega a la base de la oficina (vínculo usuario↔tel).

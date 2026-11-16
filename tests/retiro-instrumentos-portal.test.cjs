@@ -45,6 +45,7 @@ async function base() {
   await db.exec(leer('retiro-instrumentos.sql'));
   await db.exec(leer('retiro-instrumentos-portal.sql'));
   await db.exec(leer('retiro-dni-interruptor.sql'));
+  await db.exec(leer('retiro-dni-aparte.sql'));
   const uno = async (sql, params) => Object.values((await db.query(sql, params)).rows[0])[0];
   const crear = (destino, titular, dni, meta = { telefono: '1100000000' }) => uno(
     `select landing_portal_retiro_crear_v1('codp1','pruebaxx','1100000000',null,15000,$1,$2,$3,$4)`, [titular, destino, dni, JSON.stringify(meta)]);
@@ -71,7 +72,7 @@ t('con la llave apagada el Portal sigue con el retiro de siempre', async () => {
 
 t('cuenta nueva: pide DNI, crea solicitud y cuenta juntas, sin DNI en claro ni en la metadata', async () => {
   const b = await base();
-  await b.db.query(`insert into retiro_instrumentos_oficinas values ('P1', true)`);
+  await b.db.query(`insert into retiro_instrumentos_oficinas(pc_codigo, habilitado, pide_dni) values ('P1', true, true)`);
   assert.equal((await b.crear('alias.demo.mp', 'Fulano Demo', '')).error_code, 'DNI_REQUERIDO');
   const r = await b.crear('alias.demo.mp', 'Fulano Demo', '38.495.012', { telefono: '1100000000', dni: '38495012' });
   assert.equal(r.ok, true); assert.equal(r.estado_validacion, 'PENDIENTE');
@@ -97,7 +98,7 @@ t('cuenta nueva: pide DNI, crea solicitud y cuenta juntas, sin DNI en claro ni e
 
 t('no coincide dos veces: rechazada y marcada; ese DNI puede volver a usarse, pero el operador lo ve', async () => {
   const b = await base();
-  await b.db.query(`insert into retiro_instrumentos_oficinas values ('P1', true)`);
+  await b.db.query(`insert into retiro_instrumentos_oficinas(pc_codigo, habilitado, pide_dni) values ('P1', true, true)`);
   const r = await b.crear('otra.cuenta.mp', 'Fulano Demo', '5.123.456');
   assert.equal((await b.validar(r.solicitud_id, '99999999')).motivo, 'NO_COINCIDE');
   assert.equal((await b.validar(r.solicitud_id, '88888888')).motivo, 'RECHAZADO');
@@ -157,7 +158,7 @@ t('rango amplio de edad por el número (estimado ± 3) y cuándo se pregunta la 
 // Un DNI cuyo rango incluye menores (48 M ≈ nacido en 2011) y la edad que declara el jugador.
 async function conDniJoven(edad) {
   const b = await base();
-  await b.db.query(`insert into retiro_instrumentos_oficinas values ('P1', true)`);
+  await b.db.query(`insert into retiro_instrumentos_oficinas(pc_codigo, habilitado, pide_dni) values ('P1', true, true)`);
   const meta = { telefono: '1100000000' };
   if (edad !== undefined) meta.edad_declarada = String(edad);
   return { b, r: await b.crear('alias.demo.mp', 'Fulano Demo', '48.000.001', meta) };
@@ -165,7 +166,7 @@ async function conDniJoven(edad) {
 
 t('un DNI raro pasa igual y el operador lo ve; un formato roto pide el DNI de nuevo', async () => {
   const b = await base();
-  await b.db.query(`insert into retiro_instrumentos_oficinas values ('P1', true)`);
+  await b.db.query(`insert into retiro_instrumentos_oficinas(pc_codigo, habilitado, pide_dni) values ('P1', true, true)`);
   assert.equal((await b.crear('alias.demo.mp', 'Fulano Demo', '123')).error_code, 'DNI_REQUERIDO');
   const r = await b.crear('alias.demo.mp', 'Fulano Demo', '12345678');
   assert.equal(r.estado_validacion, 'PENDIENTE', 'no traba al jugador');
@@ -225,7 +226,7 @@ t('dijo 16 y después 18: no queda trabado, pero el operador ve que antes dijo o
 
 t('DNI de adulto: no se pregunta la edad', async () => {
   const b = await base();
-  await b.db.query(`insert into retiro_instrumentos_oficinas values ('P1', true)`);
+  await b.db.query(`insert into retiro_instrumentos_oficinas(pc_codigo, habilitado, pide_dni) values ('P1', true, true)`);
   const r = await b.crear('alias.demo.mp', 'Fulano Demo', '30111222');
   assert.equal(r.estado_validacion, 'PENDIENTE');
   assert.deepEqual((await b.estado(r.solicitud_id)).alertas, []);
@@ -233,7 +234,7 @@ t('DNI de adulto: no se pregunta la edad', async () => {
 
 t('CUIT mal tipeado por el operador: no le gasta un intento al jugador', async () => {
   const b = await base();
-  await b.db.query(`insert into retiro_instrumentos_oficinas values ('P1', true)`);
+  await b.db.query(`insert into retiro_instrumentos_oficinas(pc_codigo, habilitado, pide_dni) values ('P1', true, true)`);
   const r = await b.crear('alias.demo.mp', 'Fulano Demo', '38495012');
   assert.equal((await b.validar(r.solicitud_id, '20-38495012-4')).motivo, 'CUIT_INVALIDO');
   assert.equal((await b.estado(r.solicitud_id)).intentos_restantes, 2, 'siguen los dos intentos');
@@ -274,7 +275,7 @@ t('interruptor del admin: prende y apaga el DNI de SU oficina, con quién y cuá
 
 t('controles: vínculo, datos y secreto del panel', async () => {
   const b = await base();
-  await b.db.query(`insert into retiro_instrumentos_oficinas values ('P1', true)`);
+  await b.db.query(`insert into retiro_instrumentos_oficinas(pc_codigo, habilitado, pide_dni) values ('P1', true, true)`);
   assert.match(await b.error(() => b.uno(`select landing_portal_retiro_crear_v1('codp1','otro','1',null,1000,'X Y','alias.demo.mp','38495012','{}')`)), /VINCULO_NO_VALIDO/);
   // Datos mal: un motivo que el Portal sabe explicar, no un error crudo.
   assert.equal((await b.crear('ab', 'Fulano Demo', '38495012')).error_code, 'DESTINO_INVALIDO');
@@ -284,4 +285,20 @@ t('controles: vínculo, datos y secreto del panel', async () => {
   assert.equal(pobre.estado_validacion, 'PENDIENTE', JSON.stringify(pobre));
   assert.match(await b.error(() => b.uno(`select panel_retiro_instrumento('mal', 1)`)), /no-auth/);
   assert.match(await b.error(() => b.uno(`select _retiro_inst_hash('1')`)) || 'sin roles en PGlite', /.*/);
+});
+
+t('con la beta prendida y el switch del DNI apagado, el retiro sale sin DNI y el cajero valida la cuenta', async () => {
+  const b = await base();
+  await b.db.query(`insert into retiro_instrumentos_oficinas(pc_codigo, habilitado) values ('P1', true)`);
+  const ctx = await b.contexto();
+  assert.equal(ctx.enabled, true);
+  assert.equal(ctx.pide_dni, false, 'el Portal tiene que enterarse de que no pide DNI');
+  const r = await b.crear('alias.demo.mp', 'Fulano Demo', '');
+  assert.equal(r.error_code, undefined, 'sin el switch del DNI no puede volver DNI_REQUERIDO');
+  assert.equal(r.estado_validacion, 'PENDIENTE', 'la cuenta nueva la confirma el cajero');
+  assert.ok(r.solicitud_id);
+  const fila = (await b.db.query(`select dni_hash from retiro_instrumentos where usuario = 'pruebaxx'`)).rows[0];
+  assert.equal(fila.dni_hash, null);
+  await b.db.query(`update retiro_instrumentos_oficinas set pide_dni = true where pc_codigo = 'P1'`);
+  assert.equal((await b.contexto()).pide_dni, true);
 });

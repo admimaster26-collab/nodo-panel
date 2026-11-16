@@ -10,7 +10,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const BASE_URL = 'https://agentesbet.io/';
-const CLAVE_ESTANDAR = '12345a';      // clave fija para crear jugador y blanquear (a pedido)
+// Clave de blanqueo y de alta cuando nadie eligió otra. 12345a quedó obsoleta (Juan, 16/11: 1a2b3c4d).
+const CLAVE_ESTANDAR = '1a2b3c4d';
+// La que pidió el jugador o eligió el operador; si no vino ninguna, la estándar. Antes se ignoraba.
+function claveParaAgente(pedida) {
+  const c = String(pedida == null ? '' : pedida).trim();
+  return c || CLAVE_ESTANDAR;
+}
 const DEFAULT_TIMEOUT = 18000;
 const STEP_DELAY = 300;
 // Retiro: pausa A LA VISTA antes de apretar "Enviar". Juan (12/09): "busca, espera, busca de nuevo,
@@ -995,9 +1001,10 @@ async function finalizarOperacionAgentes() {
 }
 
 // ── Cambiar clave (1 solo campo → CLAVE_ESTANDAR) ────────────────────────────
-async function cambiarClave(_password, options = {}) {
+async function cambiarClave(password, options = {}) {
   const ready = await ensureReady();
   if (ready.needsLogin || ready.pageError) return ready;
+  const clave = claveParaAgente(password);
 
   let fila = _currentUser ? buscarFilaPorAlias(_currentUser) : null;
   if (!fila) throw new Error('No encuentro la fila del jugador para cambiar la clave.');
@@ -1010,8 +1017,8 @@ async function cambiarClave(_password, options = {}) {
   await delay(300);
   const campo = firstVisible('input.v-field__input', modal);
   if (!campo) throw new Error('No apareció el campo de nueva contraseña.');
-  const ok = await setFieldAndVerify(campo, CLAVE_ESTANDAR, 5);
-  if (!ok) throw new Error('No se pudo escribir la nueva contraseña.');
+  const escrita = await setFieldAndVerify(campo, clave, 5);
+  if (!escrita) throw new Error('No se pudo escribir la nueva contraseña.');
 
   const guardar = findByText(/^guardar$/i, 'button, .v-btn', modal);
   if (!guardar) throw new Error('No se encontró el botón "Guardar".');
@@ -1020,12 +1027,16 @@ async function cambiarClave(_password, options = {}) {
   await confirmarModalFinal(); // BET300 pide un "Confirmar" extra
 
   const snack = await esperarSnackbarCapturado(captClave, 8000);
-  if (findActiveModal()) await cerrarModalActual();
+  // "Hecho" sólo con aviso de éxito o con el modal cerrado: sin aviso y con el modal abierto no se cambió.
+  const abierto = !!findActiveModal();
+  if (abierto) await cerrarModalActual();
+  const ok = snack ? snack.tipo === 'ok' : !abierto;
   return {
-    ok: snack ? snack.tipo === 'ok' : true,
+    ok,
+    ...(ok ? {} : { motivo: snack ? 'RECHAZADA' : 'SIN_CONFIRMAR' }),
     action: 'cambio_clave',
-    password: CLAVE_ESTANDAR,
-    message: snack ? snack.texto : 'Cambio de clave enviado.'
+    password: clave,
+    message: snack ? snack.texto : (ok ? 'Clave cambiada.' : 'El sistema de juego no confirmó el cambio de clave')
   };
 }
 

@@ -567,7 +567,7 @@ const CLAVES_CHAT      = ["bet300_chat_id","bet300_chat_token"];
 const CLAVES_JUGADOR   = ["bet300_usuario","bet300_telefono","bet300_vinculo_estado",
                           "bet300_nivel_acceso","bet300_motivo_soporte","bet300_portal_thread_seen",
                           "bet300_validacion_id","bet300_validacion_estado","bet300_bono_usado",
-                          "bet300_despues_validar"];
+                          "bet300_despues_validar","bet300_alta_pedida","bet300_clave_en_curso"];
 let _enviando=false, _toqueMs=null;
 const MONTO_MIN_CARGA=1000, MONTO_MIN_RETIRO=5000, RETIRO_COOLDOWN_MS=24*60*60*1000;
 function _minCarga(){ return Number(state.minCarga)>0 ? Number(state.minCarga) : MONTO_MIN_CARGA; }
@@ -614,6 +614,8 @@ function _borrar(claves){
 function olvidarSolicitud(conChat){
   _borrar(CLAVES_SOLICITUD);
   state.pendingTipo=""; state.pendingBilletera=""; state.solicitudId=""; state.solicitudStartedAt=0;
+  // Se terminó lo que estaba en curso: el asistente vuelve a ofrecer opciones (ver guiaPedidoEnCurso).
+  try{ if(typeof guiaFinDePedido==="function")setTimeout(guiaFinDePedido,0); }catch(_e){}
   if(conChat !== false){
     _borrar(CLAVES_CHAT);
     state.chatId=""; state.chatToken=""; state.seenMsgIds=new Set(); state.misGlobos=new Map();
@@ -838,9 +840,13 @@ function goChat(){ try{hideOperatorBubble();}catch(_e){} showScreen("chat");rend
 // teléfono que el cliente ingresó → el operador ya sabe que es alta y con qué datos vincular.
 async function enviarAltaSoporte(tipo,tema){
   if(state._altaSoporteEnviado) return {ok:true,repetido:true}; // ya lo mandamos, no duplicar
-  const apodo=(state.usuario||"").trim(), tel=(state.telefono||"").trim();
+  // "ayuda-<teléfono>" y "nuevo-<teléfono>" los pone el Portal cuando el jugador dejó el usuario vacío:
+  // son el nombre provisorio del chat, no su usuario. Escribirlos como "Usuario: ayuda-…" hacía que NODO
+  // los cotejara como un usuario de verdad (Juan, 16/11).
+  const provisorio=/^(ayuda|nuevo)-\d+$/i.test((state.usuario||"").trim());
+  const apodo=provisorio?"":(state.usuario||"").trim(), tel=(state.telefono||"").trim();
   const base = (tipo==="ayuda")
-    ? `Hola 👋 Tengo usuario pero no puedo entrar.${apodo?` Usuario: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
+    ? `Hola 👋 Tengo usuario pero no puedo entrar.${apodo?` Usuario: ${apodo}.`:" No escribí mi usuario."}${tel?` Tel: ${tel}.`:""}`
     : (tipo==="registro")
     ? `Hola 👋 Soy nuevo, quiero registrarme.${apodo?` Apodo: ${apodo}.`:""}${tel?` Tel: ${tel}.`:""}`
     : (tipo==="validar")
@@ -854,11 +860,17 @@ async function enviarAltaSoporte(tipo,tema){
   return {...result,texto:msg};
 }
 async function escribirSoporteAlta(tipo){
+  // Mientras sale el pedido el asistente no habla: primero se ve el mensaje del jugador y después la
+  // espera. Antes pintaba el menú de "Validar mi cuenta" / "Soy nuevo" antes de enviar, y ahí quedaba.
+  state._altaSoporteEnviando=true;
   goChat();
   const result=await enviarAltaSoporte(tipo);
-  if(result?.ok)return;
+  state._altaSoporteEnviando=false;
+  if(result?.ok){altaPedidaGuardar();try{guiaIr("inicio");}catch(_e){}return;}
   addMsg(esc(result?.error||"No se pudo enviar. Reintentá desde el chat."),"system");
   const input=$("freeInput");if(input&&!input.value)input.value=result.texto;
+  // No salió: vuelven las opciones para reintentar o elegir otra cosa.
+  try{guiaIr("inicio");}catch(_e){}
 }
 
 // ── No leídos ──────────────────────────────────────────────────────────────
@@ -972,7 +984,7 @@ function addMsg(text,who="bot",imgUrl=null,meta=null){
       if(typeof portalRegistrarGlobo==='function')portalRegistrarGlobo(meta,wrap);
     }
   }
-  if(who==="operator"&&!meta?.local&&typeof guiaCederAPersona==="function")guiaCederAPersona(stamp);
+  if(who==="operator"&&!meta?.local&&typeof guiaCederAPersona==="function")guiaCederAPersona(stamp,text);
   return wrap;
 }
 function incomingOperatorMsg(texto,imgUrl,m=null){
@@ -1417,7 +1429,7 @@ function marcarVistos(filas){
     if(chatMessageRole(m)!=='user'||m.id==null||m.visto_confirmado!==true)continue;
     const node=state.misGlobos.get(portalMensajeClave(m));if(!node)continue;
     const tick=node.querySelector('.visto');
-    if(tick&&!tick.classList.contains('si')){tick.textContent='✓✓';tick.classList.add('si');tick.setAttribute('aria-label','visto');}
+    if(tick&&!tick.classList.contains('si')){tick.textContent='✓✓';tick.classList.add('si');tick.setAttribute('aria-label','visto');guiaAvisarVisto();}
   }
 }
 
@@ -1543,7 +1555,14 @@ function renderHome(){
       <div><div class="pending-title"><span class="live-dot"></span>${esc(tipoLabel())} en revisión</div>
       <div class="pending-text">${esc(tiempoEspera()||"En proceso")} · tocá para ver el estado</div></div>
       <span class="chev">›</span></div>`:""}
-    ${soporte?`
+    ${soporte&&altaPedida()?`
+      <div class="pending-banner" style="background:rgba(251,191,36,.08);border-color:rgba(251,191,36,.28);cursor:default">
+        <div class="pb-ico">⏳</div>
+        <div><div class="pending-title">Tu cajero ya tiene tu pedido</div>
+        <div class="pending-text">Revisa tus datos y te escribe por el chat. Apenas te habilite, vas a poder cargar y retirar.</div></div>
+      </div>
+      <button class="action-btn" onclick="goChat()" style="margin-top:12px">💬 Ir al chat con mi cajero</button>`
+    :soporte?`
       <div class="pending-banner" style="background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.28);cursor:default">
         <div class="pb-ico">🔴</div>
         <div><div class="pending-title">${esc(state.motivoSoporte?"Activación pendiente":"No pudimos validar tus datos")}</div>
@@ -2219,7 +2238,7 @@ function renderEstado(){
     const h=s.querySelector(".estado-h"),sub=s.querySelector(".estado-sub"),tx=s.querySelector(".estado-tx");
     if(h)h.textContent="Verificando titularidad con el banco";
     if(sub)sub.textContent="Verificación por única vez para esta cuenta";
-    if(tx)tx.textContent="Estamos confirmando que el DNI coincida con el titular. Puede demorar unos minutos; te avisamos por acá cuando termine.";
+    if(tx)tx.textContent="Estamos confirmando que la cuenta donde cobrás esté a tu nombre. Puede demorar unos minutos; te avisamos por acá cuando termine.";
   }
   pintarHistorialUsuario();
   startHistPoll();
@@ -2289,7 +2308,7 @@ async function consultarEstadoSolicitud(mostrarMensaje=true){
           const box=$("screenEstado"),h=box&&box.querySelector(".estado-h"),sub=box&&box.querySelector(".estado-sub"),tx=box&&box.querySelector(".estado-tx");
           if(h)h.textContent="Verificando titularidad con el banco";
           if(sub)sub.textContent="Verificación por única vez para esta cuenta";
-          if(tx)tx.textContent="Estamos confirmando que el DNI coincida con el titular. Puede demorar unos minutos; te avisamos por acá cuando termine.";
+          if(tx)tx.textContent="Estamos confirmando que la cuenta donde cobrás esté a tu nombre. Puede demorar unos minutos; te avisamos por acá cuando termine.";
         }
       }
     }catch(_e){}
@@ -3433,6 +3452,9 @@ async function leerDatosRetiro(){
 function _mostrarDniRetiro(destino){
   const caja=$(destino||"retiroDatosPrevios");
   if(!caja)return;
+  // El DNI tiene su propio switch por oficina (pide_dni). Apagado, no se pide ni se muestra (Juan, 16/11).
+  const _prot=state._retiroProtocoloCache&&state._retiroProtocoloCache.value;
+  if(!(_prot&&_prot.pide_dni===true)){caja.innerHTML="";return;}
   caja.innerHTML='<div class="retiro-validacion-aviso" style="margin:8px 0;padding:10px 12px;border:1px solid #31506a;border-radius:10px;background:#101d29;color:#d7e8f5">'
     // Juan, 8/11: lo anterior ("Verificación de titularidad…") era "muy brusco". Simple, como lo dijo él.
     +'Para la seguridad de tu cuenta y de tus fichas, necesitamos verificar con tu DNI que el usuario es tuyo. Es una sola vez.'
@@ -3525,9 +3547,9 @@ async function crearSolicitudRetiro(usuario,monto,destino,titular,conservarChat,
   let dataR=null;
   if(protocolo.mode==="beta"){
     const instrumento=protocolo.instrumento||null;
-    const requiereDni=!(instrumento&&String(instrumento.destino||"").trim().toUpperCase()===String(destino||"").trim().replace(/\s+/g,"").toUpperCase()
+    const requiereDni=protocolo.pide_dni===true&&(!(instrumento&&String(instrumento.destino||"").trim().toUpperCase()===String(destino||"").trim().replace(/\s+/g,"").toUpperCase()
       &&String(instrumento.titular||"").trim().toUpperCase()===String(titular||"").trim().replace(/\s+/g," ").toUpperCase())
-      ||!!protocolo.cambiarCuenta;
+      ||!!protocolo.cambiarCuenta);
     const dniLimpio=String(dni||"").replace(/\D/g,"");
     // 7 u 8 números: los DNI más viejos tienen 7 y el servidor los acepta (antes el Portal los rechazaba).
     if(requiereDni&& !/^\d{7,8}$/.test(dniLimpio))return {ok:false,motivo:"dni_requerido"};
@@ -3608,7 +3630,7 @@ async function enviarSolicitudRetiro(){
   }
   const protocolo=await _consultarRetiroProtocolo(false);
   const instrumento=protocolo.instrumento||null;
-  const requiereDni=protocolo.mode==="beta"&&(!(instrumento
+  const requiereDni=protocolo.mode==="beta"&&protocolo.pide_dni===true&&(!(instrumento
     &&String(instrumento.destino||"").trim().toUpperCase()===String(destino||"").trim().replace(/\s+/g,"").toUpperCase()
     &&String(instrumento.titular||"").trim().toUpperCase()===String(titular||"").trim().replace(/\s+/g," ").toUpperCase())
     ||!!protocolo.cambiarCuenta);
@@ -3659,11 +3681,11 @@ async function enviarSolicitudRetiro(){
 function renderClave(){
   const s=$("screenClave");
   s.innerHTML=`<div class="screen-title">Reiniciar clave</div>
-    <div class="screen-desc">Es la clave con la que entrás a jugar. Si dejás el campo vacío queda <b>12345a</b> y la cambiás cuando entres.</div>
+    <div class="screen-desc">Es la clave con la que entrás a jugar. Si dejás el campo vacío queda <b>1a2b3c4d</b> y la cambiás cuando entres.</div>
     <div class="user-chip">👤 ${esc(state.usuario)}</div>
     <div class="form-card">
       <label>Clave nueva (opcional)</label>
-      <input id="claveNueva" placeholder="Mínimo 6 caracteres · letras y números">
+      <input id="claveNueva" placeholder="Mínimo 8 · letras y números">
       <button id="btnEnviarClave" class="action-btn" onclick="enviarSolicitudClave()">Pedir el reinicio de la clave</button>
       <button class="action-btn secondary-btn" style="margin-top:9px" onclick="goChat()">Necesito ayuda</button>
     </div>`;
@@ -3671,8 +3693,9 @@ function renderClave(){
 
 // Es la única función del Portal que pide un cambio de clave: la usan la pantalla y la ficha del chat.
 async function crearSolicitudClave(claveRaw){
-  const clave=String(claveRaw||"").trim()||"12345a";
-  if(clave.length<6)return {revisar:"La clave debe tener al menos 6 caracteres"};
+  // 1a2b3c4d desde el 16/11: el sistema de juego pide 8 o más y 12345a la rechazaba.
+  const clave=String(claveRaw||"").trim()||"1a2b3c4d";
+  if(clave.length<8)return {revisar:"La clave tiene que tener al menos 8 letras o números"};
   if(!/^[a-zA-Z0-9]+$/.test(clave))return {revisar:"Solo letras y números, sin espacios ni símbolos"};
   const payload={usuario:state.usuario,telefono:state.telefono||"",pc_codigo:state.pcCodigo,public_code:state.publicCode,host:location.host,tipo:"CAMBIO_CLAVE",password_nuevo:clave};
   let res=await rpc("landing_portal_v16_crear_solicitud",{p_public_code:state.publicCode,p_usuario:state.usuario,p_tipo:"CAMBIO_CLAVE",p_monto:0,p_titular:"",p_destino:null,p_mensaje:"Solicitud de CAMBIO_CLAVE",p_metadata:payload});
@@ -3680,6 +3703,7 @@ async function crearSolicitudClave(claveRaw){
   const d=normalize(res.data)||res.data||{};
   if(d.chat_id){state.chatId=String(d.chat_id);localStorage.setItem("bet300_chat_id",state.chatId);}
   if(d.chat_token){state.chatToken=String(d.chat_token);localStorage.setItem("bet300_chat_token",state.chatToken);}
+  claveEnCursoMarcar();
   return {ok:true};
 }
 async function enviarSolicitudClave(){
@@ -3690,13 +3714,16 @@ async function enviarSolicitudClave(){
     const r=await crearSolicitudClave($("claveNueva")?.value);
     if(r.revisar)return toast(r.revisar);
     if(!r.ok){toast("No pudimos enviar la solicitud. Probá por el chat.");goChat();return;}
-    toast("Solicitud de cambio de clave enviada 🔑");
+    toast("Pedido de cambio de clave enviado 🔑");
+    // El asistente dice que está en curso y no ofrece nada más (ver guiaPedidoEnCurso). Antes este globo
+    // salía debajo del menú de "Una carga / Un retiro / Entrar a mi cuenta" (Juan, 16/11).
+    const yaPintada=guiaPintada;
     goChat();
-    addMsg('Solicitud de cambio de clave enviada 🔑<br><span class="status-pill">En proceso</span><br>Tu cajero la procesa en breve. Te avisamos por este mismo chat.',"bot");
+    if(yaPintada)guiaIr("inicio");
     startChatPoll();startPortalThreadPoll();
     setTimeout(()=>subscribePush(),1200);
   } finally {
-    _soltarEnvio("btnEnviarClave","Solicitar reseteo de clave",true);
+    _soltarEnvio("btnEnviarClave","Pedir el reinicio de la clave",true);
   }
 }
 
@@ -3892,7 +3919,81 @@ function guiaTextoMonto(real,pedido,id){return "Corrección de monto: el pedido 
 // Sin validar, el menú es corto: nada de cargas, retiros ni fichas que después no se pueden mandar.
 // Se le prometía "completá esto 👇" y abajo le decía que no estaba validado (Juan, 2/11).
 function guiaSinValidar(){return !guiaFaltaIdentidad()&&state.nivelAcceso==="SOPORTE";}
-function guiaYaPasoDatos(){return !!state._altaSoporteEnviado||guiaPersonaAvisada();}
+// El pedido de alta o de ayuda ya salió: se recuerda en este teléfono un día, atado al usuario y teléfono
+// con que se pidió. Sin esto, al volver a abrir el chat el asistente le ofrecía otra vez "Validar mi cuenta"
+// y "Soy nuevo" encima de lo que el cajero todavía no había hecho (Juan, 16/11).
+function altaPedidaGuardar(){
+  try{localStorage.setItem("bet300_alta_pedida",JSON.stringify({u:state.usuario||"",t:state.telefono||"",at:Date.now()}));}catch(_e){}
+}
+function altaPedida(){
+  if(state._altaSoporteEnviado||state._altaSoporteEnviando)return true;
+  try{
+    const d=JSON.parse(localStorage.getItem("bet300_alta_pedida")||"null");
+    return !!d&&d.u===(state.usuario||"")&&d.t===(state.telefono||"")&&Date.now()-Number(d.at)<24*60*60*1000;
+  }catch(_e){return false;}
+}
+function guiaYaPasoDatos(){return altaPedida()||guiaPersonaAvisada();}
+// ── Pedido en curso ──────────────────────────────────────────────────────────
+// Mientras el cajero hace algo que el jugador pidió (una carga, un retiro, un cambio de clave), el asistente
+// no ofrece otras operaciones: no hay nada que tocar, y "Una carga / Un retiro / Entrar a mi cuenta" debajo
+// de "En proceso" pisaba lo que el cajero estaba haciendo (Juan, 16/11). La carga sí conserva subir el
+// comprobante, que es lo que el cajero necesita para hacerla.
+const CLAVE_EN_CURSO_MS=30*60*1000;
+function claveEnCursoMarcar(){try{localStorage.setItem("bet300_clave_en_curso",JSON.stringify({u:state.usuario||"",at:Date.now()}));}catch(_e){}}
+function claveEnCursoBorrar(){try{localStorage.removeItem("bet300_clave_en_curso");}catch(_e){}}
+function claveEnCurso(){
+  try{
+    const d=JSON.parse(localStorage.getItem("bet300_clave_en_curso")||"null");
+    return d&&d.u===(state.usuario||"")&&Date.now()-Number(d.at)<CLAVE_EN_CURSO_MS?d:null;
+  }catch(_e){return null;}
+}
+function guiaPedidoEnCurso(){
+  try{
+    if(typeof tieneSolicitudPendiente==="function"&&tieneSolicitudPendiente()){
+      const t=String(state.pendingTipo||"").toUpperCase();
+      return t==="RETIRO"||t==="CARGA"?t:"PEDIDO";
+    }
+  }catch(_e){}
+  return claveEnCurso()?"CLAVE":"";
+}
+const GUIA_EN_CURSO={CLAVE:"🔑 Tu cajero está cambiando tu clave. Te aviso por acá apenas esté lista; no hace falta que hagas nada.",
+  CARGA:"Tu cajero está revisando tu carga. Te aviso por acá apenas esté acreditada; no hace falta que hagas nada más.",
+  RETIRO:"Tu cajero está con tu retiro. Te aviso por acá apenas te lo transfiera; no hace falta que hagas nada.",
+  PEDIDO:"Tu cajero está con tu pedido. Te aviso por acá apenas esté; no hace falta que hagas nada."};
+// Sólo lo que no pisa al cajero: ver cómo va y, en una carga, subir el comprobante que necesita.
+function guiaOpcionesEnCurso(tipo){
+  if(tipo==="CARGA")return [{t:"📎 Subir el comprobante",hace:"comprobante"},{t:"¿Cómo va mi carga?",hace:"noAparecio"}];
+  if(tipo==="RETIRO")return [{t:"¿Cómo va mi retiro?",hace:"retiroEstado"}];
+  return [];
+}
+// La marca de "en curso" es del teléfono: puede haber quedado vieja. Al abrir el chat se le pregunta al
+// servidor; si confirma que no hay nada abierto, se limpia y vuelven las opciones (olvidarSolicitud).
+function guiaChequearPedido(){
+  const t=guiaPedidoEnCurso();
+  if(!t||t==="CLAVE"||typeof guiaHaySolicitudEnCurso!=="function")return;
+  Promise.resolve().then(guiaHaySolicitudEnCurso).then(hay=>{if(!hay)guiaFinDePedido();}).catch(()=>{});
+}
+// Terminó lo que estaba en curso (se limpió la solicitud o contestó el cajero por la clave): vuelven las
+// opciones, salvo que esté completando una ficha.
+function guiaFinDePedido(){
+  try{
+    if(!guiaActual||guiaOcupada||guiaPedidoEnCurso())return;
+    const accion=$("guiaAccion");
+    if(!accion||accion.classList.contains("con-ficha"))return;
+    guiaReponerMenu();
+  }catch(_e){}
+}
+// Señal de vida mientras espera que lo validen: el servidor confirmó que su cajero abrió el mensaje
+// (los ✓✓ del globo). Se le dice en palabras una vez; si ya está en las burbujas guardadas, no se repite.
+const GUIA_VISTO="👀 Tu cajero ya vio tu mensaje.";
+function guiaAvisarVisto(){
+  try{
+    if(!guiaEsperandoValidacion())return;
+    const g=guiaCargar();
+    if(g.humano||g.burbujas.some(b=>b.h===GUIA_VISTO))return;
+    guiaDecir(GUIA_VISTO);guiaReponerMenu();
+  }catch(_e){}
+}
 // Ya mandó sus datos y espera que una persona lo valide. No hay nada que tocar: el Portal se fija
 // solo cada pocos segundos y, apenas lo habilitan, aparece el botón Ingresar. "Ya me activaron"
 // afirmaba algo que el sistema sabe que no pasó, y "Hablar con una persona" pedía lo que ya está
@@ -3900,15 +4001,15 @@ function guiaYaPasoDatos(){return !!state._altaSoporteEnviado||guiaPersonaAvisad
 function guiaEsperandoValidacion(){return guiaSinValidar()&&guiaYaPasoDatos();}
 const GUIA_SIN_VALIDAR_HACE=["validarCuenta","registrarme","olvideUsuario","revalidar","persona","ingresar","validar","registro","gracias"];
 const GUIA_RAMAS={
-  inicio:{dice:()=>!guiaSinValidar()?"¿Con qué te doy una mano?"
-      :guiaYaPasoDatos()?"Tu cuenta está en revisión. Tu cajero ya tiene tus datos: apenas te habilite, te aparece acá el botón para entrar. No hace falta que hagas nada."
+  inicio:{dice:()=>!guiaSinValidar()?(GUIA_EN_CURSO[guiaPedidoEnCurso()]||"¿Con qué te doy una mano?")
+      :guiaYaPasoDatos()?"Tu mensaje le llegó a tu cajero: revisa tus datos y te escribe por acá. Apenas te habilite, te aparece el botón para entrar. No hace falta que hagas nada más."
       :"Tu cuenta todavía no está validada. Validala y después te ayudo con cargas y retiros.",
-    opciones:()=>!guiaSinValidar()?[
+    opciones:()=>!guiaSinValidar()?(guiaPedidoEnCurso()?guiaOpcionesEnCurso(guiaPedidoEnCurso()):[
     {t:"💰 Una carga",va:"carga"},
     {t:"🏧 Un retiro",va:"retiro"},
     {t:"🔑 Entrar a mi cuenta",va:"cuenta"},
     {t:"✍️ Otra cosa",hace:"otraCosa"}
-  ]:guiaYaPasoDatos()?[]:[
+  ]):guiaYaPasoDatos()?[]:[
     {t:"✅ Validar mi cuenta",hace:"validarCuenta"},
     {t:"🆕 Soy nuevo",hace:"registrarme"},
     {t:"🔑 No me acuerdo el usuario",hace:"olvideUsuario"}
@@ -4080,11 +4181,14 @@ function guiaIr(id){
   g.nodo=id;g.tema=rama.tema?GUIA_TEMAS[rama.tema]:"";g.ingreso=null;g.esperaTexto=false;
   if(id==="inicio")g.camino=[];else guiaCamino(g,g.tema);
   guiaDecir(typeof rama.dice==="function"?rama.dice():rama.dice);
-  guiaOfrecer(rama.opciones(),{sinVolver:id==="inicio",sinPersona:id==="inicio"&&guiaEsperandoValidacion()});
+  guiaOfrecer(rama.opciones(),{sinVolver:id==="inicio",sinPersona:id==="inicio"&&(guiaEsperandoValidacion()||!!guiaPedidoEnCurso())});
 }
 function guiaReponerMenu(){
   const g=guiaCargar();
   if(guiaEsperandoValidacion())return guiaOfrecer([],{sinPersona:true,sinVolver:true});
+  // Con algo en curso, ni el menú ni "Ver opciones": sólo lo que ese pedido necesita (ver guiaPedidoEnCurso).
+  const enCurso=!guiaSinValidar()&&guiaPedidoEnCurso();
+  if(enCurso)return guiaOfrecer(guiaOpcionesEnCurso(enCurso),{sinPersona:true,sinVolver:true});
   if(g.humano)return guiaOfrecer([{t:"Ver opciones",va:"inicio"}],{sinPersona:true,sinVolver:true});
   const nodo=guiaSinValidar()?"inicio":g.nodo;
   guiaOfrecer(GUIA_RAMAS[nodo].opciones(),{sinVolver:nodo==="inicio"});
@@ -4094,10 +4198,16 @@ function guiaMostrar(){
   if(guiaPintada)return;
   guiaPintada=true;
   guiaChequearCuenta();
+  guiaChequearPedido();
   if(!g.burbujas.length){
     // Ya viene hablando con una persona: el saludo y el menú no van encima de esa charla.
     if(g.humano)return guiaReponerMenu();
-    guiaDecir(GUIA_SALUDO);guiaIr("inicio");return;
+    // Está saliendo su pedido de alta o de ayuda: habla después (escribirSoporteAlta), debajo del mensaje.
+    if(state._altaSoporteEnviando)return;
+    // Espera que el cajero lo valide o que termine lo que pidió: el saludo ("resuelvo cargas, retiros…")
+    // ofrece lo que en ese momento no corresponde.
+    if(!guiaEsperandoValidacion()&&!guiaPedidoEnCurso())guiaDecir(GUIA_SALUDO);
+    guiaIr("inicio");return;
   }
   g.burbujas.forEach(b=>guiaBurbuja(b.h,b.q,b.at));
   guiaReponerMenu();
@@ -4129,11 +4239,15 @@ function guiaValidarCuenta(){
 }
 // Nunca por encima de una persona: si contesta un operador, el menú se repliega a un solo botón.
 // Sólo si contesta AHORA: un mensaje viejo del historial no le saca el menú al que vuelve.
-function guiaCederAPersona(cuando){
+function guiaCederAPersona(cuando,texto){
   if(cuando&&Date.now()-new Date(cuando).getTime()>GUIA_PERSONA_AVISADA_MS)return;
+  // El cajero contestó por la clave (hecha o no): deja de estar en curso. Un aviso de un cambio ANTERIOR
+  // (más de 2 minutos antes de pedir este) no la cierra.
+  const c=claveEnCurso();
+  if(c&&/clave/i.test(String(texto||""))&&(!cuando||Date.parse(cuando)>=Number(c.at)-120000))claveEnCursoBorrar();
   const g=guiaCargar();
   g.pedido=null;
-  if(g.humano)return guiaGuardar();
+  if(g.humano){guiaGuardar();return guiaFinDePedido();}
   g.humano=true;guiaGuardar();
   const accion=$("guiaAccion");
   if(accion&&!guiaOcupada&&!accion.classList.contains("con-ficha"))guiaReponerMenu();
@@ -4284,7 +4398,7 @@ function guiaFaltaValidar(que){
   despuesDeValidar(que);
   const para=GUIA_DESPUES_TXT[que]||"operar";
   // Ya se los pasó a una persona: no se le vuelven a pedir.
-  if(state._altaSoporteEnviado||guiaPersonaAvisada()){
+  if(guiaYaPasoDatos()){
     guiaDecir("Tu cuenta está en revisión. Tu cajero ya tiene tus datos: apenas te habilite, te aparece acá el botón para entrar y te paso para "+para+".");
     return guiaOfrecer([],{sinPersona:true,sinVolver:true});
   }
@@ -4724,7 +4838,8 @@ async function guiaEnviarCarga(){
     guiaDarVuelta(guiaTicket({sub:"Apenas la veamos te la acreditamos.",estado:"Esperando que la revisen",filas:[
       ["Vas a cargar",_money(Number(monto))],["Transferiste a",b.alias||b.cbu||b.cvu],["A nombre de",b.titular],["Desde la cuenta de",titular],["N° de pedido","#"+r.solicitudId]]}));
     guiaDecir("Mandá el comprobante para que tu cajero revise la carga.");
-    guiaOfrecer([{t:"📎 Subir el comprobante",hace:"comprobante"}]);
+    // Pedido en curso: sólo lo que la carga necesita (ver guiaPedidoEnCurso).
+    guiaOfrecer([{t:"📎 Subir el comprobante",hace:"comprobante"}],{sinPersona:true,sinVolver:true});
   }finally{_soltarEnvio("guiaEnviar","Ya transferí · Pedir la carga",true);}
 }
 async function guiaFichaRetiro(){
@@ -4786,7 +4901,7 @@ async function guiaEnviarRetiro(){
     const correccion=!!(state._retiroProtocolo&&state._retiroProtocolo.correccion);
     if(resto>0&&!correccion)return guiaErrorFicha("Ya pediste un retiro hoy. Podés pedir otro en "+_fmtRestante(resto)+".");
     const protocolo=await _consultarRetiroProtocolo(false),instrumento=protocolo.instrumento||null;
-    const requiereDni=protocolo.mode==="beta"&&(!(instrumento
+    const requiereDni=protocolo.mode==="beta"&&protocolo.pide_dni===true&&(!(instrumento
       &&String(instrumento.destino||"").trim().toUpperCase()===String(destino||"").trim().replace(/\s+/g,"").toUpperCase()
       &&String(instrumento.titular||"").trim().toUpperCase()===String(titular||"").trim().replace(/\s+/g," ").toUpperCase())
       ||!!protocolo.cambiarCuenta||correccion);
@@ -4806,7 +4921,7 @@ async function guiaEnviarRetiro(){
     const enValidacion=r.estadoValidacion==="PENDIENTE";
     guiaDarVuelta(guiaTicket({sub:enValidacion?"Verificamos esta cuenta por única vez y te avisamos por el chat.":"Lo revisan y te lo transferimos.",estado:enValidacion?"Verificando titularidad":"Esperando que lo aprueben",filas:[
       ["Vas a retirar",_money(monto)],["Te lo mandamos a",destino],["A nombre de",titular],["N° de pedido","#"+r.solicitudId]]}));
-    guiaOfrecer([]);
+    guiaOfrecer([],{sinPersona:true,sinVolver:true});   // pedido en curso: no se ofrece otra cosa (ver guiaPedidoEnCurso)
   }finally{_soltarEnvio("guiaEnviar","Pedir el retiro",true);}
 }
 
@@ -4815,9 +4930,9 @@ async function guiaFichaClave(){
   if(!await guiaPuedeOperar("clave"))return;
   guiaDecir("Dale, te la reinicio 👇");
   guiaFicha('<form class="guia-ficha" novalidate onsubmit="event.preventDefault();guiaEnviarClave()"><h4>🔑 Reiniciar tu clave de juego</h4>'
-    +'<div class="sub">Es la clave con la que entrás a jugar. Si dejás el campo vacío queda <b>12345a</b> y la cambiás cuando entres.</div>'
+    +'<div class="sub">Es la clave con la que entrás a jugar. Si dejás el campo vacío queda <b>1a2b3c4d</b> y la cambiás cuando entres.</div>'
     +'<label for="guiaClaveNueva">Clave nueva (opcional)</label>'
-    +'<input id="guiaClaveNueva" placeholder="Mínimo 6, letras y números" autocomplete="off">'
+    +'<input id="guiaClaveNueva" placeholder="Mínimo 8, letras y números" autocomplete="off">'
     +'<div id="guiaError" class="guia-error" role="alert"></div><button type="submit" id="guiaEnviar" class="action-btn">Cambiar la clave</button></form>');
 }
 async function guiaEnviarClave(){
@@ -4828,7 +4943,7 @@ async function guiaEnviarClave(){
     if(!r.ok)return guiaErrorFicha("No pude pedir el cambio. Probá de nuevo.");
     startChatPoll();
     guiaDecir("Listo, ya pedí el reinicio de tu clave. Te aviso por acá apenas esté lista.");
-    guiaOfrecer([]);
+    guiaOfrecer([],{sinPersona:true,sinVolver:true});   // pedido en curso: no se ofrece otra cosa (ver guiaPedidoEnCurso)
   }finally{_soltarEnvio("guiaEnviar","Cambiar la clave",true);}
 }
 
@@ -5007,7 +5122,10 @@ window.addEventListener("load",async()=>{
   await cargarPromoActiva();
   setTimeout(marcarAppInstalada, 2500);
   renderHome();
-  showScreen("home");
+  // Con conexión lenta el arranque termina después de que el jugador ya tocó algo: si ya está en el
+  // chat (pidió ayuda o escribió), no se lo saca a Inicio. Pasaba con "Tengo usuario pero no puedo
+  // entrar": el pedido salía y el chat desaparecía debajo de la pantalla de Inicio (prueba del 16/11).
+  if(state.screen!=="chat")showScreen("home");
   // mostrarLauncherSiHaceFalta(); // RETIRADO 2026-07-27: el launcher iPhone confundía a usuarios que veían el iframe bien
   // Botón directo: el operador eligió si el enlace abre en Cargar o en Retirar.
   //

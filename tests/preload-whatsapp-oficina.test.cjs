@@ -7,6 +7,7 @@ const ROOT = path.join(__dirname, '..');
 // agent-preload.js está en Windows-1252 (tiene acentos de antes): se lee así a propósito.
 const PRELOAD = fs.readFileSync(path.join(ROOT, 'agent-preload.js'), 'latin1');
 const PRELOAD_BET300 = fs.readFileSync(path.join(ROOT, 'agent-preload-bet300.js'), 'utf8');
+const PRELOAD_ADMINONLINE = fs.readFileSync(path.join(ROOT, 'agent-preload-adminonline.js'), 'utf8');
 
 // La sección "Contacto por Whatsapp" de bo.casinodrex.com/agents/features, tal como la sirve
 // el backoffice (React + MUI), con el número cambiado por uno inventado: el repo es público.
@@ -108,6 +109,49 @@ test('el preload se corre del paso si la ventana esta sin sesion', () => {
     'mirar _opsEnCurso aca es bloquearse solo: el ipc ya lo subio por esta misma llamada');
 });
 
+test('AdminOnline conecta lectura y guardado con Personalizar pagina', () => {
+  const lectura = PRELOAD_ADMINONLINE.slice(PRELOAD_ADMINONLINE.indexOf('async function _leerWhatsappEnPantalla'), PRELOAD_ADMINONLINE.indexOf('async function _guardarWhatsappEnPantalla'));
+  const guardado = PRELOAD_ADMINONLINE.slice(PRELOAD_ADMINONLINE.indexOf('async function _guardarWhatsappEnPantalla'), PRELOAD_ADMINONLINE.indexOf('function _rutaActual'));
+  assert.match(PRELOAD_ADMINONLINE, /CONFIG_SOCIALS_PATH\s*=\s*'\/config\/socials'/);
+  assert.match(PRELOAD_ADMINONLINE, /input\[type="tel"\]\[placeholder="Ingrese n.mero de WhatsApp"\]/);
+  assert.match(lectura, /CONFIG_SOCIALS_PATH/);
+  assert.match(lectura, /_whatsappSettings\(input\)/);
+  assert.match(lectura, /\[role="switch"\]/);
+  assert.match(lectura, /_whatsappCountryPrefix/);
+  assert.match(lectura, /pais: prefix/);
+  assert.match(lectura, /numeroValido/);
+  assert.match(lectura, /OTRA_PANTALLA/);
+  assert.doesNotMatch(lectura, /\.click\s*\(|\.submit\s*\(/,
+    'la lectura no debe cambiar ni guardar la configuracion');
+
+  assert.match(guardado, /CONFIG_SOCIALS_PATH/);
+  assert.match(guardado, /digits\.length < 7 \|\| digits\.length > 10/);
+  assert.match(guardado, /findByText\(\/\^guardar\$\/i,\s*'button',\s*section\)/);
+  assert.match(guardado, /setFieldValue\(input, digits\)/);
+  assert.match(guardado, /clickElement\(botonGuardar\)/);
+  assert.match(guardado, /habilitadoAntes/, 'guardar el numero no debe cambiar el permiso del contacto');
+  assert.match(guardado, /pais: prefix/);
+
+  const backends = fs.readFileSync(path.join(ROOT, 'main', 'agent-backends.js'), 'utf8');
+  assert.match(backends, /whatsappUrl:\s*'https:\/\/www\.adminonline\.me\/config\/socials'/);
+  assert.match(backends, /spaPathAware:\s*true/);
+  const agentWindow = fs.readFileSync(path.join(ROOT, 'main', 'agent-window.js'), 'utf8');
+  assert.match(agentWindow, /spaPathAware/);
+  assert.match(agentWindow, /actual\.pathname/);
+
+  const puente = fs.readFileSync(path.join(ROOT, 'app-preload.js'), 'utf8');
+  assert.match(puente, /'guardarWhatsappOficina'/, 'el puente Electron debe permitir la escritura explicita');
+  assert.match(PRELOAD_ADMINONLINE, /guardarWhatsappOficina,/);
+  assert.match(PRELOAD_ADMINONLINE, /guardarWhatsappOficina'\]\)/);
+
+  const modulo = fs.readFileSync(path.join(ROOT, 'renderer', 'extensions', 'oficina-whatsapp.js'), 'utf8');
+  assert.match(modulo, /window\.nodoWspEditarBackoffice\s*=\s*function/);
+  assert.match(modulo, /_pedirEdicionBackoffice\(digitos\)/);
+  assert.match(modulo, /window\.nodoPedirTexto\(/);
+  assert.match(modulo, /nodoWspEditarBackoffice\(this\)/);
+  assert.match(modulo, /boton\.disabled = true/);
+});
+
 // Y como la guarda propia no sirve, el que no la deja cruzarse con una carga o un retiro es el
 // panel: la misma cola del watchdog. Si eso se cae, la lectura puede navegar en mal momento.
 test('la lectura va por la cola del panel, que es la que frena durante una operacion', () => {
@@ -117,14 +161,15 @@ test('la lectura va por la cola del panel, que es la que frena durante una opera
   assert.match(modulo, /silencioso:\s*true/, 'es de fondo: no le tira carteles al operador');
 });
 
-test('los dos backoffices contestan al mismo metodo', () => {
-  for (const [nombre, fuente] of [['casinodrex', PRELOAD], ['bet300', PRELOAD_BET300]]) {
+test('los tres backoffices contestan al mismo metodo', () => {
+  for (const [nombre, fuente] of [['casinodrex', PRELOAD], ['bet300', PRELOAD_BET300], ['adminonline', PRELOAD_ADMINONLINE]]) {
     assert.match(fuente, /leerWhatsappOficina/, nombre + ' no expone el método');
     const api = fuente.slice(fuente.indexOf('const api = {'), fuente.indexOf('const api = {') + 700);
     assert.match(api, /leerWhatsappOficina,/, nombre + ' no lo agregó al api, así que el puente lo rechaza');
   }
   // bet300 no tiene esa pantalla: tiene que decirlo con un motivo, no tirar un error.
   assert.match(PRELOAD_BET300, /OTRO_BACKOFFICE/);
+  assert.doesNotMatch(PRELOAD_ADMINONLINE, /OTRO_BACKOFFICE/);
 });
 
 // 15/11: el módulo nunca leyó el backoffice ni una vez y mostraba "no lo puedo revisar solo".
@@ -143,4 +188,15 @@ test('leer el numero NO cuenta como operacion: no puede limpiar un freno anterio
   assert.ok(linea, 'no encontré METODOS_OPERACION');
   assert.doesNotMatch(linea[1], /leerWhatsappOficina/,
     'si entra acá, pedir el número borraría el freno de un ⛔ anterior');
+});
+
+test('AdminOnline va solo a Personalizar pagina por el menu, sin recargar, y vuelve', () => {
+  const nav = PRELOAD_ADMINONLINE.slice(PRELOAD_ADMINONLINE.indexOf('function _rutaActual'), PRELOAD_ADMINONLINE.indexOf('const api = {'));
+  assert.match(nav, /a\[href\$="/, 'entra por el link del menu, como haria el operador');
+  assert.doesNotMatch(nav, /location\.(assign|replace|href\s*=)/, 'sin recargas: la llamada tiene que seguir viva (D-101)');
+  assert.match(nav, /_irARuta\(antes\)/, 'deja la ventana donde estaba');
+  assert.match(nav, /async function leerWhatsappOficina[\s\S]*_enPersonalizarPagina\(_leerWhatsappEnPantalla/);
+  assert.match(nav, /async function guardarWhatsappOficina[\s\S]*_enPersonalizarPagina\(_guardarWhatsappEnPantalla/);
+  const automation = fs.readFileSync(path.join(ROOT, 'main', 'automation.js'), 'utf8');
+  assert.match(automation, /!backends\.current\.spaPathAware/, 'en AdminOnline main no recarga la ventana: navega el preload');
 });

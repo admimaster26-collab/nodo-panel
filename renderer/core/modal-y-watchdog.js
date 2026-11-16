@@ -183,6 +183,7 @@ async function _watchdogLeer(){
         return window.ctrlElectron.drexAutomation('obtenerSaldoAgente');
       }, { silencioso:true });   // tarea de fondo: no molesta al operador con toasts
       _wdHealth?.record('ALIVE', r ? 'OK' : 'DEGRADED', 'WATCHDOG_POLL');
+      try{ window.NodoSalud?.agentes?.('obtenerSaldoAgente', r || { ok:false }, null); }catch(_e){}
       if(r){
         if(r.needsLogin) drexNeedsLogin = true;
         if(r.balance && typeof r.balance.value === 'number') drexFichas = r.balance.value;

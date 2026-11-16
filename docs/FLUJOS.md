@@ -182,6 +182,20 @@ Encontrados el 9/11. Están corregidos salvo los que dicen "abierto".
 - `rejections.js`: cualquier motivo que diga "transferencia" se clasifica como "no llegó la
   transferencia". **Abierto** (menor).
 
+## ACCESO: el que no puede entrar o es nuevo (16/11)
+
+- El jugador toca "Tengo usuario pero no puedo entrar" o "Soy nuevo" y deja su teléfono (el usuario
+  puede quedar vacío). El Portal abre un chat y manda un solo mensaje con lo que escribió; si no puso
+  usuario, el chat se llama "ayuda-<teléfono>" o "nuevo-<teléfono>" (provisorio) y el mensaje dice
+  "No escribí mi usuario".
+- Mientras espera: se queda en el chat, ve su mensaje con ✓, el asistente le dice que le llegó a su
+  cajero y, cuando NODO lo abre, ✓✓ y "Tu cajero ya vio tu mensaje". No se le ofrece validar ni
+  registrarse otra vez. Inicio dice "Tu cajero ya tiene tu pedido".
+- En NODO beta no contesta el bot de palabras (servidor). La tarjeta de cotejo coteja el usuario sólo
+  si lo escribió con rótulo; si no, lo dice ("no lo escribió") y coteja por teléfono.
+- El operador valida con "Validar y vincular"; al jugador le aparece el botón para entrar.
+- Cómo probarlo de punta a punta: `docs/PRUEBA_PORTAL_NODO.md`.
+
 ## Antes de tocar una pantalla de operaciones
 
 1. ¿Es carga, retiro o las dos? Lo que se muestra tiene que tener sentido para ese tipo (ver "La
@@ -190,3 +204,5 @@ Encontrados el 9/11. Están corregidos salvo los que dicen "abierto".
    (memoria: pantallas-para-operadores).
 3. ¿Qué le llega al jugador y cuándo? ¿El chat automático lo tiene que saber resolver?
 4. Botones: `docs/BOTONES.md`. Y probar mirando la pantalla, no sólo con pruebas.
+5. Recorrerlo como el jugador y como el operador, contra el servidor real, y leer cada captura como
+   alguien de afuera: `docs/PRUEBA_PORTAL_NODO.md`.
