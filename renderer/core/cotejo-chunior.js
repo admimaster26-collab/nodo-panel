@@ -27,7 +27,9 @@
   ];
   var VENTANA_MS   = 3 * 60000;          // la misma anotación hecha por NODO: a menos de 3 minutos
   var MAX_PAGINAS  = 10;
-  var FRESCO_MS    = 5 * 60000;
+  // Lo anotado hace menos de esto se deja para después: NODO puede estar escribiendo su fila. Con 5 minutos,
+  // Juan anotó tres pruebas, apretó Recargar y "no las encontró" (18/11): alcanza con un minuto y medio.
+  var FRESCO_MS    = 90 * 1000;
   var CADA_CUANTO  = 30 * 60000;
   var PRIMERA_VEZ  = 24 * 3600000;       // la primera pasada mira el último día
   var CLAVE_ULTIMA = "nodoPasadaChuniorHasta";
@@ -220,7 +222,7 @@
           var d = dec[j];
           try{
             if(d.accion === "ya") t.enNodo++;
-            else if(d.accion === "espera") { /* la próxima pasada */ }
+            else if(d.accion === "espera") { resumen.esperan = (resumen.esperan || 0) + 1; }
             else if(d.accion === "duda") t.dudas++;
             else if(d.accion === "enlazar"){
               var u = await supabaseClient.from("historial_ops").update({ chunior_movimiento_id: d.mov.id }).eq("id", d.fila.id);
@@ -240,6 +242,8 @@
         _toast("Chunior: " + resumen.creadas + " movimiento(s) anotados directo en Chunior no estaban en NODO. Ya quedaron en el historial.", "yellow");
         try{ if(typeof cargarHistorial === "function") await cargarHistorial(true); }catch(_e){}
       }
+      // Con Recargar, lo recién anotado se vuelve a mirar solo en cuanto deja de ser "recién".
+      if(resumen.esperan && opts.recargar && !opts.dias) setTimeout(function(){ pasada().then(function(){ try{ if(window.NodoCotejoCargas) window.NodoCotejoCargas.pintarAvisos(); }catch(_e){} }).catch(function(){}); }, FRESCO_MS + 10000);
       return { ok: true, resumen: resumen, desde: desde };
     }finally{ CORRIENDO = false; }
   }

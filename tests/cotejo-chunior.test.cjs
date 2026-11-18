@@ -69,8 +69,8 @@ test('dos filas posibles en NODO: duda, no se toca', () => {
   assert.equal(d[0].accion, 'duda');
 });
 
-test('lo recién anotado (menos de 5 minutos) se deja para la próxima: NODO puede estar escribiendo su fila', () => {
-  const d = P.decidir(ficha, [mov('8', '18-11-2026 19:57:00', 500, 'pepe')], {}, [], AHORA);
+test('lo recién anotado (menos de un minuto y medio) se deja para la próxima: NODO puede estar escribiendo su fila', () => {
+  const d = P.decidir(ficha, [mov('8', '18-11-2026 19:59:00', 500, 'pepe')], {}, [], AHORA);
   assert.equal(d[0].accion, 'espera');
 });
 
@@ -84,7 +84,13 @@ test('la fila nueva dice quién la anotó en Chunior, y se busca por N° sólo d
   assert.match(fuente, /origen: "CHUNIOR"/);
   assert.match(fuente, /\.in\("chunior_movimiento_id", ids\.slice\(i, i \+ 100\)\)\.in\("tipo", tabla\.grupo\)/);
   const cargas = fs.readFileSync(path.join(ROOT, 'renderer', 'core', 'cotejo-cargas.js'), 'utf8');
-  assert.match(cargas, /NodoPasadaChunior[\s\S]{0,60}\.pasada\(\)/, 'Recargar también hace la pasada por Chunior');
+  assert.match(cargas, /NodoPasadaChunior[\s\S]{0,60}\.pasada\(\{ recargar: true \}\)/, 'Recargar también hace la pasada por Chunior');
   const manifest = fs.readFileSync(path.join(ROOT, 'renderer', 'manifest.json'), 'utf8');
   assert.match(manifest, /"core\/cotejo-chunior\.js"/);
+});
+
+test('Juan anotó tres pruebas, apretó Recargar y no aparecieron: ahora espera poco y se vuelve a mirar sola', () => {
+  assert.ok(fuente.includes('var FRESCO_MS    = 90 * 1000;'));
+  assert.match(fuente, /resumen\.esperan && opts\.recargar[\s\S]{0,80}setTimeout/);
+  assert.equal(P.decidir(ficha, [mov('8', '18-11-2026 19:57:00', 500, 'pepe')], {}, [], AHORA)[0].accion, 'crear', 'a los 3 minutos ya se crea');
 });

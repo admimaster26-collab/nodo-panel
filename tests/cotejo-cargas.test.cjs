@@ -163,3 +163,11 @@ test('el módulo lee y avisa cargas y retiros, y a Chunior le pasa el signo', ()
   assert.equal(neg({ montoTxt: '$ 1.500,00' }), false);
   assert.match(chu, /if\(signo > 0 && _neg\(r\)\) continue;/);
 });
+
+test('el cartel: la casilla Lo vi va a la izquierda (a la derecha se cortaba) y avisa también lo anotado directo en Chunior', () => {
+  const cartel = fuente.slice(fuente.indexOf('async function pintarAvisos'));
+  assert.ok(cartel.indexOf('Lo vi</label>') < cartel.indexOf('<b>'), 'la casilla antes que el texto');
+  assert.match(cartel, /overflow-wrap:anywhere/);
+  assert.match(fuente, /MARCA_CHUNIOR      = "no estaba en NODO"/);
+  assert.ok(fuente.includes('"*,notas.ilike.*" + MARCA_CHUNIOR + "*"'), 'la consulta de avisos trae lo de Chunior');
+});

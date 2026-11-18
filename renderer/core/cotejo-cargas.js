@@ -32,6 +32,7 @@
   var MARCA_FUERA        = "fuera de NODO";
   var MARCA_SIN_AGENTES  = "sin carga en Agentes";
   var MARCA_RECONOCIDA   = "reconocida por";
+  var MARCA_CHUNIOR      = "no estaba en NODO";               // la pone la pasada por Chunior (cotejo-chunior.js)
 
   function _norm(u){ return String(u || "").trim().toLowerCase(); }
   function _monto(n){ return Math.round(Math.abs(Number(n) || 0)); }
@@ -280,10 +281,10 @@
   // ── Avisos para el operador: salen del historial, así los ve cualquier PC de la oficina ────
   async function _leerAvisos(){
     var r = await supabaseClient.from("historial_ops")
-      .select("id,created_at,usuario,monto,tipo,notas,estado")
-      .in("tipo", ["CARGA", "RETIRO"]).eq("pc_codigo", _pc())
+      .select("id,created_at,usuario,monto,tipo,notas,estado,operador")
+      .eq("pc_codigo", _pc())
       .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
-      .or("notas.ilike.*" + MARCA_FUERA + "*,notas.ilike.*" + MARCA_SIN_AGENTES + "*")
+      .or("notas.ilike.*" + MARCA_FUERA + "*,notas.ilike.*" + MARCA_SIN_AGENTES + "*,notas.ilike.*" + MARCA_CHUNIOR + "*")
       .order("created_at", { ascending: false }).limit(30);
     if(r.error) return [];
     return (r.data || []).filter(function(h){ return String(h.notas || "").indexOf(MARCA_RECONOCIDA) < 0 && h.estado !== "REVERTIDA"; });
@@ -306,12 +307,26 @@
       var fuera = String(h.notas || "").indexOf(MARCA_FUERA) >= 0;
       var hora = new Date(h.created_at).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
       var retiro = _tipoFila(h) === "RETIRO";
-      var titulo = fuera
-        ? (retiro ? "Retiro hecho fuera de NODO: no se hizo desde NODO ni estaba anotado." : "Carga hecha fuera de NODO: no se hizo desde NODO ni estaba anotada.") + " Avisale a tu superior."
-        : (retiro ? "Este retiro figura anotado, pero en Agentes no aparece." : "Esta carga figura anotada, pero en Agentes no aparece.");
-      return '<div class="alert-box" style="background:#2a1717;color:#fecaca;border-left:3px solid #ef4444;margin:6px 0;display:flex;gap:10px;align-items:center;justify-content:space-between">'
-        + '<div><b>' + _esc(titulo) + '</b><br><span class="small">' + _esc(h.usuario) + ' · $' + Number(h.monto || 0).toLocaleString("es-AR") + ' · ' + _esc(hora) + '</span></div>'
-        + '<label style="white-space:nowrap;cursor:pointer"><input type="checkbox" onchange="nodoCotejoReconocer(\'' + _esc(h.id) + '\', this)"> Lo vi</label>'
+      var notas = String(h.notas || "");
+      var deChunior = !fuera && notas.indexOf(MARCA_SIN_AGENTES) < 0 && notas.indexOf(MARCA_CHUNIOR) >= 0;
+      var titulo, detalle;
+      if(deChunior){
+        // "Anotado directo en Chunior por xprueba, no estaba en NODO · Propinas N° 10184376 · a 882 - PROMOS"
+        var que = (notas.match(/·\s*([^·]+?)\s+N°/) || [])[1] || "Movimiento";
+        titulo = que + ": anotado directo en Chunior" + (h.operador ? " por " + h.operador : "") + ", no estaba en NODO.";
+        detalle = (h.usuario ? h.usuario + " · " : "") + "$" + Number(h.monto || 0).toLocaleString("es-AR") + " · " + hora;
+      }else{
+        titulo = fuera
+          ? (retiro ? "Retiro hecho fuera de NODO: no se hizo desde NODO ni estaba anotado." : "Carga hecha fuera de NODO: no se hizo desde NODO ni estaba anotada.") + " Avisale a tu superior."
+          : (retiro ? "Este retiro figura anotado, pero en Agentes no aparece." : "Esta carga figura anotada, pero en Agentes no aparece.");
+        detalle = h.usuario + " · $" + Number(h.monto || 0).toLocaleString("es-AR") + " · " + hora;
+      }
+      // La casilla va a la IZQUIERDA: a la derecha quedaba cortada cuando el historial es más ancho que la
+      // pantalla ("el cartel que avisa está roto", Juan 18/11).
+      var estilo = deChunior ? "background:#2a2416;color:#f0d99b;border-left:3px solid #c9a227" : "background:#2a1717;color:#fecaca;border-left:3px solid #ef4444";
+      return '<div class="alert-box" style="' + estilo + ';margin:6px 0;display:flex;gap:12px;align-items:flex-start;max-width:100%;box-sizing:border-box">'
+        + '<label style="flex:none;white-space:nowrap;cursor:pointer;font-weight:700"><input type="checkbox" style="vertical-align:middle;margin:0 4px 0 0" onchange="nodoCotejoReconocer(\'' + _esc(h.id) + '\', this)">Lo vi</label>'
+        + '<div style="min-width:0;overflow-wrap:anywhere"><b>' + _esc(titulo) + '</b><br><span class="small">' + _esc(detalle) + '</span></div>'
         + '</div>';
     }).join("");
   }
@@ -342,7 +357,8 @@
       _toast("Cotejando el historial con Agentes y Chunior…", "blue");
       var r = await revisar("recargar");
       // Y la pasada por los historiales de Chunior: lo anotado allá que no esté en NODO queda en el historial.
-      try{ if(window.NodoPasadaChunior && !_ocupado()) await window.NodoPasadaChunior.pasada(); }catch(_e){}
+      try{ if(window.NodoPasadaChunior && !_ocupado()) await window.NodoPasadaChunior.pasada({ recargar: true }); }catch(_e){}
+      try{ await pintarAvisos(); }catch(_e){}
       if(!r || !r.ok){
         if(r && r.motivo && r.motivo !== "recién revisado") _toast("No se pudo cotejar con Agentes: " + r.motivo + ".", "yellow");
         return;
