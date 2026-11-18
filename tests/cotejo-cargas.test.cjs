@@ -125,7 +125,7 @@ test('el botón Recargar del historial coteja después de dibujar', () => {
   const manifest = fs.readFileSync(path.join(ROOT, 'renderer', 'manifest.json'), 'utf8');
   assert.match(manifest, /"core\/cotejo-cargas\.js"/);
   const boton = fuente.slice(fuente.indexOf('window.nodoHistorialRecargar'));
-  assert.ok(boton.indexOf('await cargarHistorial()') >= 0 && boton.indexOf('await cargarHistorial()') < boton.indexOf('revisar("recargar")'),
+  assert.ok(boton.indexOf('await cargarHistorial()') >= 0 && boton.indexOf('await cargarHistorial()') < boton.indexOf('revisionesFondo({ forzar: true'),
     'primero se dibuja el historial, después se coteja');
   // Agentes + Chunior no avisa: su nota no puede llevar la marca de "fuera de NODO".
   assert.doesNotMatch(fuente, /notas: "[^"]*fuera de NODO[^"]*ya anotada/);
@@ -170,4 +170,22 @@ test('el cartel: la casilla Lo vi va a la izquierda (a la derecha se cortaba) y 
   assert.match(cartel, /overflow-wrap:anywhere/);
   assert.match(fuente, /MARCA_CHUNIOR      = "no estaba en NODO"/);
   assert.ok(fuente.includes('"*,notas.ilike.*" + MARCA_CHUNIOR + "*"'), 'la consulta de avisos trae lo de Chunior');
+});
+
+// 18/11: "que no haya dos revisiones separadas esperando a que no haya ninguna solicitud".
+test('cotejo con Agentes y pasada por Chunior van en UNA fila, detrás del watchdog y nunca encimados', () => {
+  const chu = fs.readFileSync(path.join(ROOT, 'renderer', 'core', 'cotejo-chunior.js'), 'utf8');
+  const wd = fs.readFileSync(path.join(ROOT, 'renderer', 'core', 'modal-y-watchdog.js'), 'utf8');
+  // Un solo reloj, el de la fila; ni el cotejo ni la pasada tienen el suyo.
+  assert.doesNotMatch(fuente, /setInterval\(function\(\)\{ revisar\(/);
+  assert.doesNotMatch(chu, /setInterval\(function\(\)\{ pasada\(/);
+  assert.match(fuente, /setInterval\(function\(\)\{ revisionesFondo\(\)/);
+  // Uno detrás del otro dentro de la fila.
+  const f = fuente.slice(fuente.indexOf('async function revisionesFondo'));
+  assert.ok(f.indexOf('await revisar(') < f.indexOf('await window.NodoPasadaChunior.pasada('));
+  assert.match(f, /if\(FONDO\.corriendo\) return/);
+  assert.match(f, /_operadorTrabajando\(\)\) return/, 'no arranca en medio de lo que hace el operador');
+  // El watchdog no lee mientras corre la fila, y al terminar le pasa la posta.
+  assert.match(wd, /if\(window\._revisionFondoCorriendo\)\{ _watchdogTrigger\(15000\); return; \}/);
+  assert.match(wd, /_revisarFichasRetirosTrasWatchdog\(\); \}catch\(_e\)\{\}\s+\/\/[^\n]*\n\s+try\{ if\(window\._revisionesFondo\)/);
 });

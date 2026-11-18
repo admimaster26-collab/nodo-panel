@@ -352,13 +352,11 @@
     try{
       try{ if(typeof cargarHistorial === "function") await cargarHistorial(); }catch(_e){}
       try{ await pintarAvisos(); }catch(_e){}
-      if(CORRIENDO) return;
+      if(FONDO.corriendo){ _toast("Ya se está revisando con Agentes y Chunior: el resultado aparece en un momento.", "blue"); return; }
       if(_ocupado()){ _toast("El cotejo con Agentes queda para cuando termine la operación en curso.", "blue"); return; }
       _toast("Cotejando el historial con Agentes y Chunior…", "blue");
-      var r = await revisar("recargar");
-      // Y la pasada por los historiales de Chunior: lo anotado allá que no esté en NODO queda en el historial.
-      try{ if(window.NodoPasadaChunior && !_ocupado()) await window.NodoPasadaChunior.pasada({ recargar: true }); }catch(_e){}
-      try{ await pintarAvisos(); }catch(_e){}
+      var todo = await revisionesFondo({ forzar: true, motivo: "recargar" });
+      var r = todo && todo.cotejo;
       if(!r || !r.ok){
         if(r && r.motivo && r.motivo !== "recién revisado") _toast("No se pudo cotejar con Agentes: " + r.motivo + ".", "yellow");
         return;
@@ -375,14 +373,60 @@
     }finally{ if(boton) boton.disabled = false; }
   };
 
-  window.NodoCotejoCargas = { emparejar: emparejar, revisar: revisar, pintarAvisos: pintarAvisos,
+  // ── Una sola fila para las revisiones de fondo (Juan, 18/11) ─────────────────────────────
+  // "Que no haya dos revisiones separadas esperando a que no haya ninguna solicitud: una arranca cuando
+  // termina la otra, o se chocan". El cotejo con Agentes y la pasada por Chunior corren en UNA fila, uno
+  // detrás del otro, y el watchdog le pasa la posta a esta fila cuando termina su lectura (relevo, nunca
+  // encimado). El watchdog, a su vez, no lee mientras esta fila corre (_revisionFondoCorriendo).
+  // Además no arranca si el operador está usando NODO (tocó algo hace menos de 20 s): cuando se lanza un
+  // preload NODO se siente trabado, y no tiene que pasar en medio de lo que está haciendo.
+  var FONDO = { corriendo: false, ultCotejo: 0, ultChunior: 0 };
+  var CHUNIOR_CADA_MS = 30 * 60000;
+  try{
+    if(typeof document !== "undefined" && document.addEventListener){
+      var _marcar = function(){ window._nodoUltimaInteraccion = Date.now(); };
+      document.addEventListener("mousedown", _marcar, true);
+      document.addEventListener("keydown", _marcar, true);
+    }
+  }catch(_e){}
+  function _operadorTrabajando(){ return Date.now() - (Number(window._nodoUltimaInteraccion) || 0) < 20000; }
+  async function revisionesFondo(opts){
+    opts = opts || {};
+    if(FONDO.corriendo) return { ok: false, motivo: "ya se está revisando" };
+    if(_ocupado()) return { ok: false, motivo: "hay una operación en curso" };
+    if(!opts.forzar && _operadorTrabajando()) return { ok: false, motivo: "el operador está trabajando" };
+    var ahora = Date.now();
+    var tocaCotejo = !opts.soloChunior && (opts.forzar || ahora - FONDO.ultCotejo >= CADA_CUANTO_MS);
+    var tocaChunior = !!window.NodoPasadaChunior && (opts.forzar || opts.soloChunior || ahora - FONDO.ultChunior >= CHUNIOR_CADA_MS);
+    if(!tocaCotejo && !tocaChunior) return { ok: true, nada: true };
+    FONDO.corriendo = true; window._revisionFondoCorriendo = true;
+    var out = { ok: true };
+    try{
+      if(tocaCotejo){
+        out.cotejo = await revisar(opts.motivo || "reloj");
+        if(out.cotejo && out.cotejo.ok) FONDO.ultCotejo = Date.now();
+      }
+      if(tocaChunior && !_ocupado()){
+        out.chunior = await window.NodoPasadaChunior.pasada({ recargar: !!opts.forzar || !!opts.soloChunior });
+        if(out.chunior && out.chunior.ok) FONDO.ultChunior = Date.now();
+      }
+      try{ await pintarAvisos(); }catch(_e){}
+      return out;
+    }catch(e){
+      console.warn("[revisiones-fondo]", e && e.message);
+      return { ok: false, motivo: "falló la revisión" };
+    }finally{ FONDO.corriendo = false; window._revisionFondoCorriendo = false; }
+  }
+  window._revisionesFondo = revisionesFondo;
+
+  window.NodoCotejoCargas = { emparejar: emparejar, revisar: revisar, pintarAvisos: pintarAvisos, revisionesFondo: revisionesFondo,
     _marcas: { fuera: MARCA_FUERA, sinAgentes: MARCA_SIN_AGENTES, reconocida: MARCA_RECONOCIDA } };
 
-  // Reloj: cada 10 minutos, y la primera a los 2 minutos de abrir (con todo ya cargado).
+  // Un solo reloj: cada 2 minutos se pregunta si algo de la fila "toca" (cotejo cada 10, Chunior cada 30)
+  // y si NODO está libre. La primera, a los 2 minutos de abrir.
   try{
     if(typeof document !== "undefined" && window.ctrlElectron){
-      setTimeout(function(){ revisar("reloj").catch(function(){}); }, 120000);
-      setInterval(function(){ revisar("reloj").catch(function(){}); }, CADA_CUANTO_MS);
+      setInterval(function(){ revisionesFondo().catch(function(){}); }, 2 * 60000);
     }
   }catch(_e){}
 })();

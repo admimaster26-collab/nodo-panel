@@ -84,7 +84,7 @@ test('la fila nueva dice quién la anotó en Chunior, y se busca por N° sólo d
   assert.match(fuente, /origen: "CHUNIOR"/);
   assert.match(fuente, /\.in\("chunior_movimiento_id", ids\.slice\(i, i \+ 100\)\)\.in\("tipo", tabla\.grupo\)/);
   const cargas = fs.readFileSync(path.join(ROOT, 'renderer', 'core', 'cotejo-cargas.js'), 'utf8');
-  assert.match(cargas, /NodoPasadaChunior[\s\S]{0,60}\.pasada\(\{ recargar: true \}\)/, 'Recargar también hace la pasada por Chunior');
+  assert.match(cargas, /window\.NodoPasadaChunior\.pasada\(\{ recargar:/, 'Recargar también hace la pasada por Chunior');
   const manifest = fs.readFileSync(path.join(ROOT, 'renderer', 'manifest.json'), 'utf8');
   assert.match(manifest, /"core\/cotejo-chunior\.js"/);
 });

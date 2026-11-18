@@ -265,6 +265,9 @@ async function _watchdogPoll(){
     _wdActualizarUI('', '⏸ Operación en curso · próximo check al terminar');
     return;
   }
+  // Tampoco mientras corre la revisión de fondo (cotejo con Agentes / pasada por Chunior): se vuelve a
+  // intentar cuando termine. Una cosa por vez (Juan, 18/11).
+  if(window._revisionFondoCorriendo){ _watchdogTrigger(15000); return; }
 
   const ahora = await _watchdogLeer();
 
@@ -328,6 +331,8 @@ async function _watchdogPoll(){
   // de los retiros: DESPUÉS de este, nunca encimado. El watchdog sólo lee, así que no hay riesgo
   // de que dos cosas escriban plata — pero igual va en relevo, no en paralelo.
   try{ _revisarFichasRetirosTrasWatchdog(); }catch(_e){}
+  // Y después, la fila de revisiones de fondo, si le toca (relevo: corre sola, detrás de esto).
+  try{ if(window._revisionesFondo) setTimeout(function(){ window._revisionesFondo({ motivo:'relevo' }); }, 1500); }catch(_e){}
 
   const horaCheck = new Date().toLocaleTimeString('es-AR', { timeZone:'America/Argentina/Buenos_Aires', hour:'2-digit', minute:'2-digit' });
   const fmt = function(v){ return money(v).replace('$ ','$'); };

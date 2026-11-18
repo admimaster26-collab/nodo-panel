@@ -243,7 +243,7 @@
         try{ if(typeof cargarHistorial === "function") await cargarHistorial(true); }catch(_e){}
       }
       // Con Recargar, lo recién anotado se vuelve a mirar solo en cuanto deja de ser "recién".
-      if(resumen.esperan && opts.recargar && !opts.dias) setTimeout(function(){ pasada().then(function(){ try{ if(window.NodoCotejoCargas) window.NodoCotejoCargas.pintarAvisos(); }catch(_e){} }).catch(function(){}); }, FRESCO_MS + 10000);
+      if(resumen.esperan && opts.recargar && !opts.dias) setTimeout(function(){ try{ if(window._revisionesFondo) window._revisionesFondo({ soloChunior: true, forzar: true }); }catch(_e){} }, FRESCO_MS + 10000);
       return { ok: true, resumen: resumen, desde: desde };
     }finally{ CORRIENDO = false; }
   }
@@ -253,8 +253,8 @@
 
   try{
     if(typeof document !== "undefined" && window.ctrlElectron){
-      setTimeout(function(){ pasada().catch(function(){}); }, 5 * 60000);
-      setInterval(function(){ pasada().catch(function(){}); }, CADA_CUANTO);
+      // Sin reloj propio: la corre la fila de revisiones de fondo (cotejo-cargas.js), detrás del cotejo con
+      // Agentes y después del watchdog, para que no se choquen (Juan, 18/11).
     }
   }catch(_e){}
 })();
