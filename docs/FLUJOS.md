@@ -266,3 +266,33 @@ cualquier PC de la oficina, y "Lo vi" queda anotado con el nombre del operador.
 
 Dónde se lee: AdminOnline y agentesbet.io por su menú, sin recargar; Drex en /agents/activity, pestaña
 "Movimientos de crédito". Código: renderer/core/cotejo-cargas.js y leerMovimientosCredito en cada preload.
+
+### Retiros (18/11)
+Van igual que las cargas: en Agentes el retiro es "Deposito de un jugador" con signo menos; en NODO, filas
+RETIRO; en Chunior, el monto en negativo. Una carga nunca se ata con un retiro.
+
+## Pasada por los historiales de Chunior (18/11)
+
+"Cada cosa que te deja anotar Chunior debería estar en NODO" (Juan). Chunior guarda siete historiales
+(menú Transacciones) y NODO sabe qué es cada uno en su historial:
+
+| Chunior | En el historial de NODO |
+|---|---|
+| Movimientos de fichas | CARGA (monto positivo) / RETIRO (negativo) |
+| Movimientos entre billeteras | MOV_BILLETERA (y CAMBIO_BILLETERA, MOVER_RETIRO, FALTANTE) |
+| Propinas | PROPINA |
+| Depósitos sin reclamar | DEPOSITO_SR |
+| Gastos de oficina | GASTO |
+| Recargas administrativas | RECARGA_FICHAS |
+| Transferencias a financieras | FINANCIERA (NODO no las hace: sólo se registran) |
+
+Cada 30 minutos y al apretar 🔄 Recargar en el historial, NODO recorre esas listas desde la última pasada
+(la primera vez, el último día) y cada movimiento:
+- tiene su fila por su N° de Chunior → nada;
+- hay una fila de NODO sin N° que es la misma (tipo, monto, menos de 3 minutos; en fichas también el
+  usuario) → se le pone el N°;
+- no hay nada → se crea la fila (origen CHUNIOR) con quién lo anotó, el N° y las billeteras, para que no
+  se pierda nada hecho por fuera de NODO. Si es una carga o un retiro, después el cotejo con Agentes
+  avisa si en Agentes no aparece.
+Lo anotado hace menos de 5 minutos se deja para la próxima pasada (NODO puede estar escribiendo su fila).
+Código: renderer/core/cotejo-chunior.js.

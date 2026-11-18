@@ -341,6 +341,8 @@
       if(_ocupado()){ _toast("El cotejo con Agentes queda para cuando termine la operación en curso.", "blue"); return; }
       _toast("Cotejando el historial con Agentes y Chunior…", "blue");
       var r = await revisar("recargar");
+      // Y la pasada por los historiales de Chunior: lo anotado allá que no esté en NODO queda en el historial.
+      try{ if(window.NodoPasadaChunior && !_ocupado()) await window.NodoPasadaChunior.pasada(); }catch(_e){}
       if(!r || !r.ok){
         if(r && r.motivo && r.motivo !== "recién revisado") _toast("No se pudo cotejar con Agentes: " + r.motivo + ".", "yellow");
         return;

@@ -83,6 +83,7 @@
     "core/chunior-verificacion-y-registro.js",
     "core/chunior-movimientos.js",
     "core/cotejo-cargas.js",
+    "core/cotejo-chunior.js",
     "core/chunior-recuperacion-y-transferencias.js",
     "core/macros-y-cola-verificacion.js"
    ]

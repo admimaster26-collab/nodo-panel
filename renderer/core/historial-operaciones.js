@@ -604,7 +604,7 @@ function renderHistorial(lista){
     const _sidFila = String(h.solicitud_id || (h._fuente === 'SOLICITUD' ? (h.id||'') : '') || '');
     const notasTd = (h.estado==='ERROR' && h.notas)
       ? '<br><span class="small" style="color:#f87171">'+escapeHtml(_errTextoLimpio(h.notas)||_errEtiqueta(h.notas)||'sin detalle')+'</span>'
-      : ((h.notas && (h.tipo==='CONSULTA'||h.tipo==='RESET_CLAVE'||h.origen==='COTEJO'))
+      : ((h.notas && (h.tipo==='CONSULTA'||h.tipo==='RESET_CLAVE'||h.origen==='COTEJO'||h.origen==='CHUNIOR'))
           ? '<br><span class="small">'+escapeHtml(h.notas)+'</span>' : '');
     const undoBtn = canUndo
       ? '<button class="mini-btn yellow" onclick="deshacerOperacion(\x27'+escapeHtml(histAccionId)+'\x27,\x27'+escapeHtml(h.usuario||'')+'\x27,\x27'+h.tipo+'\x27,\x27'+h.monto+'\x27,\x27'+(h.billetera_id||'')+'\x27)" style="font-size:11px">&#8629; Deshacer</button>'
