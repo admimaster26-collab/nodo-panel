@@ -106,6 +106,27 @@ ipcMain.on('drex:sesion-caida', (_e, datos) => {
 // recrea esas dos ventanas, para que tomen el preload y el estado nuevos; si hay una carga, un retiro
 // o una verificacion en curso, se espera a que termine: no se corta nada a la mitad (Juan, 16/11).
 // Chunior no se toca al recargar: su sesion no persiste y habria que volver a entrar.
+// El proceso principal (main.js, main/ y services/) se carga UNA vez, al abrir NODO, y sigue vivo de fondo:
+// maneja las ventanas, lleva la de Agentes de pantalla en pantalla, el puente al servidor, el proxy y Chunior.
+// Ctrl+R recarga el panel y recrea Agentes y verificación, pero ese código seguía siendo el del arranque:
+// un arreglo en main/ no se veía hasta cerrar NODO a mano (Juan, 18/11). Ahora, si ese código cambió en el
+// disco desde que NODO abrió, Ctrl+R reinicia NODO entero. Si no cambió, no: reiniciar obliga a entrar de
+// nuevo a Chunior, que no guarda la sesión.
+function _huellaProcesoPrincipal() {
+  let fs = null;
+  try { fs = require('node:fs'); } catch (_e) { return 0; }
+  let huella = 0;
+  const ver = (p) => { try { huella = Math.max(huella, fs.statSync(p).mtimeMs); } catch (_e) {} };
+  ver(path.join(rootDir, 'main.js'));
+  for (const dir of ['main', 'services']) {
+    try {
+      for (const n of fs.readdirSync(path.join(rootDir, dir))) if (/\.(c?js|html)$/i.test(n)) ver(path.join(rootDir, dir, n));
+    } catch (_e) {}
+  }
+  return huella;
+}
+const HUELLA_AL_ABRIR = _huellaProcesoPrincipal();
+
 function atarVentanasAlPanel() {
   const win = panel.current;
   if (!win) return;
@@ -122,6 +143,13 @@ function atarVentanasAlPanel() {
         console.warn('[main] panel recargado: sigue una operación en Agentes; las ventanas se recrean cuando termine');
       }
       await new Promise(r => setTimeout(r, 500));
+    }
+    if (_huellaProcesoPrincipal() > HUELLA_AL_ABRIR) {
+      console.log('[main] panel recargado y cambió el código del proceso principal: se reinicia NODO entero');
+      try { app.relaunch(); } catch (_e) {}
+      app.quit();
+      setTimeout(() => { try { app.exit(0); } catch (_e) {} }, 4000).unref?.();
+      return;
     }
     try { verification.close(); } catch (_e) {}
     try { agents.close(); } catch (_e) {}

@@ -782,3 +782,16 @@ test('cerrar el panel cierra NODO y recargarlo recrea las ventanas ocultas sin c
   assert.doesNotMatch(f, /chunior/i.test(f.replace(/\/\/.*$/gm, '')) ? /chunior\./ : /^$/, 'Chunior no se recrea: perderia la sesion');
   assert.match(src, /panel\.create\(\);\s*atarVentanasAlPanel\(\);/);
 });
+
+// 18/11: Ctrl+R recargaba el panel pero el proceso principal seguía con el código del arranque, y un arreglo
+// en main/ no se veía hasta cerrar NODO a mano. Si ese código cambió en el disco, Ctrl+R reinicia todo.
+test('Ctrl+R reinicia NODO entero si cambió el código del proceso principal, y sólo entonces', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'main.js'), 'utf8');
+  const f = src.slice(src.indexOf('function atarVentanasAlPanel'), src.indexOf('app.whenReady()'));
+  const espera = f.indexOf('automationRequests.pending.size');
+  const reinicio = f.indexOf('_huellaProcesoPrincipal() > HUELLA_AL_ABRIR');
+  assert.ok(espera > 0 && reinicio > espera, 'primero termina la operación en curso, después se reinicia');
+  assert.match(f.slice(reinicio, reinicio + 400), /app\.relaunch\(\)[\s\S]*app\.quit\(\)[\s\S]*return;/);
+  assert.match(src, /for \(const dir of \['main', 'services'\]\)/, 'mira main.js, main/ y services/');
+  assert.match(src, /\/\\\.\(c\?js\|html\)\$\/i/, 'los archivos de código, no cualquier cosa');
+});
