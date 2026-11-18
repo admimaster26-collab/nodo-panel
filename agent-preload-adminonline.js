@@ -1111,6 +1111,61 @@ async function _enPersonalizarPagina(fn, args) {
     if (meMovi) { try { if (!(await _irARuta(antes))) await _irARuta('/agents/control'); } catch (_e) {} }
   }
 }
+// ── Movimientos de crédito (/agents/tokens-report) ───────────────────────────
+// Juan, 18/11: una carga cerrada como "ya cargada" no dejaba rastro en el historial de NODO. Para saber si
+// las fichas se cargaron de verdad se mira este informe: Fecha · Tipo · Estado · Cantidad · Alias · Balance.
+// "Deposito de un jugador" con cantidad positiva = carga; negativa = retiro. Más nuevo primero, de a 20.
+// Se pasa de página hasta llegar a `desde` (o al tope) y se vuelve a la pantalla de antes.
+const TOKENS_REPORT_PATH = '/agents/tokens-report';
+function _fechaInforme(t) {   // "18/11/2026 07:43:01" (hora de Argentina) → ms
+  const m = String(t || '').match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2}):?(\d{2})?/);
+  if (!m) return NaN;
+  return Date.parse(m[3] + '-' + m[2] + '-' + m[1] + 'T' + m[4] + ':' + m[5] + ':' + (m[6] || '00') + '-03:00');
+}
+function _filasInforme() {
+  return Array.from(document.querySelectorAll('table tbody tr')).filter(isVisible).map(tr => {
+    const td = Array.from(tr.querySelectorAll('td')).map(c => normalizeText(c.textContent));
+    if (td.length < 5) return null;
+    const cant = parseMoney(td[3]) * (/^\s*-/.test(td[3]) ? -1 : 1);
+    return { fecha: td[0], ms: _fechaInforme(td[0]), tipo: td[1], estado: td[2], cantidad: cant, alias: td[4], balance: td[5] || '' };
+  }).filter(f => f && Number.isFinite(f.ms));
+}
+async function leerMovimientosCredito(args = {}) {
+  if (_loginEnCurso) return { ok: false, ocupado: true, message: 'La ventana de AdminOnline está entrando a la sesión.' };
+  if (pageNeedsLogin()) return { ok: false, needsLogin: true, message: 'Hay que entrar a AdminOnline.' };
+  const desde = Number(args.desdeMs) || (now() - 6 * 3600000);
+  const alias = String(args.alias || '').trim().toLowerCase();
+  const tope = Math.max(1, Math.min(Number(args.maxPaginas) || 15, 40));
+  const antes = _rutaActual();
+  const meMovi = antes !== TOKENS_REPORT_PATH;
+  if (meMovi && !(await _irARuta(TOKENS_REPORT_PATH))) {
+    return { ok: false, motivo: 'OTRA_PANTALLA', message: 'No pude abrir "Movimientos de crédito" desde el menú de AdminOnline.' };
+  }
+  try {
+    const filas = [];
+    let completo = false, paginas = 0, firmaAnterior = '';
+    while (paginas < tope) {
+      const listo = await _esperarQue(() => _filasInforme().length > 0, 10000);
+      if (!listo) break;
+      await delay(400);
+      const pagina = _filasInforme();
+      const firma = pagina.map(f => f.fecha + f.alias + f.cantidad).join('|');
+      if (firma === firmaAnterior) break;            // la página no cambió: no hay más
+      firmaAnterior = firma; paginas++;
+      for (const f of pagina) if (f.ms >= desde && (!alias || f.alias.toLowerCase() === alias)) filas.push(f);
+      if (pagina[pagina.length - 1].ms < desde) { completo = true; break; }
+      const sig = Array.from(document.querySelectorAll('button')).filter(isVisible)
+        .find(b => b.querySelector('.i-mdi\\:chevron-right, [class*="chevron-right"]'));
+      if (!sig || sig.disabled) { completo = true; break; }
+      clickElement(sig);
+      await _esperarQue(() => _filasInforme().map(f => f.fecha + f.alias + f.cantidad).join('|') !== firmaAnterior, 8000);
+    }
+    return { ok: true, filas, completo, paginas };
+  } finally {
+    if (meMovi) { try { if (!(await _irARuta(antes))) await _irARuta('/agents/control'); } catch (_e) {} }
+  }
+}
+
 async function leerWhatsappOficina(args = {}) { return _enPersonalizarPagina(_leerWhatsappEnPantalla, args); }
 async function guardarWhatsappOficina(args = {}) { return _enPersonalizarPagina(_guardarWhatsappEnPantalla, args); }
 
@@ -1124,6 +1179,7 @@ const api = {
   obtenerSaldoAgente,
   leerWhatsappOficina,
   guardarWhatsappOficina,
+  leerMovimientosCredito,
   irABusquedaUsuarios,
   iniciarSesion,
   estadoPagina: status,

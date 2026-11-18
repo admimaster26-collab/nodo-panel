@@ -217,3 +217,17 @@ Encontrados el 9/11. Están corregidos salvo los que dicen "abierto".
 4. Botones: `docs/BOTONES.md`. Y probar mirando la pantalla, no sólo con pruebas.
 5. Recorrerlo como el jugador y como el operador, contra el servidor real, y leer cada captura como
    alguien de afuera: `docs/PRUEBA_PORTAL_NODO.md`.
+
+## Carga cerrada como "ya cargada" (18/11)
+
+"Marcar como ya cargada" es para un pedido de carga cuyas fichas se cargaron por otro lado (a mano, por
+depósito reclamado, o porque el jugador lo mandó dos veces). Antes cerraba el pedido sin dejar nada en el
+historial de NODO: de los últimos 12, 9 no tenían ninguna fila y "desaparecían". Ahora, al abrir el cartel,
+NODO busca la carga y lo dice antes de cerrar:
+- **Historial de NODO**: una carga del mismo usuario y monto desde 2 h antes del pedido. Si no estaba atada a
+  ningún pedido, se ata a éste. Si ya era de otro pedido, es un **pedido repetido** y no se suma nada.
+- **AdminOnline, "Movimientos de crédito"** (`/agents/tokens-report`): un "Deposito de un jugador" por ese
+  monto a ese alias. Si está y NODO no la tenía, se anota en el historial como `YA CARGADA` (cuenta como hecha).
+- **Si no está en ningún lado**, se avisa en rojo; si igual se cierra, queda en el historial "⚠ sin comprobar"
+  (se ve, pero no suma).
+- Chunior (que la plata entró) se sigue cotejando con el botón Cotejo.

@@ -14,7 +14,9 @@ const ALLOWED_AUTOMATION_METHODS = new Set([
   'abortarOperacion',
   // WhatsApp de Personalizar página: lectura y guardado explícito del número en AdminOnline.
   'leerWhatsappOficina',
-  'guardarWhatsappOficina'
+  'guardarWhatsappOficina',
+  // 18/11: "Movimientos de crédito" de AdminOnline, para cotejar una carga cerrada como ya cargada.
+  'leerMovimientosCredito'
 ]);
 
 contextBridge.exposeInMainWorld('ctrlElectron', {

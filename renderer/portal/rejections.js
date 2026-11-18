@@ -5,7 +5,7 @@
   else root.NodoPortalRejections = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this, function(){
   'use strict';
-  const dependencies = Object.freeze(["V154P","abrirModal","actualizarSolicitudPortal","alert","cargarSolicitudesPortal","cerrarModal","document","escapeHtml","localStorage","notificarUsuarioEnChat","registrarEnHistorial","toast","window"]);
+  const dependencies = Object.freeze(["V154P","abrirModal","actualizarSolicitudPortal","alert","callDrex","supabaseClient","cargarSolicitudesPortal","cerrarModal","document","escapeHtml","localStorage","notificarUsuarioEnChat","registrarEnHistorial","toast","window"]);
   function create(deps){
 const api = {};
   api._portalMotivoRechazo = function(s){
@@ -96,6 +96,65 @@ const api = {};
   // plata adentro, y encima el motivo suena a que hizo algo mal.
   //
   // Esto la cierra como ACREDITADA —que es lo que pasó— y le avisa en consecuencia.
+  // ── Cotejo de una carga cerrada como "ya cargada" (Juan, 18/11) ─────────────────────────────────
+  // Cerrar así no cargaba nada ni dejaba rastro: 9 de 12 de los últimos días no tenían ninguna fila en el
+  // historial de NODO y "desaparecían". Antes de cerrar se mira dónde quedó la carga:
+  //   · historial de NODO: una carga del mismo usuario y monto desde 2 h antes del pedido (hecha a mano, por
+  //     depósito reclamado…). Si no está atada a ningún pedido, se la ata a éste; si está atada a otro, éste
+  //     es un pedido repetido.
+  //   · AdminOnline, "Movimientos de crédito": un "Deposito de un jugador" por ese monto a ese alias.
+  // El operador ve las dos respuestas antes de cerrar. Chunior ya se coteja con el botón Cotejo.
+  api._yaCargadaCotejo = async function(s, id){
+    const usuario = String((s&&(s.USUARIO||s.USUARIO_JUGADOR))||'').trim();
+    const monto = Math.round(Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0));
+    const pedidoMs = Date.parse((s&&(s.FECHA_CREACION||s.CREATED_AT||s.created_at))||'') || (Date.now() - 24*3600000);
+    const desdeMs = pedidoMs - 2*3600000;
+    const out = { usuario, monto, historial:null, repetidoDe:null, historialError:false, agentes:null, agentesEstado:'sin_revisar' };
+    try{
+      const pat = usuario.replace(/[\\%_]/g, function(c){ return '\\'+c; });
+      const r = await deps.supabaseClient.from('historial_ops')
+        .select('id,created_at,monto,origen,solicitud_id').ilike('usuario', pat).eq('tipo','CARGA').eq('estado','OK')
+        .gte('created_at', new Date(desdeMs).toISOString()).order('created_at',{ascending:true}).limit(30);
+      if(r.error || !Array.isArray(r.data)) out.historialError = true;
+      else{
+        const mismas = r.data.filter(function(h){ return Math.round(Number(h.monto)||0) === monto; });
+        out.historial = mismas.find(function(h){ return !h.solicitud_id || String(h.solicitud_id) === String(id); }) || null;
+        if(!out.historial){ const otra = mismas.find(function(h){ return h.solicitud_id; }); if(otra) out.repetidoDe = otra; }
+      }
+    }catch(_e){ out.historialError = true; }
+    try{
+      if(typeof deps.callDrex === 'function' && deps.window.ctrlElectron){
+        const m = await deps.callDrex('leerMovimientosCredito', { desdeMs: desdeMs, alias: usuario });
+        if(m && m.ok){
+          out.agentes = (m.filas||[]).find(function(f){ return /dep[oó]sito de un jugador/i.test(f.tipo) && /DONE/i.test(f.estado) && Math.round(f.cantidad) === monto; }) || null;
+          out.agentesEstado = out.agentes ? 'encontrada' : (m.completo ? 'no_esta' : 'incompleto');
+        }else out.agentesEstado = (m && m.needsLogin) ? 'sin_sesion' : 'no_se_pudo';
+      }
+    }catch(e){ out.agentesEstado = /no permitido|not a function|desconocid/i.test(String(e&&e.message||'')) ? 'no_disponible' : 'no_se_pudo'; }
+    return out;
+  };
+  api._yaCargadaCotejoHtml = function(c){
+    const E = deps.escapeHtml, plata = function(n){ return '$' + Number(n||0).toLocaleString('es-AR'); };
+    const hora = function(v){ try{ return new Date(v).toLocaleString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }catch(_e){ return String(v||''); } };
+    const linea = function(ok, txt){ return '<div style="margin:3px 0;color:'+(ok===true?'#86efac':ok===false?'#fca5a5':'#fde68a')+'">'+(ok===true?'✔ ':ok===false?'✖ ':'⚠ ')+txt+'</div>'; };
+    let h = '';
+    if(c.historial) h += linea(true, 'Historial de NODO: cargada '+E(plata(c.historial.monto))+' el '+E(hora(c.historial.created_at))+(c.historial.solicitud_id?'':' (sin pedido: se ata a éste)'));
+    else if(c.repetidoDe) h += linea(null, 'Pedido repetido: esa carga ya se hizo con el pedido #'+E(String(c.repetidoDe.solicitud_id))+' el '+E(hora(c.repetidoDe.created_at))+'. Al cerrar no se suma otra.');
+    else if(c.historialError) h += linea(null, 'No se pudo leer el historial de NODO.');
+    else h += linea(false, 'Historial de NODO: no hay ninguna carga de '+E(plata(c.monto))+' a '+E(c.usuario)+' desde 2 h antes del pedido.');
+    const ag = { encontrada: c.agentes ? linea(true, 'AdminOnline: '+E(plata(c.agentes.cantidad))+' a '+E(c.agentes.alias)+' el '+E(c.agentes.fecha)) : '',
+      no_esta: linea(false, 'AdminOnline: no aparece ninguna carga de '+E(plata(c.monto))+' a '+E(c.usuario)+' desde 2 h antes del pedido.'),
+      incompleto: linea(null, 'AdminOnline: no la encontré en las páginas que revisé (hay muchos movimientos). Mirala a mano en Movimientos de crédito.'),
+      sin_sesion: linea(null, 'AdminOnline: la sesión está cerrada, no se pudo revisar.'),
+      no_disponible: linea(null, 'AdminOnline: esta versión o este casino no tiene ese informe; revisalo a mano.'),
+      no_se_pudo: linea(null, 'AdminOnline: no se pudo revisar Movimientos de crédito.'),
+      sin_revisar: linea(null, 'AdminOnline: sólo se revisa desde la aplicación de escritorio.') };
+    h += ag[c.agentesEstado] || '';
+    if(!c.historial && !c.repetidoDe && c.agentesEstado !== 'encontrada')
+      h += '<div style="margin-top:6px;color:#fca5a5;font-weight:700">No encontré la carga en ningún lado. Si igual la cerrás, queda en el historial como "sin comprobar".</div>';
+    return h;
+  };
+
   api.v154pYaCargada = function(id){
     const s = (deps.V154P.solicitudes||[]).find(function(x){ return String(x.ID||x.SOLICITUD_ID||0)===String(id); });
     // Sólo cargas: un retiro no se "carga" (docs/FLUJOS.md). Cerrarlo así lo dejaba ACREDITADO y le
@@ -114,18 +173,33 @@ const api = {};
       + '</div>'
       + '<div style="color:#c0cad8;font-size:12px;margin-bottom:10px">Usala cuando ya le cargaste las fichas por otro lado '
       + '(a mano, por el chat) y esta solicitud quedó dando vueltas. <b>No carga nada:</b> sólo cierra la solicitud.</div>'
+      + '<div id="v154pYaCargCotejo" style="padding:8px 10px;border-radius:8px;background:#0d1117;border:1px solid #30363d;font-size:12px;margin-bottom:10px">🔎 Buscando la carga en el historial de NODO y en AdminOnline…</div>'
       + '<label>Aclaración <span style="color:#8b949e;font-weight:400">· opcional, la ve el jugador</span></label>'
       + '<textarea id="v154pYaCargObs" placeholder="Ej: te la cargué a mano recién"></textarea>',
       async function(){
         const obs = ((deps.document.getElementById("v154pYaCargObs")||{}).value||"").trim();
+        const c = cotejo ? await cotejo : null;   // si todavía estaba buscando, se espera
         deps.cerrarModal();
         try{
           await deps.actualizarSolicitudPortal(id, "ACREDITADA", {
             etapa: "YA_CARGADA_MANUAL",
             cerrada_como: "YA_CARGADA",
             obs: obs || null,
-            operador: (deps.window.operador && (deps.window.operador.usuario||deps.window.operador.nombre)) || 'panel'
+            operador: (deps.window.operador && (deps.window.operador.usuario||deps.window.operador.nombre)) || 'panel',
+            cotejo_ya_cargada: c ? { historial_id: c.historial ? c.historial.id : null, repetido_de: c.repetidoDe ? c.repetidoDe.solicitud_id : null,
+              adminonline: c.agentesEstado, adminonline_fecha: c.agentes ? c.agentes.fecha : null } : null
           });
+          // Que no desaparezca del historial: se ata la carga encontrada o se anota una fila nueva.
+          try{
+            if(c && c.historial && !c.historial.solicitud_id){
+              await deps.supabaseClient.from('historial_ops').update({ solicitud_id: Number(id) }).eq('id', c.historial.id);
+            }else if(c && !c.historial && !c.repetidoDe && typeof deps.registrarEnHistorial === 'function'){
+              await deps.registrarEnHistorial({ usuario, tipo:'CARGA', monto, origen:'YA_CARGADA', solicitud_id:Number(id),
+                estado: c.agentesEstado === 'encontrada' ? 'OK' : 'SIN_COMPROBAR',
+                notas: (c.agentesEstado === 'encontrada' ? 'Cargada por fuera de NODO · AdminOnline '+c.agentes.fecha : 'Cerrada como ya cargada sin encontrarla en NODO ni en AdminOnline')
+                  + ' · pedido #'+id + (obs ? ' · '+obs : '') });
+            }
+          }catch(e){ deps.toast("#"+id+" se cerró, pero no se pudo anotar en el historial: "+(e.message||e), "yellow"); }
           // El aviso iba por notificarUsuarioEnChat, que escribe en chat_sesiones / chat_mensajes —
           // la generación de chat que el portal YA NO LEE. El mensaje se guardaba y moría ahí: ni
           // le llegaba al jugador ni quedaba a la vista de nadie. Era el mismo agujero del cambio
@@ -156,6 +230,11 @@ const api = {};
           deps.toast("No se pudo cerrar: "+(e.message||e), "red");
         }
       }, "Cerrar como cargada");
+    const cotejo = api._yaCargadaCotejo(s, id).then(function(c){
+      const box = deps.document.getElementById('v154pYaCargCotejo');
+      if(box) box.innerHTML = api._yaCargadaCotejoHtml(c);
+      return c;
+    }).catch(function(){ return null; });
   };
 
   api.v154pRechazarSolicitud = function(id){

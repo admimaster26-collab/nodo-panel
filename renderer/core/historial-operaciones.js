@@ -536,13 +536,16 @@ function renderHistorial(lista){
 
   function origenPill(o){
     const map = {MANUAL:'op-manual',AUTO:'op-auto',PANEL:'op-panel',LANDING:'op-landing',PORTAL:'op-landing'};
-    const label = o==='PORTAL'?'PORTAL':(o==='LANDING'?'PORTAL':o);
+    // YA_CARGADA (18/11): pedido cerrado como "ya cargada"; la carga se hizo por fuera de NODO.
+    const label = o==='PORTAL'?'PORTAL':(o==='LANDING'?'PORTAL':(o==='YA_CARGADA'?'YA CARGADA':o));
     return '<span class="origen-pill '+(map[o]||'')+'">'+escapeHtml(label||'?')+'</span>';
   }
   function estadoIcon(e){
     if(e==='OK'||e==='ACREDITADA'||e==='PAGADA'||e==='COMPLETADA'||e==='APROBADA') return '<span style="color:var(--green)">✅</span>';
     if(e==='ERROR') return '<span style="color:var(--red)">❌</span>';
     if(e==='REVERTIDA') return '<span style="color:var(--muted)">↩</span>';
+    // Cerrada como ya cargada sin encontrar la carga en NODO ni en AdminOnline (18/11): no suma, pero se ve.
+    if(e==='SIN_COMPROBAR') return '<span style="color:#fbbf24;font-size:11px" title="Cerrada como ya cargada sin encontrar la carga en NODO ni en AdminOnline">⚠ sin comprobar</span>';
     if(e==='RECHAZADA'||e==='CANCELADA') return '<span style="color:var(--red)">✖</span>';
     if(e==='PENDIENTE'||e==='EN_REVISION'||!e) return '<span style="color:var(--muted);font-size:11px">⏳</span>';
     return '<span style="font-size:11px;color:var(--muted)">'+escapeHtml(e)+'</span>';

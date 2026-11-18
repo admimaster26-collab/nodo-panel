@@ -6719,13 +6719,16 @@ function renderHistorial(lista){
 
   function origenPill(o){
     const map = {MANUAL:'op-manual',AUTO:'op-auto',PANEL:'op-panel',LANDING:'op-landing',PORTAL:'op-landing'};
-    const label = o==='PORTAL'?'PORTAL':(o==='LANDING'?'PORTAL':o);
+    // YA_CARGADA (18/11): pedido cerrado como "ya cargada"; la carga se hizo por fuera de NODO.
+    const label = o==='PORTAL'?'PORTAL':(o==='LANDING'?'PORTAL':(o==='YA_CARGADA'?'YA CARGADA':o));
     return '<span class="origen-pill '+(map[o]||'')+'">'+escapeHtml(label||'?')+'</span>';
   }
   function estadoIcon(e){
     if(e==='OK'||e==='ACREDITADA'||e==='PAGADA'||e==='COMPLETADA'||e==='APROBADA') return '<span style="color:var(--green)">✅</span>';
     if(e==='ERROR') return '<span style="color:var(--red)">❌</span>';
     if(e==='REVERTIDA') return '<span style="color:var(--muted)">↩</span>';
+    // Cerrada como ya cargada sin encontrar la carga en NODO ni en AdminOnline (18/11): no suma, pero se ve.
+    if(e==='SIN_COMPROBAR') return '<span style="color:#fbbf24;font-size:11px" title="Cerrada como ya cargada sin encontrar la carga en NODO ni en AdminOnline">⚠ sin comprobar</span>';
     if(e==='RECHAZADA'||e==='CANCELADA') return '<span style="color:var(--red)">✖</span>';
     if(e==='PENDIENTE'||e==='EN_REVISION'||!e) return '<span style="color:var(--muted);font-size:11px">⏳</span>';
     return '<span style="font-size:11px;color:var(--muted)">'+escapeHtml(e)+'</span>';
@@ -12100,6 +12103,18 @@ window._drexMarcarSinSesion = function(motivo){
   }
   window._drexAvisarSinSesion();
   window._drexPedirLogin();
+  // Vigía de la sesión (18/11). La bandera sólo se bajaba si una respuesta llegaba POR EL PANEL diciendo
+  // que había sesión, y la sonda no corre con la bandera arriba. Si el operador entraba desde la ventana
+  // misma, o entraba la entrada automática (que va por main, no por el panel), nadie avisaba: la cola
+  // descartaba todo con la sesión viva. Pasó con AdminOnline: el saldo se pidió mientras la ventana
+  // todavía estaba en /login entrando sola. Mientras esté caída, cada 8 s se le pregunta a la página
+  // (estadoPagina sólo mira, no navega); apenas contesta que hay sesión, callDrex la repone.
+  if(window.ctrlElectron && !window._drexVigiaSesion){
+    window._drexVigiaSesion = setInterval(async function(){
+      if(!window._drexSinSesion){ clearInterval(window._drexVigiaSesion); window._drexVigiaSesion = null; return; }
+      try{ await callDrex('estadoPagina'); }catch(_e){}
+    }, 8000);
+  }
 };
 
 // Cartel FIJO mientras la sesión esté caída. El modal se puede cerrar; esto no se va hasta que se

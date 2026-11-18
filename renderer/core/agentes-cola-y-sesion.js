@@ -86,6 +86,18 @@ window._drexMarcarSinSesion = function(motivo){
   }
   window._drexAvisarSinSesion();
   window._drexPedirLogin();
+  // Vigía de la sesión (18/11). La bandera sólo se bajaba si una respuesta llegaba POR EL PANEL diciendo
+  // que había sesión, y la sonda no corre con la bandera arriba. Si el operador entraba desde la ventana
+  // misma, o entraba la entrada automática (que va por main, no por el panel), nadie avisaba: la cola
+  // descartaba todo con la sesión viva. Pasó con AdminOnline: el saldo se pidió mientras la ventana
+  // todavía estaba en /login entrando sola. Mientras esté caída, cada 8 s se le pregunta a la página
+  // (estadoPagina sólo mira, no navega); apenas contesta que hay sesión, callDrex la repone.
+  if(window.ctrlElectron && !window._drexVigiaSesion){
+    window._drexVigiaSesion = setInterval(async function(){
+      if(!window._drexSinSesion){ clearInterval(window._drexVigiaSesion); window._drexVigiaSesion = null; return; }
+      try{ await callDrex('estadoPagina'); }catch(_e){}
+    }, 8000);
+  }
 };
 
 // Cartel FIJO mientras la sesión esté caída. El modal se puede cerrar; esto no se va hasta que se
