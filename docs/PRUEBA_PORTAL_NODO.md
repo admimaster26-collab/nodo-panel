@@ -107,3 +107,20 @@ Así corre el chat de verdad contra el servidor sin tocar Chunior ni las solicit
 2. Qué se vio en cada paso, con la captura.
 3. Qué **no** se pudo probar y por qué (por ejemplo, la pantalla de NODO sin clave de operador), y qué
    tiene que mirar Juan para cerrarlo.
+
+## 7. Recorrido completo del jugador (18/11) — hacerlo entero cada vez
+
+Con un NODO propio (puerto 9337, perfil temporal, usuario de prueba de P1: ver la memoria `entorno-de-pruebas`)
+y el Portal local como `pruebaxx`. Antes de levantarlo, comprobar que el NODO de Juan (9222) no esté abierto:
+dos NODO en P1 procesan solas las mismas solicitudes. Las operaciones van al casino de prueba.
+
+| Paso | Qué mirar | 18/11 |
+|---|---|---|
+| Entrar (usuario + teléfono) | queda verificado y en Inicio; no aparecen avisos viejos como nuevos | ❌→✅ salían 14 mensajes viejos como "Nuevo mensaje" y la validación de hace días como "¡Ya te activamos!" |
+| Carga: 8 toques seguidos | una sola solicitud en la base y en NODO | ✅ |
+| Cancelar la carga | se cancela y vuelve a Inicio | ✅ (pero con un toque, sin "¿seguro?": decisión pendiente) |
+| Retiro a cuenta nueva | Portal "verificando"; NODO abre "Cuenta de cobro nueva"; al confirmar paga y el Portal dice "¡Retiro procesado!" | ✅ — pero cada retiro pagado mostraba en NODO un cartel rojo falso ("faltó guardar su hora"): ❌→✅ |
+| Cambio de clave sin escribir clave | el chat confirma el pedido abajo de todo, NODO la cambia sola y llega la clave | ❌→✅ el chat no decía nada (el aviso quedaba arriba de todo el historial) |
+| Historial (Estado) | cada operación con su estado en castellano | ✅ |
+| NODO al arrancar | carteles verdaderos | ❌ "La sesión de Agentes está cerrada · no se puede cargar ni retirar" aunque NODO la abre solo al operar |
+| No probado acá | enlace con dominio real, aviso "Actualizar" (necesita el Portal publicado), iPhone/Safari/Samsung, AdminOnline (este NODO usa el casino de prueba) | — |

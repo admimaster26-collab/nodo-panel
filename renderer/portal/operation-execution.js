@@ -471,8 +471,11 @@ async function _ejecutarSolicitudAhora(ctx){
           if(typeof deps.window.nodoSellarRetiroAprobado === 'function'){
             try{ _selloRetiro = await deps.window.nodoSellarRetiroAprobado(id,{solicitud:ctx.solicitud,usuario:usuario,monto:montoAbs}); }
             catch(_e){ _selloRetiro = {ok:false}; }
-          }else _selloRetiro = {ok:false};
-          if(!_selloRetiro || !_selloRetiro.ok){
+          }else _selloRetiro = null;
+          // Recorrido del 18/11: la función del sello no existe en esta versión (su SQL nunca se publicó), así que
+          // CADA retiro pagado terminaba con un cartel rojo "faltó guardar su hora". Sin sello se usa la hora de esta
+          // PC, como en los retiros comunes; el cartel queda sólo para cuando el sello existe y falla.
+          if(_selloRetiro && !_selloRetiro.ok){
             try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
             deps.toast('El retiro ya se ejecutó, pero faltó guardar su hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red');
           }

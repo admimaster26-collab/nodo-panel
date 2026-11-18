@@ -586,8 +586,8 @@ const _rv2FinalizarInterno = async function(stCapturado){
           solicitud:st.solicitud || {metadata:_metaInstrumento},usuario:st.usuario,monto:pagadoAcum
         });
       }catch(_e){ _selloRetiro={ok:false}; }
-    }else _selloRetiro={ok:false};
-    if(!_selloRetiro || !_selloRetiro.ok){
+    }else _selloRetiro=null;   // sin función de sello: se usa la hora de esta PC (recorrido del 18/11)
+    if(_selloRetiro && !_selloRetiro.ok){
       try{ deps.window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
       try{ deps.toast('El retiro ya se transfirió, pero faltó guardar la hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red'); }catch(_e){}
     }

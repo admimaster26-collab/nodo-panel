@@ -221,3 +221,19 @@ test('esperando una respuesta el hilo del jugador se lee en cada vuelta; sin esp
   await espera.ctx.pollOperatorMessages();
   assert.equal(cuantas(espera),1,'recién escribió: el hilo se lee ya');
 });
+// Recorrido del 18/11: en un teléfono nuevo, la primera lectura del hilo del usuario sacaba cada mensaje viejo como
+// "Nuevo mensaje" y sumaba al contador (la clave del 16/11 apareció como nueva, con 14 sin leer).
+test('la primera lectura del hilo del usuario es historia: no avisa ni suma; lo que llega después sí',async()=>{
+  let hilo=[{origen:'OPERADOR',mensaje:'Tu clave fue actualizada (viejo)',fecha:'2026-11-16T20:47:00Z'}];
+  const h=harness(async name=>name==='landing_portal_chat_thread_get'?{data:{chat_thread:hilo}}:beta());
+  h.ctx.state.screen='estado';                 // el aviso sale cuando no está mirando el chat
+  h.ctx.state._escribioAt=Date.now();
+  await h.ctx.pollOperatorMessages();          // inicializa el chat
+  h.ctx.state._escribioAt=Date.now();
+  await h.ctx.pollOperatorMessages();          // primera lectura del hilo
+  assert.equal(h.ctx.unread,0,'lo viejo no cuenta como nuevo');
+  hilo=hilo.concat([{origen:'OPERADOR',mensaje:'Ya validamos tu cuenta',fecha:new Date().toISOString()}]);
+  h.ctx.state._escribioAt=Date.now();vm.runInContext('portalChatHiloEn=0',h.ctx);   // pasó la espera entre lecturas
+  await h.ctx.pollOperatorMessages();
+  assert.equal(h.ctx.unread,1,'lo nuevo sí avisa');
+});

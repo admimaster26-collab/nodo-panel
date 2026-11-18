@@ -957,7 +957,15 @@ function chatHelpMessage(text,who){
 // Todo lo que entra a la charla se mete ARRIBA de lo que está esperando respuesta del jugador.
 function chatAgregar(nodo){
   const host=$("messages"),accion=$("guiaAccion");
-  if(accion&&accion.parentNode===host)host.insertBefore(nodo,accion);else host.appendChild(nodo);
+  if(!host)return;
+  // Por hora. El historial llega DESPUÉS de que el asistente habló al abrir el chat, y se pegaba abajo: lo
+  // que el asistente acababa de decir quedaba arriba de todo, donde el jugador no lo ve (recorrido del 18/11:
+  // "Tu cajero está cambiando tu clave" quedó primero de 26 globos). Un globo más viejo va antes del primero
+  // que sea más nuevo que él.
+  const ts=Number(nodo._portalTs)||0;
+  const despues=ts?Array.from(host.children).find(n=>n!==accion&&n!==nodo&&Number(n._portalTs)>ts):null;
+  if(despues)host.insertBefore(nodo,despues);
+  else if(accion&&accion.parentNode===host)host.insertBefore(nodo,accion);else host.appendChild(nodo);
   scrollChat();
 }
 function addMsg(text,who="bot",imgUrl=null,meta=null){
@@ -1007,7 +1015,10 @@ function incomingOperatorMsg(texto,imgUrl,m=null){
 }
 // Botón "Ingresar" dentro del chat: aparece cuando el operador validó la cuenta (por la marca
 // ⟦INGRESAR⟧ o por el auto-chequeo del cotejo). Al tocarlo, revalida y entra directo al home.
-function mostrarBotonIngresar(usuario,telefono){
+// avisar=false: la marca viene del HISTORIAL (un mensaje viejo). El botón se muestra igual (Juan, 3/10), pero
+// no se avisa como novedad: en un teléfono nuevo, la validación de hace días salía como "¡Ya te activamos!"
+// con el contador en 1 aunque el jugador ya estaba adentro (recorrido del 18/11).
+function mostrarBotonIngresar(usuario,telefono,avisar){
   usuario=String(usuario||"").trim() || (state.usuario||"");
   telefono=String(telefono||"").trim();
   // Acá había un "si ya está adentro, no lo muestres". Lo sacamos (Juan, 3/10): el operador lo
@@ -1017,6 +1028,11 @@ function mostrarBotonIngresar(usuario,telefono){
   // adentro y no lo está —marcado de una sesión anterior, de otra oficina, o de un dato que
   // quedó viejo— el jugador ve que no le aparece la billetera y encima se queda sin el único
   // botón que lo destraba. Que sobre un botón no le rompe nada a nadie; que falte, sí.
+  // Una marca VIEJA (del historial) para la cuenta con la que ya está adentro y verificado no se vuelve a
+  // pintar: quedaba "¡Tu cuenta ya está activa! · Ingresar" al pie del chat en cada visita (recorrido del 18/11).
+  // Una marca NUEVA se muestra siempre, como pidió Juan el 3/10.
+  if(avisar===false && state.nivelAcceso==="OK"
+     && String(state.usuario||"").toLowerCase()===String(usuario||"").toLowerCase()) return;
   if(state._ingresarUserShown===usuario && $("btnIngresarValidado")) return; // no duplicar
   state._ingresarUserShown=usuario;
   const prev=$("btnIngresarValidado"); if(prev){ const pm=prev.closest(".msg"); if(pm) pm.remove(); }
@@ -1030,7 +1046,7 @@ function mostrarBotonIngresar(usuario,telefono){
     +'</div><div class="meta">BET300 · '+now()+'</div>';
   chatAgregar(wrap);
   const fueraDelChat = state.screen!=="chat" || !$("widget")?.classList.contains("open");
-  if(fueraDelChat){ bumpUnread(); try{ showOperatorBubble("✅ ¡Ya te activamos! Tocá para ingresar.",null); }catch(_e){} }
+  if(fueraDelChat&&avisar!==false){ bumpUnread(); try{ showOperatorBubble("✅ ¡Ya te activamos! Tocá para ingresar.",null); }catch(_e){} }
 }
 async function confirmarIngresoValidado(usuario,telefono){
   usuario=String(usuario||"").trim();
@@ -1160,7 +1176,7 @@ function _infoNavegador(){
 const PORTAL_CHAT_BETA_RPC='landing_beta_chat_leer_v1';
 let portalChatVuelo=null, portalChatHistorialVuelo=null, portalChatContexto='', portalChatRuta='probe';
 let portalChatRevisarEn=0, portalChatCursor=null, portalChatInicializado=false, portalChatCerradoHasta=0;
-let portalChatGlobos=new Map(), portalChatHiloEn=0, portalChatViejos=[];
+let portalChatGlobos=new Map(), portalChatHiloEn=0, portalChatViejos=[], portalChatHiloLeido=false;
 let portalChatSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
 // Mientras el jugador espera una respuesta (pidió algo, espera que lo validen o escribió hace menos de dos
 // minutos), el hilo de su usuario se lee en cada vuelta y no cada 15 s. Los avisos automáticos de NODO
@@ -1183,7 +1199,7 @@ function portalChatPreparar(){
     portalChatGlobos=new Map();state.misGlobos=new Map();
     state.seenMsgIds=new Set();state._threadRendered=new Set();
     state.shownTexts=new Set();state._opMsgSeen=new Set();
-    portalChatContexto=key;portalChatRuta='probe';portalChatRevisarEn=0;portalChatCerradoHasta=0;portalChatHiloEn=portalChatEsperaRespuesta()?0:Date.now()+15000;
+    portalChatContexto=key;portalChatRuta='probe';portalChatRevisarEn=0;portalChatCerradoHasta=0;portalChatHiloLeido=false;portalChatHiloEn=portalChatEsperaRespuesta()?0:Date.now()+15000;
     portalChatCursor=null;portalChatInicializado=false;portalChatHistorialVuelo=null;
     portalChatSalud={estado:'sin_consultar',contrato:null,ultimoExito:null,ultimoError:null};
     const button=$('chatEarlier');if(button)button.remove();
@@ -1273,7 +1289,7 @@ function portalChatRenderRows(rows,notificar,prepend){
     const img=m.imagen_url||m.imagen||null;
     // Si este chat se cierra se sigue leyendo el hilo viejo, que no repite lo que ya vio por texto.
     state.shownTexts.add(who==='user'?(crudo?'u|'+crudo.substring(0,200):'uimg|'+String(img||'').substring(0,80)):crudo.substring(0,200));
-    if(!text&&!img){if(ing)mostrarBotonIngresar(ing[0],ing[1]);continue;}
+    if(!text&&!img){if(ing)mostrarBotonIngresar(ing[0],ing[1],!old&&!!notificar);continue;}
     const node=addMsg(escMsg(text),who,img,m);
     node._portalSignature=signature;
     node._portalCanonicalId=m.id==null?'':String(m.id);
@@ -1291,7 +1307,7 @@ function portalChatRenderRows(rows,notificar,prepend){
         &&(n._portalCanonicalId.length>id.length||(n._portalCanonicalId.length===id.length&&n._portalCanonicalId>id)));
       if(after)host.insertBefore(node,after);
     }else if(prepend)host.insertBefore(node,first);
-    if(ing)mostrarBotonIngresar(ing[0],ing[1]);
+    if(ing)mostrarBotonIngresar(ing[0],ing[1],!old&&!!notificar);
     if(!old&&notificar&&who!=='user'&&state.screen!=='chat'){
       bumpUnread();showOperatorBubble(text,img);
       if(text)notificarLocal('BET300 · '+(who==='operator'?'Operador':who==='bot'?'Asistente':'Sistema'),chatHelpMessage(text,who).text.substring(0,100),'/','bet300-op');
@@ -1381,7 +1397,11 @@ async function pollPortalConversation(){
             }
             if(Array.isArray(hiloUsuario?.chat_thread)){
               const vistos=beta.rows.concat(beta.legacy_thread.map(m=>({...m,created_at:m.fecha})));
-              portalChatRenderLegacy(portalChatSinCopias(hiloUsuario.chat_thread,vistos).map(m=>({...m,portal_key:'u:'+threadKey(m)})),true);
+              // La primera lectura del hilo es historia, no novedad. Se leía recién a los 15 s, con el chat ya
+              // inicializado: en un teléfono nuevo cada mensaje viejo salía como "Nuevo mensaje" y sumaba al
+              // contador (recorrido del 18/11: entró pruebaxx y le apareció la clave del 16/11 como nueva, con 14).
+              portalChatRenderLegacy(portalChatSinCopias(hiloUsuario.chat_thread,vistos).map(m=>({...m,portal_key:'u:'+threadKey(m)})),true,portalChatHiloLeido);
+              portalChatHiloLeido=true;
             }
             portalChatMostrarAnterior(beta,recovery);portalChatInicializado=true;
           }else{
@@ -1482,7 +1502,7 @@ function renderThreadMsg(m, notificar){
         if(fuera){ bumpUnread(); try{ showOperatorBubble(texto,imgUrl); }catch(_e){} if(texto){ try{ notificarLocal("BET300 · "+(who==="operator"?"Cajero":who==="bot"?"Asistente":"Sistema"),chatHelpMessage(texto,who).text.substring(0,100),"/","bet300-op"); }catch(_e){} } }
       }
     }
-    if(ing) mostrarBotonIngresar(ing,ingTel);
+    if(ing) mostrarBotonIngresar(ing,ingTel,!!notificar);
   } else {
     // Mensaje del propio usuario (historial). Dedup por contenido contra lo ya mostrado en vivo.
     const uk=rawTexto?("u|"+rawTexto.substring(0,200)):("uimg|"+(imgUrl||"").substring(0,80));
@@ -1491,12 +1511,12 @@ function renderThreadMsg(m, notificar){
     addMsg(rawTexto?escMsg(rawTexto):"","user",imgUrl||null,m);
   }
 }
-function portalChatRenderLegacy(thread,resolved){
+function portalChatRenderLegacy(thread,resolved,notificar){
   if(!Array.isArray(thread))return;
   // En beta el servidor asigna identidad y ámbito a cada respuesta legacy.
   // No volver a filtrar por texto: dos mensajes iguales pueden ser legítimos.
   if(resolved){
-    portalChatRenderRows(thread.map(m=>({...m,id:null,visto_confirmado:false})),portalChatInicializado,false);
+    portalChatRenderRows(thread.map(m=>({...m,id:null,visto_confirmado:false})),notificar===undefined?portalChatInicializado:!!notificar,false);
     return;
   }
   if(!thread.length)return;
@@ -3751,9 +3771,14 @@ async function enviarSolicitudClave(){
     toast("Pedido de cambio de clave enviado 🔑");
     // El asistente dice que está en curso y no ofrece nada más (ver guiaPedidoEnCurso). Antes este globo
     // salía debajo del menú de "Una carga / Un retiro / Entrar a mi cuenta" (Juan, 16/11).
-    const yaPintada=guiaPintada;
     goChat();
-    if(yaPintada)guiaIr("inicio");
+    // Siempre se le confirma en el chat. Si el cajero le había escrito hace poco, el asistente estaba en
+    // "modo persona" y no decía nada: el pedido salía y el jugador no veía ninguna señal (recorrido del 18/11).
+    try{
+      const g=guiaCargar(),ult=g.burbujas[g.burbujas.length-1];
+      if(!ult||ult.h!==GUIA_EN_CURSO.CLAVE)guiaDecir(GUIA_EN_CURSO.CLAVE);
+      guiaReponerMenu();
+    }catch(_e){}
     startChatPoll();startPortalThreadPoll();
     setTimeout(()=>subscribePush(),1200);
   } finally {

@@ -679,7 +679,8 @@ async function ejecutarAutoRetiro(id){
       try{ _selloAuto = await window.nodoSellarRetiroAprobado(id,{solicitud:s,usuario,monto}); }
       catch(_e){ _selloAuto = {ok:false}; }
     }
-    if(!_selloAuto || !_selloAuto.ok){
+    // Sin la función del sello (su SQL nunca se publicó) no es una falla: va la hora de esta PC (18/11).
+    if(_selloAuto && !_selloAuto.ok){
       try{ window.NodoSalud?.begin('RETIROS')?.record('DATA','ERROR','RETIRO_SELLO_NO_CONFIRMADO'); }catch(_e){}
       toast('El retiro ya se ejecutó, pero no se guardó la hora en el servidor. No lo vuelvas a pagar; revisá el historial.','red');
     }
@@ -694,7 +695,7 @@ async function ejecutarAutoRetiro(id){
   if(bilRetiro) await ajustarSaldoBilletera(bilRetiro.ID_BILLETERA, -monto);
 
   const _hora = _selloAuto && _selloAuto.ok ? _selloAuto.horaExacta
-    : (_retiroInstrumento ? '' : (typeof window.nodoHoraExacta === "function" ? window.nodoHoraExacta(new Date()) : new Date().toLocaleTimeString("es-AR")));
+    : ((_selloAuto && !_selloAuto.ok) ? '' : (typeof window.nodoHoraExacta === "function" ? window.nodoHoraExacta(new Date()) : new Date().toLocaleTimeString("es-AR")));
   const _mensajePago = _retiroInstrumento && !_hora
     ? `Tu retiro de $${monto.toLocaleString("es-AR")} fue procesado. Estamos revisando el registro del horario; no vuelvas a enviar el retiro. Si tenés dudas, escribinos por este chat.`
     : `✅ Tu retiro de $${monto.toLocaleString("es-AR")} fue procesado a las ${_hora} hs. Lo transferimos a tu CBU/CVU.`;

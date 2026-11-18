@@ -171,3 +171,17 @@ test('si PostgREST devuelve PGRST202 de schema cache, confirmarIngresoValidado c
   assert.equal(c.ctx.state.nivelAcceso, 'OK');
   assert.equal(c.hechos.home, 1);
 });
+
+// Recorrido del 18/11: entrando como pruebaxx (ya verificado), la validación de hace días volvía a salir al pie
+// del chat como "¡Tu cuenta ya está activa! · Ingresar" y como "Nuevo mensaje". Una marca vieja para la misma
+// cuenta ya adentro no se pinta; una nueva se pinta siempre (Juan, 3/10).
+test('marca vieja del historial para la cuenta con la que ya está adentro: no se pinta ni avisa', () => {
+  const c = armar('OK');
+  c.ctx.mostrarBotonIngresar('joelgoat', '1158956858', false);
+  assert.ok(!c.seDibujo(), 'vieja y ya adentro: no');
+  c.ctx.mostrarBotonIngresar('joelgoat', '1158956858');
+  assert.ok(c.seDibujo(), 'la que manda el operador ahora sí se pinta');
+  const otra = armar('SOPORTE');
+  otra.ctx.mostrarBotonIngresar('joelgoat', '1158956858', false);
+  assert.ok(otra.seDibujo(), 'si no está adentro, la vieja también sirve');
+});
