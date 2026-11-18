@@ -5,6 +5,7 @@
   "main": "main.js",
   "scripts": {
     "panel:build": "node scripts/build-panel.cjs",
+    "portal:publicar": "node scripts/portal-publicar.cjs",
     "panel:check": "node scripts/build-panel.cjs --check",
     "panel:smoke": "node scripts/smoke-panel.cjs",
     "repro:loop": "set \"ELECTRON_RUN_AS_NODE=\" && electron scripts/repro-loop-login.cjs",

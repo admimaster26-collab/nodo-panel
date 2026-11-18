@@ -525,7 +525,6 @@ input.prellenado{background:rgba(58,208,127,.07);border-color:rgba(58,208,127,.4
 <script>
 const SUPABASE_URL = "https://pjvvyvfcwjoocjqvdror.supabase.co";
 const SUPABASE_ANON_KEY = "sb_publishable_NYqRoKptTgcL90VAVF2kqA_Gl06mEUF";
-const DEFAULT_ROUTE = "rt-a8f31"; // Solo compatibilidad/dev — NO usar como fallback en producción (hoy NO se referencia en ningún lado).
 const PLATFORM_URL = "https://bet-300.pw";
 // Sello de versión a la vista. Sin esto no hay forma de saber si lo que se abrió es el portal
 // nuevo o la copia vieja que guardó el service worker en el teléfono. Se cambia a mano en cada
@@ -1107,7 +1106,7 @@ function renderChat(){
   setTimeout(()=>subscribePush(),1200);
 }
 
-async function rpc(fn,params){if(!sb)return{data:null,error:{message:"Supabase no configurado"}};const{data,error}=await sb.rpc(fn,params||{});return{data,error}}
+async function rpc(fn,params){if(!sb)return{data:null,error:{code:"SIN_CONEXION",message:"Sin conexión. Probá de nuevo en un momento."}};const{data,error}=await sb.rpc(fn,params||{});return{data,error}}
 function _esRpcInexistente(error,name){
   if(!error)return false;
   const code=String(error.code||"").toUpperCase(),msg=String(error.message||"");

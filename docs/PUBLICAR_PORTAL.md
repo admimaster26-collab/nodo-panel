@@ -14,11 +14,15 @@ entre una y otra lo decide el servidor (por ejemplo, el pedido de DNI según el 
 
 1. En este repo: `node --require ./tests/helpers/offline-network.cjs --test tests/portal-*.test.cjs tests/retiro-instrumentos-portal.test.cjs` tiene que dar todo bien.
 2. En el archivo `Portal`, subir el sello de versión (`PORTAL_VER`, cerca de la línea 525; hoy dice `v2.1.18 · 02/11`).
-3. En el repo de destino se tocan **sólo dos archivos**:
-   - `index.html` ← copia exacta del archivo `Portal`.
+3. Armar lo que se publica: `npm run portal:publicar`. Saca del código todo lo de desarrollo (comentarios,
+   console, y en producción el modo pruebas con las rutas de todas las oficinas) y comprueba que compile.
+   **Nunca se sube el archivo `Portal` tal cual**: cualquiera que abra el código de la página lo leería (Juan, 18/11).
+4. En el repo de destino se tocan **sólo dos archivos**:
+   - `index.html` ← `dist/portal/prueba/index.html` para **prueba** (intento) o `dist/portal/produccion/index.html`
+     para **producción**.
    - `sw.js` ← subir el número de `CACHE` (si no cambia, los teléfonos siguen mostrando la versión vieja).
-4. Commit y push a la rama que publica (GitHub Pages). Primero en **prueba**; mirar que ande; después lo mismo en **producción**.
-5. Comprobar en un teléfono: abrir el Portal, cerrar y volver a abrir; abajo tiene que verse el sello nuevo.
+5. Commit y push a la rama que publica (GitHub Pages). Primero en **prueba**; mirar que ande; después lo mismo en **producción**.
+6. Comprobar en un teléfono: abrir el Portal, cerrar y volver a abrir; abajo tiene que verse el sello nuevo.
 
 ## Antes de publicar en producción
 
