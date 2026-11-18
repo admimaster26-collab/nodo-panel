@@ -1511,8 +1511,75 @@ async function guardarWhatsappOficina(args) {
   }
 }
 
+// Movimientos de credito (Reporte de carga y descarga: /agents/activity), para el cotejo de cargas
+// (Juan, 18/11). main ya navego a la pantalla (abre en la pestana "Mi credito"): se aprieta la pestana
+// "Movimientos de credito", se espera a que se dibuje la tabla y se lee. Fecha, Tipo, Estado, Cantidad,
+// Alias, Balance. Una carga a un jugador es "Deposito de un jugador" con cantidad POSITIVA ("-ARS" = retiro).
+// Los movimientos no tienen id: la fecha con segundos es su identidad. Mismo contrato que AdminOnline.
+function _fechaMovDrex(t) {
+  var m = String(t || '').match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return NaN;
+  return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +(m[6] || 0)).getTime();
+}
+function _montoMovDrex(t) {
+  var txt = String(t || '');
+  var neg = /-\s*(ARS)?\s*[\d]/.test(txt.replace(/\u00a0/g, ' ')) || /^\s*-/.test(txt);
+  var x = txt.replace(/[^\d.,]/g, '');
+  if (!x) return 0;
+  var ultPunto = x.lastIndexOf('.'), ultComa = x.lastIndexOf(',');
+  if (ultPunto >= 0 && ultComa >= 0) x = ultPunto > ultComa ? x.replace(/,/g, '') : x.replace(/\./g, '').replace(',', '.');
+  else if (ultComa >= 0) x = /,\d{1,2}$/.test(x) ? x.replace(',', '.') : x.replace(/,/g, '');
+  else if (ultPunto >= 0 && !/\.\d{1,2}$/.test(x)) x = x.replace(/\./g, '');
+  var n = parseFloat(x);
+  return Number.isFinite(n) ? (neg ? -n : n) : 0;
+}
+function _filasMovDrex() {
+  return Array.prototype.slice.call(document.querySelectorAll('table tbody tr')).filter(isVisible).map(function (tr) {
+    var td = Array.prototype.slice.call(tr.querySelectorAll('td')).map(function (c) { return normalizeText(c.textContent); });
+    if (td.length < 5) return null;
+    return { fecha: td[0], ms: _fechaMovDrex(td[0]), tipo: td[1], estado: td[2], cantidad: _montoMovDrex(td[3]), alias: td[4], balance: td[5] || '' };
+  }).filter(function (f) { return f && Number.isFinite(f.ms); });
+}
+async function leerMovimientosCredito(args) {
+  args = args || {};
+  if (_loginEnCurso) return { ok: false, ocupado: true, message: 'La ventana de Agentes esta entrando a la sesion.' };
+  if (pageNeedsLogin()) return { ok: false, needsLogin: true, message: 'Hay que entrar a Agentes.' };
+  if (String(window.location.href || '').indexOf('/agents/activity') < 0) {
+    return { ok: false, motivo: 'OTRA_PANTALLA', message: 'La ventana de Agentes no esta en el Reporte de carga y descarga.' };
+  }
+  var desde = Number(args.desdeMs) || (now() - 6 * 3600000);
+  var alias = String(args.alias || '').trim().toLowerCase();
+  try {
+    // 1) Que se dibuje la pestana y apretarla.
+    var t0 = now(), tab = null;
+    while (now() - t0 < 12000) {
+      tab = Array.prototype.slice.call(document.querySelectorAll('button[role="tab"], .nav-link'))
+        .filter(function (b) { return /movimientos de cr/i.test(b.textContent || ''); })[0] || null;
+      if (tab) break;
+      await delay(200);
+    }
+    if (!tab) return { ok: false, motivo: 'NO_APARECIO', message: 'No aparecio la pestana "Movimientos de credito".' };
+    if (tab.getAttribute('aria-selected') !== 'true') clickElement(tab);
+    // 2) Esperar a que se dibuje la tabla y quede quieta.
+    var t1 = now(), firma = null, desdeQuieta = 0, filas = [];
+    while (now() - t1 < 15000) {
+      filas = _filasMovDrex();
+      var f = filas.map(function (x) { return x.fecha + x.alias + x.cantidad; }).join('|');
+      if (f !== firma) { firma = f; desdeQuieta = now(); }
+      if (filas.length && now() - desdeQuieta >= 800) break;
+      await delay(200);
+    }
+    if (!filas.length) return { ok: true, filas: [], completo: false, paginas: 0, message: 'La tabla no mostro movimientos.' };
+    var elegidas = filas.filter(function (x) { return x.ms >= desde && (!alias || String(x.alias).toLowerCase() === alias); });
+    return { ok: true, filas: elegidas, completo: filas[filas.length - 1].ms < desde, paginas: 1 };
+  } catch (e) {
+    return { ok: false, motivo: 'ERROR', message: (e && e.message) ? e.message : String(e) };
+  }
+}
+
 const api = {
   leerWhatsappOficina,
+  leerMovimientosCredito,
   guardarWhatsappOficina,
   buscarUsuario,
   cargarSaldo,

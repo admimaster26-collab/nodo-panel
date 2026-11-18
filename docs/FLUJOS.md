@@ -239,3 +239,30 @@ Qué hace al cerrar:
   con la hora de AdminOnline en las notas para no volver a usarla.
 - **Ante la duda** (dos cargas iguales, un error, no se pudo leer, sin rastro) **no se ata nada**: se dice "no se
   pudo extraer más información" y, si se cierra, queda "⚠ sin comprobar" (se ve en el historial, no suma).
+
+## Cotejo de cargas: Agentes ↔ NODO ↔ Chunior (18/11)
+
+Las cargas no siempre salen de NODO: alguien puede cargar directo en Agentes, o anotar en Chunior a
+mano. NODO lee el "Reporte de carga y descarga" de Agentes cada 10 minutos (y cuando el operador
+aprieta 🔄 Recargar en el historial, después de dibujarlo) y compara las últimas 6 horas.
+
+- Criterio: mismo usuario, mismo monto, mismo horario (Agentes ↔ NODO a menos de 3 minutos;
+  Chunior hasta 15, porque se anota a mano). Una carga en Agentes es "Deposito de un jugador" con monto
+  positivo; con signo menos es un retiro.
+- Los movimientos de Agentes no tienen número: la fecha con segundos es su identidad y queda en las
+  notas de la fila ("Agentes 18/11/2026 13:33:38").
+
+| Agentes | NODO | Chunior | Qué hace NODO |
+|---|---|---|---|
+| sí | no | sí | La enlaza y la dibuja en el historial. Sin aviso. |
+| sí | no | no | La anota en Chunior en la billetera en uso, la dibuja (con su Deshacer) y avisa: "no se hizo desde NODO ni estaba anotada, avisale a tu superior". El operador marca "Lo vi". |
+| sí | sí | no | La sube a Chunior (salvo que NODO ya la tenga en su cola de reintentos). |
+| no | sí | sí/no | Avisa: "figura anotada, pero en Agentes no aparece". El operador marca "Lo vi". |
+
+Ante la duda no se toca nada: dos cargas iguales que podrían ser cualquiera, una fila parecida suelta a
+menos de una hora (relojes corridos), una lectura incompleta o una operación en curso. Lo que quedó en
+duda no se vuelve a mirar en Chunior por una hora. Los avisos salen del historial, así que los ve
+cualquier PC de la oficina, y "Lo vi" queda anotado con el nombre del operador.
+
+Dónde se lee: AdminOnline y agentesbet.io por su menú, sin recargar; Drex en /agents/activity, pestaña
+"Movimientos de crédito". Código: renderer/core/cotejo-cargas.js y leerMovimientosCredito en cada preload.

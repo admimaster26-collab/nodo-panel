@@ -1479,6 +1479,68 @@ async function guardarWhatsappOficina(args = {}) {
   } catch (e) { return { ok: false, motivo: 'ERROR', message: (e && e.message) ? e.message : String(e) }; }
 }
 
+// ── Movimientos de crédito (Reporte de carga y descarga: /agents/tokens-report) ──────────────
+// Para el cotejo de cargas (Juan, 18/11): Fecha · Tipo · Estado · Cantidad · Alias · Balance. Una carga a
+// un jugador es "Deposito de un jugador" con cantidad POSITIVA; con signo menos es un retiro. Los
+// movimientos no tienen id: la fecha con segundos es su identidad. Mismo contrato que AdminOnline.
+function _fechaReporte(t) {
+  const m = String(t || '').match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!m) return NaN;
+  return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +(m[6] || 0)).getTime();
+}
+function _filasReporte() {
+  return Array.from(document.querySelectorAll('table tbody tr')).filter(isVisible).map(tr => {
+    const td = Array.from(tr.querySelectorAll('td')).map(c => normalizeText(c.textContent));
+    if (td.length < 5) return null;                                   // la fila de "Totales" tiene 4
+    const cant = parseMoney(td[3]) * (/^\s*-/.test(td[3]) ? -1 : 1);
+    return { fecha: td[0], ms: _fechaReporte(td[0]), tipo: td[1], estado: td[2], cantidad: cant, alias: td[4], balance: td[5] || '' };
+  }).filter(f => f && Number.isFinite(f.ms));
+}
+async function leerMovimientosCredito(args = {}) {
+  if (_loginEnCurso) return { ok: false, ocupado: true, message: 'La ventana de Agentes está entrando a la sesión.' };
+  if (pageNeedsLogin()) return { ok: false, needsLogin: true, message: 'Hay que entrar a Agentes.' };
+  const desde = Number(args.desdeMs) || (now() - 6 * 3600000);
+  const alias = String(args.alias || '').trim().toLowerCase();
+  const tope = Math.max(1, Math.min(Number(args.maxPaginas) || 15, 40));
+  try {
+    // Ir por el menú, sin recargar (es una SPA). Si no está el menú, por la dirección.
+    if (!/\/agents\/tokens-report/i.test(location.pathname)) {
+      await limpiarCartelesInicio().catch(() => {});
+      const it = findMenuItem(/reporte de carga|carga y descarga/i);
+      if (it) clickElement(it); else return { ok: false, motivo: 'OTRA_PANTALLA', message: 'No encontré "Reporte de carga y descarga" en el menú.' };
+      await waitFor(() => /\/agents\/tokens-report/i.test(location.pathname), 8000, 150, 'ir-reporte').catch(() => {});
+    }
+    if (!/\/agents\/tokens-report/i.test(location.pathname)) return { ok: false, motivo: 'OTRA_PANTALLA', message: 'No pude abrir el Reporte de carga y descarga.' };
+    // Esperar a que se dibuje la tabla (filas o, si no hay movimientos, la tabla vacía y quieta).
+    let listo = await waitFor(() => _filasReporte().length > 0, 10000, 200, 'reporte-filas').then(() => true).catch(() => false);
+    if (!listo) {
+      const filtrar = findByText(/^filtrar$/i, 'button, .v-btn');
+      if (filtrar) { clickElement(filtrar); listo = await waitFor(() => _filasReporte().length > 0, 8000, 200, 'reporte-filtrar').then(() => true).catch(() => false); }
+    }
+    if (!listo) return { ok: true, filas: [], completo: false, paginas: 0, message: 'El reporte no mostró movimientos.' };
+    const filas = [];
+    let completo = false, paginas = 0, firmaAnterior = '';
+    while (paginas < tope) {
+      await delay(400);
+      const pagina = _filasReporte();
+      const firma = pagina.map(f => f.fecha + f.alias + f.cantidad).join('|');
+      if (!pagina.length || firma === firmaAnterior) break;
+      firmaAnterior = firma; paginas++;
+      for (const f of pagina) if (f.ms >= desde && (!alias || f.alias.toLowerCase() === alias)) filas.push(f);
+      if (pagina[pagina.length - 1].ms < desde) { completo = true; break; }
+      const sig = Array.from(document.querySelectorAll('button')).filter(isVisible).find(b => b.querySelector('.mdi-chevron-right'));
+      if (!sig || sig.disabled || sig.classList.contains('v-btn--disabled')) { completo = true; break; }
+      clickElement(sig);
+      await waitFor(() => _filasReporte().map(f => f.fecha + f.alias + f.cantidad).join('|') !== firmaAnterior, 8000, 200, 'reporte-pagina').catch(() => {});
+    }
+    return { ok: true, filas, completo, paginas };
+  } catch (e) {
+    return { ok: false, motivo: 'ERROR', message: (e && e.message) ? e.message : String(e) };
+  } finally {
+    try { await _asegurarInicio(); } catch (_e) {}                    // la ventana vuelve a Control de agentes
+  }
+}
+
 // ── API expuesta (mismo shape que el preload de casinodrex) ──────────────────
 
 const api = {
@@ -1491,6 +1553,7 @@ const api = {
   obtenerSaldoAgente,
   leerWhatsappOficina,
   guardarWhatsappOficina,
+  leerMovimientosCredito,
   limpiarCartelesInicio,
   irABusquedaUsuarios,
   iniciarSesion,

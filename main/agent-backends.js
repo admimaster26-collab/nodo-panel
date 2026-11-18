@@ -9,6 +9,8 @@ function createAgentBackends({ app, rootDir, env = process.env }) {
       newUserUrl: 'https://bo.casinodrex.com/agents/new_user',
       // Funcionalidades y permisos: ahí vive el WhatsApp que el jugador ve en el Portal.
       whatsappUrl:'https://bo.casinodrex.com/agents/features',
+      // Reporte de carga y descarga (pestaña "Movimientos de crédito"): para el cotejo de cargas.
+      movimientosUrl:'https://bo.casinodrex.com/agents/activity',
       preload:    'agent-preload.js',
       spa:        false,
       label:      'Casinodrex',

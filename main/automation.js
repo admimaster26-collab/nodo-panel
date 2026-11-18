@@ -9,6 +9,7 @@ function createAutomationService({ agents, backends, requests, env = process.env
     if (method === 'cargarSaldo' || method === 'retirarSaldo') return 45000;   // antes 180s
     if (method === 'crearUsuario' || method === 'cambiarClave') return 55000;  // antes 90s
     if (method === 'buscarUsuario' || method === 'obtenerSaldoAgente') return 28000; // antes 45s
+    if (method === 'leerMovimientosCredito') return 90000;   // puede pasar varias páginas del reporte
     return 40000; // antes 60s
   }
 
@@ -28,6 +29,11 @@ function createAutomationService({ agents, backends, requests, env = process.env
     // (D-101): main va a esa ruta sólo si la lectura/escritura explícita lo pide con navegar:true.
     else if (method === 'leerWhatsappOficina' || method === 'guardarWhatsappOficina') preNav = (args[0] && args[0].navegar && backends.current.whatsappUrl && !backends.current.spaPathAware)
       ? agents.navigate(backends.current.whatsappUrl, { mismaRuta: true })
+      : agents.ready(win);
+    // Cotejo de cargas (18/11): Drex no es SPA y el reporte es otra página → main la abre. agentesbet.io y
+    // AdminOnline llegan por su menú, sin recargar.
+    else if (method === 'leerMovimientosCredito') preNav = backends.current.movimientosUrl
+      ? agents.navigate(backends.current.movimientosUrl, { mismaRuta: true })
       : agents.ready(win);
     else                                       preNav = agents.ready(win);
     // Antes de mandar nada, esperar a que el preload de esa ventana avise que ya escucha: si no,
