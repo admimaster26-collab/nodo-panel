@@ -31,6 +31,7 @@
   var BACKOFFICE_VERIFICADO = false;
   var BACKOFFICE_ERROR = "";
   var REVISANDO = false;
+  var SYNC_FALLO = null;      // último guardado automático en el backoffice que no salió { numero, at }
 
   function _pc(){
     try{
@@ -230,6 +231,21 @@
       }else if(d.desajuste === true){
         // No lo arregla el operador y no se le muestra: queda colgado para quien quiera mirarlo.
         try{ await _rpc("panel_oficina_wsp_desajuste"); }catch(_e){}
+      }
+
+      // Con Drex y agentesbet.io manda el número de la página (el que ve el jugador, el que NODO rota si
+      // la línea se cae): si el backoffice tiene otro, se lo cambia solo, sin preguntar (Juan, 18/11: "si es
+      // distinto al marcado cambialo"). Con AdminOnline es al revés y ya se resolvió arriba.
+      // Sólo con una lectura verificada del backoffice. Si el guardado falla, no se reintenta el mismo número
+      // por 15 minutos: queda el cartel con los botones para hacerlo a mano.
+      if(_backendElegido() !== "adminonline" && ESTADO && ESTADO.numero_pagina && BACKOFFICE_VERIFICADO && BACKOFFICE
+         && _clave(ESTADO.numero_pagina) && _clave(BACKOFFICE.numero) !== _clave(ESTADO.numero_pagina)){
+        var objetivo = _nacional(ESTADO.numero_pagina);
+        var reciente = SYNC_FALLO && SYNC_FALLO.numero === objetivo && (Date.now() - SYNC_FALLO.at) < 15 * 60000;
+        if(objetivo.length >= 7 && !reciente){
+          var quedo = await _guardarEnBackoffice(objetivo);
+          SYNC_FALLO = quedo ? null : { numero: objetivo, at: Date.now() };
+        }
       }
 
       pintarTilde();
@@ -518,6 +534,11 @@
         }
         r.numero = leido.numero;
         if(leido.habilitado != null) r.habilitado = leido.habilitado;
+      }
+      // Lo que el backoffice dice que quedó tiene que ser lo que se mandó: un "ok" con otro número no es guardado.
+      if(!String(r.numero || "").replace(/[^0-9]/g, "").endsWith(String(digitos))){
+        _avisar("Escribí el número en " + _nombreBackoffice() + ", pero quedó otro. Revisalo en esa pantalla.");
+        return false;
       }
       BACKOFFICE = {
         numero: String(r.numero || "").trim(),

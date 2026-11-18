@@ -220,17 +220,42 @@ test('mira el backoffice SOLO, antes de preguntarle nada a nadie', async () => {
     { panel_oficina_wsp_estado: estado({ pide: 'CONFIRMAR', numero_pagina: '5492235181171',
         wtk: { responde: false, datos_viejos: true, lineas: 0, activas: 0, activas_con_numero: 0, rota_sola: false },
         lineas: [], turno: { actual: 'TARDE', toca_hoy: 'TARDE', hay_que_preguntar: true } }) },
-    { ok: true, numero: '5492236700367', habilitado: true });
+    (metodo) => metodo === 'guardarWhatsappOficina'
+      ? { ok: true, numero: '+542235181171', pais: '+54', habilitado: true, numeroValido: true }
+      : { ok: true, numero: '5492236700367', habilitado: true });
   await m.win.NodoWsp.revisar();
 
-  assert.deepEqual(m.alBackoffice, ['leerWhatsappOficina'], 'tiene que leerlo sin que nadie apriete nada');
+  assert.equal(m.alBackoffice[0], 'leerWhatsappOficina', 'tiene que leerlo sin que nadie apriete nada');
   assert.equal(m.opcionesBackoffice[0].navegar, true, 'la revisión del watchdog debe abrir Personalizar página desde la pantalla actual');
-  // Y como no coinciden, la pregunta correcta NO es "¿sigue andando?".
+  // No coinciden: con Drex/agentesbet.io manda la página y se le pone al backoffice solo (Juan, 18/11:
+  // "si es distinto al marcado cambialo"). Nada de preguntarle al operador.
+  assert.equal(m.alBackoffice[1], 'guardarWhatsappOficina');
+  assert.equal(m.opcionesBackoffice[1].numero, '2235181171');
+  assert.equal(m.opcionesBackoffice[1].navegar, true, 'navega, espera que se dibuje, escribe y guarda');
+  assert.doesNotMatch(m.caja.innerHTML, /no es el que ten\u00e9s puesto en el backoffice/);
+  assert.match(m.caja.innerHTML, /coincide/);
+});
+
+test('si el backoffice no toma el número, no se insiste en cada vuelta y queda para hacerlo a mano', async () => {
+  const m = montar(
+    { panel_oficina_wsp_estado: estado({ numero_pagina: '5492235181171' }) },
+    (metodo) => metodo === 'guardarWhatsappOficina'
+      ? { ok: false, motivo: 'OTRA_PANTALLA' }
+      : { ok: true, numero: '5492236700367', habilitado: true });
+  await m.win.NodoWsp.revisar();
+  await m.win.NodoWsp.revisar();
+  assert.equal(m.alBackoffice.filter(x => x === 'guardarWhatsappOficina').length, 1, 'una vez, no en cada revisión');
   assert.match(m.caja.innerHTML, /no es el que ten\u00e9s puesto en el backoffice/);
-  assert.doesNotMatch(m.caja.innerHTML, /sigue andando\?/);
-  assert.match(m.caja.innerHTML, /223 518-1171/);   // lo que ve el jugador
-  assert.match(m.caja.innerHTML, /223 670-0367/);   // lo que dice el backoffice
-  assert.match(m.caja.innerHTML, /Poner el del backoffice/);
+  assert.match(m.caja.innerHTML, /Poner el de la página en/);
+});
+
+test('un "ok" del backoffice con otro número no cuenta como guardado', async () => {
+  const m = montar(
+    { panel_oficina_wsp_estado: estado({ numero_pagina: '5492235181171' }) },
+    { ok: true, numero: '5492236700367', habilitado: true });
+  await m.win.NodoWsp.revisar();
+  assert.ok(m.avisos.some(a => /quedó otro/.test(a)), 'tiene que avisar que no quedó');
+  assert.ok(!m.avisos.some(a => /se guardó/.test(a)));
 });
 
 test('si coinciden lo dice, y recien ahi pregunta si sigue andando', async () => {
@@ -325,8 +350,9 @@ test('la lectura manual se encola detrás de una operación activa y luego verif
 
   await m.win.nodoWspLeerBackoffice();
 
-  assert.equal(encoladas.length, 1);
+  // Después de leer, como el formato es inválido, se intenta poner el de la página (18/11).
   assert.equal(encoladas[0].nombre, 'leerWhatsappOficina(wsp)');
+  assert.ok(encoladas.slice(1).every(e => e.nombre === 'guardarWhatsappOficina(wsp)'));
   assert.equal(encoladas[0].silencioso, true);
   assert.equal(m.opcionesBackoffice[0].navegar, true);
   assert.match(m.caja.innerHTML, /formato inválido/);

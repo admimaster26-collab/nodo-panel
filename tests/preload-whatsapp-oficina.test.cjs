@@ -95,6 +95,19 @@ test('main lleva la ventana a la pantalla del WhatsApp, y solo cuando se lo pide
   assert.match(backends, /whatsappUrl:\s*'https:\/\/bo\.casinodrex\.com\/agents\/features'/);
   // 18/11: agentesbet.io ya tiene la pantalla (Configuración › Redes).
   assert.match(backends, /whatsappUrl:\s*'https:\/\/agentesbet\.io\/config\/socials'/);
+  // 18/11: agentesbet.io es SPA y "mismo sitio" contaba como "ya estoy": la ventana se quedaba en Control
+  // de agentes y el guardado moría en OTRA_PANTALLA. La pantalla del WhatsApp se compara por ruta.
+  assert.match(linea.slice(0, 400), /navigate\(backends\.current\.whatsappUrl, \{ mismaRuta: true \}\)/);
+  const ventana = fs.readFileSync(path.join(ROOT, 'main', 'agent-window.js'), 'utf8');
+  assert.match(ventana, /backends\.current\.spaPathAware \|\| opts\.mismaRuta/);
+});
+
+test('con Drex y agentesbet.io, si el backoffice tiene otro número se le pone el de la página solo', () => {
+  const modulo = fs.readFileSync(path.join(ROOT, 'renderer', 'extensions', 'oficina-whatsapp.js'), 'utf8');
+  const rev = modulo.slice(modulo.indexOf('async function revisar()'), modulo.indexOf('function pintarTilde()'));
+  assert.match(rev, /_backendElegido\(\) !== "adminonline"[\s\S]{0,200}BACKOFFICE_VERIFICADO[\s\S]{0,500}_guardarEnBackoffice\(objetivo\)/,
+    'Juan, 18/11: "si es distinto al marcado cambialo"');
+  assert.match(rev, /15 \* 60000/, 'si falla, no insiste con el mismo número en cada vuelta');
 });
 
 test('el preload se corre del paso si la ventana esta sin sesion', () => {

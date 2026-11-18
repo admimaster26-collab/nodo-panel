@@ -188,7 +188,10 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
         try {
           const actual = new URL(a), destino = new URL(b);
           if (actual.origin !== destino.origin) return false;
-          if (backends.current.spaPathAware) {
+          // opts.mismaRuta: la pantalla del WhatsApp (/config/socials) es otra ruta del mismo sitio. Sin esto, en
+          // agentesbet.io "mismo origen" contaba como "ya estoy" y la ventana no se movía de Control de agentes:
+          // el guardado moría en OTRA_PANTALLA (Juan, 18/11).
+          if (backends.current.spaPathAware || opts.mismaRuta) {
             const ruta = value => String(value || '/').replace(/\/+$/, '') || '/';
             return ruta(actual.pathname) === ruta(destino.pathname);
           }

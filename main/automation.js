@@ -27,7 +27,7 @@ function createAutomationService({ agents, backends, requests, env = process.env
     // El WhatsApp se administra desde Personalizar página. El preload no navega por su cuenta
     // (D-101): main va a esa ruta sólo si la lectura/escritura explícita lo pide con navegar:true.
     else if (method === 'leerWhatsappOficina' || method === 'guardarWhatsappOficina') preNav = (args[0] && args[0].navegar && backends.current.whatsappUrl && !backends.current.spaPathAware)
-      ? agents.navigate(backends.current.whatsappUrl)
+      ? agents.navigate(backends.current.whatsappUrl, { mismaRuta: true })
       : agents.ready(win);
     else                                       preNav = agents.ready(win);
     // Antes de mandar nada, esperar a que el preload de esa ventana avise que ya escucha: si no,
