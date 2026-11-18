@@ -31,7 +31,9 @@
   var BACKOFFICE_VERIFICADO = false;
   var BACKOFFICE_ERROR = "";
   var REVISANDO = false;
-  var SYNC_FALLO = null;      // último guardado automático en el backoffice que no salió { numero, at }
+  var SYNC_FALLO = null;      // último guardado automático en el backoffice que no salió { numero, at, texto }
+  var SYNC_EN_CURSO = false;  // se está poniendo el número de la página en el backoffice
+  var ULTIMO_ERROR_GUARDADO = "";
 
   function _pc(){
     try{
@@ -83,6 +85,7 @@
     try{ if(typeof d === "string") d = JSON.parse(d); }catch(_e){}
     return d;
   }
+  function _avisarToast(txt){ _avisar(txt); }
   function _avisar(txt){
     try{ if(window.toast) window.toast(txt); else console.log("[wsp]", txt); }catch(_e){}
   }
@@ -242,10 +245,7 @@
          && _clave(ESTADO.numero_pagina) && _clave(BACKOFFICE.numero) !== _clave(ESTADO.numero_pagina)){
         var objetivo = _nacional(ESTADO.numero_pagina);
         var reciente = SYNC_FALLO && SYNC_FALLO.numero === objetivo && (Date.now() - SYNC_FALLO.at) < 15 * 60000;
-        if(objetivo.length >= 7 && !reciente){
-          var quedo = await _guardarEnBackoffice(objetivo);
-          SYNC_FALLO = quedo ? null : { numero: objetivo, at: Date.now() };
-        }
+        if(objetivo.length >= 7 && !reciente) await _paginaAlBackoffice(objetivo);
       }
 
       pintarTilde();
@@ -285,6 +285,9 @@
     var clavePublicado = d.numero_pagina ? _clave(d.numero_pagina) : "";
     var coincide = !!(boNum && !boInvalido && claveBo && clavePublicado && claveBo === clavePublicado);
     var desacuerdo = !!(boNum && !boInvalido && d.numero_pagina && !coincide);
+    // Con Drex y agentesbet.io lo que ve el jugador es el número de la página, y NODO lo pone solo en el
+    // backoffice. Mostrar los dos números con botones de "elegí cuál" era redundante (Juan, 18/11).
+    var mandaPagina = _backendElegido() !== "adminonline";
 
     // 1) Qué pasa, en una línea, y el botón que corresponde a este momento.
     var titulo = "", color = "#94a3b8", acciones = "";
@@ -299,6 +302,17 @@
         titulo = "No hay WhatsApp publicado: al jugador no le aparece el botón para escribirte.";
         acciones = '<button class="mini-btn blue" onclick="nodoWspLeerBackoffice()" style="padding:9px">📄 Traerlo del backoffice</button>'
                  + '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Escribirlo a mano</button>';
+      }
+    }else if(mandaPagina && d.numero_pagina && BACKOFFICE && !coincide){
+      if(SYNC_EN_CURSO){
+        color = "#facc15";
+        titulo = "Poniendo este número en " + _nombreBackoffice() + "…";
+        acciones = "";
+      }else{
+        color = "#f87171";
+        titulo = "No pude ponerlo en " + _nombreBackoffice() + ". Lo vuelvo a intentar solo en unos minutos.";
+        acciones = '<button class="mini-btn blue" onclick="nodoWspPaginaAlBackoffice(this)" style="padding:9px">🔁 Intentar ahora</button>'
+                 + '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Cambiarlo</button>';
       }
     }else if(boInvalido){
       color = "#f87171";
@@ -356,17 +370,22 @@
     if(publicado){
       html += '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0">'
             + '<span style="color:#94a3b8">' + (_backendElegido() === "adminonline" ? "Guardado en NODO" : "Lo que ve el jugador") + '</span>'
-            + '<span style="color:' + ((desacuerdo || boInvalido) ? "#f87171" : "#e2e8f0") + ';font-weight:700">' + _esc(publicado)
+            + '<span style="color:' + ((!mandaPagina && (desacuerdo || boInvalido)) ? "#f87171" : "#e2e8f0") + ';font-weight:700">' + _esc(publicado)
             + (d.linea_pagina ? ' <span style="color:#64748b;font-weight:400">· ' + _esc(d.linea_pagina.nombre || "") + '</span>' : '')
             + '</span></div>';
     }
-    if(BACKOFFICE_VERIFICADO && boNum){
+    if(BACKOFFICE_VERIFICADO && boNum && (!mandaPagina || !coincide)){
       html += '<div style="display:flex;justify-content:space-between;gap:10px;padding:4px 0">'
             + '<span style="color:#94a3b8">' + (_backendElegido() === "adminonline" ? "Lo que ve el jugador" : "En " + _nombreBackoffice()) + '</span>'
             + '<span style="color:' + (boInvalido ? "#f87171" : desacuerdo ? "#facc15" : coincide ? "#22c55e" : "#e2e8f0") + ';font-weight:700">' + _esc(_lindo(boNum))
             + (boInvalido ? ' <span style="font-weight:400">· formato inválido</span>'
               : coincide ? ' <span style="font-weight:400">· coincide</span>'
-              : desacuerdo ? ' <span style="font-weight:400">· distinto</span>' : '') + '</span></div>';
+              : desacuerdo ? ' <span style="font-weight:400">· ' + (mandaPagina ? 'se cambia por el de arriba' : 'distinto') + '</span>' : '') + '</span></div>';
+      if(mandaPagina && !SYNC_EN_CURSO && SYNC_FALLO && SYNC_FALLO.texto){
+        html += '<div class="small" style="color:#fca5a5;margin:4px 0">' + _esc(SYNC_FALLO.texto) + '</div>';
+      }
+    }
+    if(BACKOFFICE_VERIFICADO && boNum){
       if(BACKOFFICE.habilitado === false){
         html += '<div class="alert-box" style="background:#2a2416;color:#f0d99b;border-left:3px solid #c9a227;margin:8px 0">'
               + 'En el backoffice el contacto por WhatsApp está <b>apagado</b>: por más que el número esté bien, '
@@ -383,7 +402,7 @@
               + 'En ' + _nombreBackoffice() + ' el contacto por WhatsApp está apagado. Activá el permiso en ' + _pantallaWhatsapp() + '.</div>';
       }
     }
-    if(boInvalido){
+    if(boInvalido && !mandaPagina){
       html += '<div class="alert-box" style="background:#2a1717;color:#fecaca;border-left:3px solid #ef4444;margin:8px 0">'
             + _nombreBackoffice() + ' acepta hasta 10 dígitos en este campo. Corregilo antes de publicarlo.</div>';
     }
@@ -391,7 +410,8 @@
       html += '<div class="alert-box" style="background:#2a2416;color:#f0d99b;border-left:3px solid #c9a227;margin:8px 0">'
             + 'El número todavía no está verificado en ' + _nombreBackoffice() + '. No puedo decir que coincide ni que está activo.</div>';
     }
-    if(BACKOFFICE_VERIFICADO && BACKOFFICE && BACKOFFICE.puedeEditar){
+    // Con Drex y agentesbet.io no hay un número "del backoffice" aparte: se cambia el de la página.
+    if(!mandaPagina && BACKOFFICE_VERIFICADO && BACKOFFICE && BACKOFFICE.puedeEditar){
         if(acciones.indexOf("nodoWspEditarBackoffice") < 0) html += '<div style="margin-top:7px"><button class="mini-btn gray" onclick="nodoWspEditarBackoffice(this)" style="padding:7px 9px">'
             + (boNum ? '✏️ Cambiar número en ' + _nombreBackoffice() : '✏️ Cargar número en ' + _nombreBackoffice()) + '</button></div>';
     }
@@ -512,7 +532,21 @@
 
   // Escribe el número en el backoffice (navega, espera que se dibuje, escribe y guarda) y deja todo al
   // día. Si la página no dio aviso de éxito, se vuelve a leer la pantalla para estar seguros. true = quedó.
+  // Lleva el número de la página al backoffice (Drex y agentesbet.io: manda la página). Mientras tanto la
+  // pantalla dice "poniéndolo"; si no sale, dice por qué y queda "Intentar ahora".
+  async function _paginaAlBackoffice(digitos){
+    SYNC_EN_CURSO = true; ULTIMO_ERROR_GUARDADO = "";
+    try{ pintar(); }catch(_e){}
+    var quedo = false;
+    try{ quedo = await _guardarEnBackoffice(digitos); }
+    finally{ SYNC_EN_CURSO = false; }
+    SYNC_FALLO = quedo ? null : { numero: digitos, at: Date.now(), texto: ULTIMO_ERROR_GUARDADO };
+    try{ pintar(); }catch(_e){}
+    return quedo;
+  }
+
   async function _guardarEnBackoffice(digitos){
+    var _avisar = function(txt){ ULTIMO_ERROR_GUARDADO = /^Listo|ya estaba/.test(txt) ? "" : txt; _avisarToast(txt); };
     try{
       var r = await _pedirEdicionBackoffice(digitos);
       if(!r || r.ok !== true){
@@ -575,7 +609,7 @@
       if(!window.ctrlElectron || !window.ctrlElectron.drexAutomation){ _avisar("No puedo abrir " + _nombreBackoffice() + " desde esta pantalla."); return; }
       var digitos = _nacional(ESTADO && ESTADO.numero_pagina);
       if(digitos.length < 7){ _avisar("No hay un número publicado para poner en " + _nombreBackoffice() + "."); return; }
-      await _guardarEnBackoffice(digitos);
+      await _paginaAlBackoffice(digitos);
     });
     return tarea.finally(function(){ if(boton) boton.disabled = false; });
   };

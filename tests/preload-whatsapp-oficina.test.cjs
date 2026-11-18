@@ -105,7 +105,7 @@ test('main lleva la ventana a la pantalla del WhatsApp, y solo cuando se lo pide
 test('con Drex y agentesbet.io, si el backoffice tiene otro número se le pone el de la página solo', () => {
   const modulo = fs.readFileSync(path.join(ROOT, 'renderer', 'extensions', 'oficina-whatsapp.js'), 'utf8');
   const rev = modulo.slice(modulo.indexOf('async function revisar()'), modulo.indexOf('function pintarTilde()'));
-  assert.match(rev, /_backendElegido\(\) !== "adminonline"[\s\S]{0,200}BACKOFFICE_VERIFICADO[\s\S]{0,500}_guardarEnBackoffice\(objetivo\)/,
+  assert.match(rev, /_backendElegido\(\) !== "adminonline"[\s\S]{0,200}BACKOFFICE_VERIFICADO[\s\S]{0,500}_paginaAlBackoffice\(objetivo\)/,
     'Juan, 18/11: "si es distinto al marcado cambialo"');
   assert.match(rev, /15 \* 60000/, 'si falla, no insiste con el mismo número en cada vuelta');
 });

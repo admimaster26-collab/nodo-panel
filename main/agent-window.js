@@ -23,7 +23,7 @@ function createAgentWindowService({ BrowserWindow, icon, partition, backends, he
   const NIVELES = ['debug', 'info', 'warn', 'error'];
   function anotarConsola(nivel, mensaje, fuente) {
     try {
-      const texto = String(mensaje == null ? '' : mensaje).replace(/s+/g, ' ').trim().slice(0, 300);
+      const texto = String(mensaje == null ? '' : mensaje).replace(/\s+/g, ' ').trim().slice(0, 300);
       if (!texto) return;
       consola.push({ t: new Date().toISOString(), nivel: nivel, msg: texto, fuente: String(fuente || '').slice(0, 120) });
       if (consola.length > CONSOLA_TOPE) consola.splice(0, consola.length - CONSOLA_TOPE);

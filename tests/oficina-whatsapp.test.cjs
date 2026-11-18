@@ -245,8 +245,12 @@ test('si el backoffice no toma el número, no se insiste en cada vuelta y queda 
   await m.win.NodoWsp.revisar();
   await m.win.NodoWsp.revisar();
   assert.equal(m.alBackoffice.filter(x => x === 'guardarWhatsappOficina').length, 1, 'una vez, no en cada revisión');
-  assert.match(m.caja.innerHTML, /no es el que ten\u00e9s puesto en el backoffice/);
-  assert.match(m.caja.innerHTML, /Poner el de la página en/);
+  assert.doesNotMatch(m.caja.innerHTML, /no es el que ten\u00e9s puesto en el backoffice/);
+  // Una sola cosa en pantalla: que no salió, por qué, e "Intentar ahora". Nada de elegir entre dos números (18/11).
+  assert.match(m.caja.innerHTML, /No pude ponerlo en/);
+  assert.match(m.caja.innerHTML, /Intentar ahora/);
+  assert.match(m.caja.innerHTML, /No pude guardar el número/, 'dice por qué no salió');
+  assert.doesNotMatch(m.caja.innerHTML, /Poner el del backoffice|Cambiar número en/);
 });
 
 test('un "ok" del backoffice con otro número no cuenta como guardado', async () => {
