@@ -1,5 +1,8 @@
 /* ══════════════════════════════════════════════════════════════════════════════════════════
-   COTEJO DE CARGAS · Agentes ↔ NODO ↔ Chunior (Juan, 18/11)
+   COTEJO DE CARGAS Y RETIROS · Agentes ↔ NODO ↔ Chunior (Juan, 18/11)
+   Los retiros van igual que las cargas (Juan: "fijate también los retiros"): en Agentes son el mismo
+   "Deposito de un jugador" pero con signo menos; en NODO, filas RETIRO; en Chunior, el monto en negativo.
+   Una carga nunca se ata con un retiro, aunque sean del mismo usuario y por el mismo monto.
    Cada tanto (y cuando el operador aprieta Recargar en el historial) NODO lee las cargas que
    figuran en Agentes ("Reporte de carga y descarga"), las compara con su historial y con Chunior
    y deja todo atado. Criterio de Juan: simple — mismo usuario, mismo monto, mismo horario. Los
@@ -34,6 +37,16 @@
   function _monto(n){ return Math.round(Math.abs(Number(n) || 0)); }
   function _etiqueta(mov){ return "Agentes " + mov.fecha; }
   function _ms(h){ return Date.parse(h && h.created_at); }
+  // CARGA / RETIRO de un movimiento de Agentes (null = no es con un jugador, o no terminó).
+  function _tipoMov(m){
+    if(!m || !/DONE/i.test(m.estado || "") || !Number.isFinite(m.ms) || !Number(m.cantidad)) return null;
+    if(/retiro de un jugador/i.test(m.tipo || "")) return "RETIRO";
+    if(!/dep[oó]sito de un jugador/i.test(m.tipo || "")) return null;
+    return Number(m.cantidad) > 0 ? "CARGA" : "RETIRO";
+  }
+  function _tipoFila(h){ return String((h && h.tipo) || "CARGA").toUpperCase(); }
+  // Mismo usuario, mismo monto y misma clase de operación.
+  function _igual(m, h){ return _norm(h.usuario) === _norm(m.alias) && _monto(h.monto) === _monto(m.cantidad) && _tipoFila(h) === m._tipo; }
 
   // ── Núcleo (sin pantalla ni red): empareja Agentes con el historial de NODO ────────────────
   // movs:  [{ fecha, ms, tipo, estado, cantidad, alias }] tal cual los devuelve leerMovimientosCredito.
@@ -43,18 +56,14 @@
   function emparejar(movs, filas, opts){
     opts = opts || {};
     var ahora = Number(opts.ahora) || Date.now();
-    var cargas = (movs || []).filter(function(m){
-      return /dep[oó]sito de un jugador/i.test(m.tipo || "") && /DONE/i.test(m.estado || "")
-        && Number(m.cantidad) > 0 && Number.isFinite(m.ms);
-    });
+    var cargas = (movs || []).filter(function(m){ m._tipo = _tipoMov(m); return !!m._tipo; });
     var libres = (filas || []).filter(function(h){ return h && String(h.estado || "OK") === "OK"; }).slice();
     var usadas = {};
     var pares = [];
     // 1) Las filas que ya llevan la fecha del movimiento en las notas: esas son, sin discusión.
     cargas.forEach(function(m){
       var et = _etiqueta(m);
-      var f = libres.find(function(h){ return !usadas[h.id] && String(h.notas || "").indexOf(et) >= 0
-        && _norm(h.usuario) === _norm(m.alias) && _monto(h.monto) === _monto(m.cantidad); });
+      var f = libres.find(function(h){ return !usadas[h.id] && String(h.notas || "").indexOf(et) >= 0 && _igual(m, h); });
       if(f){ usadas[f.id] = true; m._fila = f; }
     });
     // 2) El resto, por usuario + monto + horario. Si hay más de una candidata, no se elige.
@@ -62,8 +71,7 @@
       if(m._fila) return;
       var cand = libres.filter(function(h){
         return !usadas[h.id] && !/Agentes \d{2}\/\d{2}\/\d{4}/.test(String(h.notas || ""))
-          && _norm(h.usuario) === _norm(m.alias) && _monto(h.monto) === _monto(m.cantidad)
-          && Math.abs(_ms(h) - m.ms) <= VENTANA_NODO_MS;
+          && _igual(m, h) && Math.abs(_ms(h) - m.ms) <= VENTANA_NODO_MS;
       });
       if(cand.length > 1){ m._ambiguo = cand; return; }
       if(cand.length === 1){ usadas[cand[0].id] = true; m._fila = cand[0]; }
@@ -71,8 +79,7 @@
     // Reloj corrido: si el reloj de Agentes y el de la PC difieren más que la ventana, la misma carga
     // quedaría como "sin NODO" y como "sin Agentes" a la vez, y se anotaría dos veces en Chunior. Por eso,
     // si queda suelta una fila igual (usuario y monto) a menos de una hora, no se decide nada.
-    var parecida = function(m, h){ return _norm(h.usuario) === _norm(m.alias) && _monto(h.monto) === _monto(m.cantidad)
-      && Math.abs(_ms(h) - m.ms) <= DUDA_MS; };
+    var parecida = function(m, h){ return _igual(m, h) && Math.abs(_ms(h) - m.ms) <= DUDA_MS; };
     cargas.forEach(function(m){
       if(m._fila || m._ambiguo) return;
       var sueltas = libres.filter(function(h){ return !usadas[h.id] && parecida(m, h); });
@@ -83,7 +90,7 @@
       if(m._ambiguo) caso = "ambiguo";
       else if(!f) caso = "sin_nodo";
       else caso = f.chunior_movimiento_id ? "enlazada" : "nodo_sin_chunior";
-      pares.push({ mov: m, fila: f, caso: caso, candidatas: m._ambiguo || null });
+      pares.push({ mov: m, tipo: m._tipo, fila: f, caso: caso, candidatas: m._ambiguo || null });
       delete m._fila; delete m._ambiguo;
     });
     // 3) Filas de NODO sin carga en Agentes: sólo si la lectura cubre su horario y ya pasó la gracia.
@@ -115,6 +122,13 @@
     catch(_e){ return "NODO"; }
   }
   function _toast(t, c){ try{ if(window.toast) window.toast(t, c); }catch(_e){} }
+  function _signo(tipo){ return tipo === "RETIRO" ? -1 : 1; }
+  function _verificarChunior(usuario, monto, tipo, tMs, filas){
+    return _chu(function(){ return verificarMovimientoEnChunior(usuario, monto, tMs, VENTANA_CHUNIOR_MS, _yaLigadosChunior(filas), _signo(tipo)); });
+  }
+  function _anotarEnChunior(uid, monto, usuario, tipo){
+    return tipo === "RETIRO" ? registrarRetiroEnChunior(uid, monto, usuario) : registrarCargaEnChunior(uid, monto, usuario);
+  }
   function _chu(fn){
     try{ if(typeof _chuSerializar === "function") return _chuSerializar(fn); }catch(_e){}
     return fn();
@@ -127,8 +141,8 @@
   }
   async function _leerNodo(desdeMs){
     var r = await supabaseClient.from("historial_ops")
-      .select("id,created_at,usuario,monto,estado,origen,notas,solicitud_id,chunior_movimiento_id,billetera_id")
-      .eq("tipo", "CARGA").eq("pc_codigo", _pc())
+      .select("id,created_at,usuario,monto,tipo,estado,origen,notas,solicitud_id,chunior_movimiento_id,billetera_id")
+      .in("tipo", ["CARGA", "RETIRO"]).eq("pc_codigo", _pc())
       .gte("created_at", new Date(desdeMs).toISOString())
       .order("created_at", { ascending: true }).limit(400);
     if(r.error) throw r.error;
@@ -152,17 +166,17 @@
     return (filas || []).map(function(h){ return h.chunior_movimiento_id; }).filter(Boolean).map(String);
   }
 
-  async function _sinNodo(mov, filas, resumen){
+  async function _sinNodo(mov, tipo, filas, resumen){
     var usuario = mov.alias, monto = _monto(mov.cantidad);
-    var v = await _chu(function(){ return verificarMovimientoEnChunior(usuario, monto, mov.ms, VENTANA_CHUNIOR_MS, _yaLigadosChunior(filas)); });
+    var v = await _verificarChunior(usuario, monto, tipo, mov.ms, filas);
     if(!v || v.ok === false){ resumen.dudas++; return; }                  // "no pude mirar" no es "no está"
     if(v.vinculadoAOtro){ resumen.dudas++; return; }                       // hay una, pero ya es de otra fila
     var cuando = new Date(mov.ms).toISOString();
     if(v.existe || v.encontrado){
       // Agentes + Chunior: se enlaza y se dibuja. No hace falta avisar a nadie.
-      await registrarEnHistorial({ usuario: usuario, tipo: "CARGA", monto: monto, origen: "COTEJO", estado: "OK",
+      await registrarEnHistorial({ usuario: usuario, tipo: tipo, monto: monto, origen: "COTEJO", estado: "OK",
         chunior_movimiento_id: v.movimientoId ? String(v.movimientoId) : null, created_at: cuando,
-        notas: "Hecha directo en Agentes, ya anotada en Chunior · " + _etiqueta(mov) });
+        notas: (tipo === "RETIRO" ? "Hecho directo en Agentes, ya anotado en Chunior · " : "Hecha directo en Agentes, ya anotada en Chunior · ") + _etiqueta(mov) });
       resumen.enlazadas++;
       return;
     }
@@ -170,19 +184,19 @@
     var bil = (typeof getBilleraLanding === "function") ? getBilleraLanding() : null;
     var movChu = null, nota;
     if(bil && bil.CHUNIOR_UID){
-      var r = await registrarCargaEnChunior(bil.CHUNIOR_UID, monto, usuario);
+      var r = await _anotarEnChunior(bil.CHUNIOR_UID, monto, usuario, tipo);
       if(r && r.ok && r.movimientoId) movChu = String(r.movimientoId);
     }
     nota = MARCA_FUERA + ": no se hizo desde NODO ni estaba anotada · "
       + (movChu ? "NODO la anotó en Chunior (" + (bil.NOMBRE_VISIBLE || "billetera en uso") + ")" : "NO se pudo anotar en Chunior")
       + " · " + _etiqueta(mov);
-    await registrarEnHistorial({ usuario: usuario, tipo: "CARGA", monto: monto, origen: "COTEJO", estado: "OK",
+    await registrarEnHistorial({ usuario: usuario, tipo: tipo, monto: monto, origen: "COTEJO", estado: "OK",
       billetera_id: bil ? bil.ID_BILLETERA : null, billetera_nombre: bil ? bil.NOMBRE_VISIBLE : null,
       chunior_movimiento_id: movChu, created_at: cuando, notas: nota });
     resumen.fuera++;
   }
 
-  async function _nodoSinChunior(mov, fila, filas, resumen){
+  async function _nodoSinChunior(mov, tipo, fila, filas, resumen){
     var usuario = fila.usuario || mov.alias, monto = _monto(fila.monto);
     // La billetera de esa carga: si no usa Chunior, no hay nada que subir (y no se le mueve la ventana).
     var bil = (typeof billeteras !== "undefined" && fila.billetera_id)
@@ -194,14 +208,14 @@
       var pend = (typeof _chuPendAll === "function") ? _chuPendAll() : [];
       if(pend.some(function(p){ return _norm(p.usuario) === _norm(usuario) && _monto(p.monto) === monto; })){ resumen.dudas++; return; }
     }catch(_e){}
-    var v = await _chu(function(){ return verificarMovimientoEnChunior(usuario, monto, _ms(fila), VENTANA_CHUNIOR_MS, _yaLigadosChunior(filas)); });
+    var v = await _verificarChunior(usuario, monto, tipo, _ms(fila), filas);
     if(!v || v.ok === false || v.vinculadoAOtro){ resumen.dudas++; return; }
     if(v.existe || v.encontrado){
       await supabaseClient.from("historial_ops").update({ chunior_movimiento_id: String(v.movimientoId) }).eq("id", fila.id);
       resumen.enlazadas++;
       return;
     }
-    var r = await registrarCargaEnChunior(bil.CHUNIOR_UID, monto, usuario);
+    var r = await _anotarEnChunior(bil.CHUNIOR_UID, monto, usuario, tipo);
     if(r && r.ok && r.movimientoId){
       await supabaseClient.from("historial_ops").update({ chunior_movimiento_id: String(r.movimientoId) }).eq("id", fila.id);
       resumen.subidas++;
@@ -237,23 +251,24 @@
         if(p.caso !== "enlazada" && _enDudaReciente(p.mov)) continue;
         var antes = resumen.dudas;
         try{
-          if(p.caso === "sin_nodo") await _sinNodo(p.mov, filas, resumen);
-          else if(p.caso === "nodo_sin_chunior") await _nodoSinChunior(p.mov, p.fila, filas, resumen);
+          if(p.caso === "sin_nodo") await _sinNodo(p.mov, p.tipo, filas, resumen);
+          else if(p.caso === "nodo_sin_chunior") await _nodoSinChunior(p.mov, p.tipo, p.fila, filas, resumen);
           else if(p.caso === "ambiguo") resumen.dudas++;
         }catch(e){ resumen.dudas++; console.warn("[cotejo-cargas]", p.caso, e && e.message); }
         if(resumen.dudas > antes) _anotarDuda(p.mov);
       }
       for(var j = 0; j < r.sobrantes.length; j++){
         var h = r.sobrantes[j];
-        var txt = MARCA_SIN_AGENTES + ": " + (h.chunior_movimiento_id ? "anotada en Chunior" : "NODO la marcó hecha")
-          + " pero en Agentes no aparece esta carga";
+        var esRetiro = _tipoFila(h) === "RETIRO";
+        var txt = MARCA_SIN_AGENTES + ": " + (h.chunior_movimiento_id ? "anotado en Chunior" : "NODO lo marcó hecho")
+          + " pero en Agentes no aparece " + (esRetiro ? "este retiro" : "esta carga");
         if(await _anotarNotas(h, txt)) resumen.sinAgentes++;
       }
       if(resumen.enlazadas || resumen.subidas || resumen.fuera || resumen.sinAgentes){
         try{ if(typeof cargarHistorial === "function") await cargarHistorial(true); }catch(_e){}
       }
-      if(resumen.fuera) _toast("⚠️ Hay " + resumen.fuera + " carga(s) hechas fuera de NODO. Revisalas en el historial y avisale a tu superior.", "red");
-      if(resumen.sinAgentes) _toast("⚠️ Hay " + resumen.sinAgentes + " carga(s) anotadas que no aparecen en Agentes. Revisalas en el historial.", "red");
+      if(resumen.fuera) _toast("⚠️ Hay " + resumen.fuera + " carga(s) o retiro(s) hechos fuera de NODO. Revisalos en el historial y avisale a tu superior.", "red");
+      if(resumen.sinAgentes) _toast("⚠️ Hay " + resumen.sinAgentes + " movimiento(s) anotados que no aparecen en Agentes. Revisalos en el historial.", "red");
       await pintarAvisos();
       return { ok: true, resumen: resumen };
     }catch(e){
@@ -265,8 +280,8 @@
   // ── Avisos para el operador: salen del historial, así los ve cualquier PC de la oficina ────
   async function _leerAvisos(){
     var r = await supabaseClient.from("historial_ops")
-      .select("id,created_at,usuario,monto,notas,estado")
-      .eq("tipo", "CARGA").eq("pc_codigo", _pc())
+      .select("id,created_at,usuario,monto,tipo,notas,estado")
+      .in("tipo", ["CARGA", "RETIRO"]).eq("pc_codigo", _pc())
       .gte("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
       .or("notas.ilike.*" + MARCA_FUERA + "*,notas.ilike.*" + MARCA_SIN_AGENTES + "*")
       .order("created_at", { ascending: false }).limit(30);
@@ -290,9 +305,10 @@
     box.innerHTML = lista.map(function(h){
       var fuera = String(h.notas || "").indexOf(MARCA_FUERA) >= 0;
       var hora = new Date(h.created_at).toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      var retiro = _tipoFila(h) === "RETIRO";
       var titulo = fuera
-        ? "Carga hecha fuera de NODO: no se hizo desde NODO ni estaba anotada. Avisale a tu superior."
-        : "Esta carga figura anotada, pero en Agentes no aparece.";
+        ? (retiro ? "Retiro hecho fuera de NODO: no se hizo desde NODO ni estaba anotado." : "Carga hecha fuera de NODO: no se hizo desde NODO ni estaba anotada.") + " Avisale a tu superior."
+        : (retiro ? "Este retiro figura anotado, pero en Agentes no aparece." : "Esta carga figura anotada, pero en Agentes no aparece.");
       return '<div class="alert-box" style="background:#2a1717;color:#fecaca;border-left:3px solid #ef4444;margin:6px 0;display:flex;gap:10px;align-items:center;justify-content:space-between">'
         + '<div><b>' + _esc(titulo) + '</b><br><span class="small">' + _esc(h.usuario) + ' · $' + Number(h.monto || 0).toLocaleString("es-AR") + ' · ' + _esc(hora) + '</span></div>'
         + '<label style="white-space:nowrap;cursor:pointer"><input type="checkbox" onchange="nodoCotejoReconocer(\'' + _esc(h.id) + '\', this)"> Lo vi</label>'

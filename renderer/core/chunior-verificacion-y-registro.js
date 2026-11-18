@@ -21,7 +21,9 @@ function _chuVariantesMonto(monto){
 //   - monto por VARIANTES de formato (+ respaldo numérico); usuario EXACTO en notas (+ respaldo por
 //     texto de fila si la fila no trae notas).
 // Devuelve { existe, movimientoId, creacion?, vinculadoAOtro? } (existe/movimientoId = compat con el caller).
-async function verificarMovimientoEnChunior(usuario, monto, tCargaMs, ventanaMs, excluirIds){
+// signo (opcional, cotejo 18/11): 1 = carga, -1 = retiro. Chunior anota el retiro con monto negativo; si en la
+// lista hay montos con "-", una carga no se ata con un retiro ni al revés. Sin signo, como siempre.
+async function verificarMovimientoEnChunior(usuario, monto, tCargaMs, ventanaMs, excluirIds, signo){
   window.NodoSalud?.begin('AUTOMATISMOS')?.record('DATA','OK','CHUNIOR_VERIFY_MOV');
   // "No pude verificar" NO es lo mismo que "no está": si el que llama no puede distinguirlo,
   // vuelve a anotar un movimiento que ya existe y duplica la plata (D-107). Por eso va `ok`.
@@ -70,6 +72,8 @@ async function verificarMovimientoEnChunior(usuario, monto, tCargaMs, ventanaMs,
 
     // Candidatos que coinciden en usuario + monto (+ horario si aplica).
     const candidatos = [];
+    const _neg = function(r){ return /-\s*\$?\s*\d|\$\s*-/.test(String(r.montoTxt||'')); };
+    const _hayNegativos = res.some(_neg);
     for(const r of res){
       const notasNorm = String(r.notas||'').trim().toLowerCase();
       const txtLower  = String(r.texto||'').toLowerCase();
@@ -85,6 +89,8 @@ async function verificarMovimientoEnChunior(usuario, monto, tCargaMs, ventanaMs,
         montoOk = !isNaN(mNum) && Math.abs(mNum - montoAbs) < 1;
       }
       if(!montoOk) continue;
+      if(signo > 0 && _neg(r)) continue;                       // una carga nunca es un monto negativo
+      if(signo < 0 && _hayNegativos && !_neg(r)) continue;     // retiro: si Chunior muestra el signo, tiene que ser negativo
       const tFila = _chuParsearFechaCreacion(r.creacion);
       if(filtraTiempo){ if(tFila === null || Math.abs(tFila - tRef) > ventana) continue; } // horario NO coincide
       candidatos.push({ id: r.id||null, creacion: r.creacion, dt: (tFila!==null ? Math.abs(tFila - tRef) : Infinity) });

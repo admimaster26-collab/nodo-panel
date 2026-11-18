@@ -33,14 +33,14 @@ test('sólo en Agentes: sin NODO', () => {
   assert.equal(r.pares[0].caso, 'sin_nodo');
 });
 
-test('los retiros, los movimientos con agentes y lo que no está DONE no son cargas', () => {
+test('el signo menos es retiro; los movimientos con agentes y lo que no está DONE no se cotejan', () => {
   const r = emparejar([
     mov('18/11/2026 13:33:38', 'pruebaxx', -5000),                         // signo menos: retiro
     mov('18/11/2026 04:55:16', 'donplata', 180000, 'Pérdida de tokens'),
     mov('16/11/2026 08:43:51', 'xpc02', 520, 'Descargaste saldo a un Agente'),
     { ...mov('18/11/2026 13:00:00', 'pruebaxx', 10000), estado: 'PENDING' }
   ], []);
-  assert.equal(r.pares.length, 0);
+  assert.equal(r.pares.map(p => p.tipo + ' ' + p.mov.alias).join(','), 'RETIRO pruebaxx');
 });
 
 test('dos cargas iguales en NODO para un movimiento: no se elige, queda en duda', () => {
@@ -129,4 +129,37 @@ test('el botón Recargar del historial coteja después de dibujar', () => {
     'primero se dibuja el historial, después se coteja');
   // Agentes + Chunior no avisa: su nota no puede llevar la marca de "fuera de NODO".
   assert.doesNotMatch(fuente, /notas: "[^"]*fuera de NODO[^"]*ya anotada/);
+});
+
+// ── Retiros (Juan, 18/11: "fijate también los retiros") ────────────────────────────────────
+test('un retiro en Agentes (monto con signo menos) se ata con un RETIRO de NODO, nunca con una carga', () => {
+  const r = emparejar([mov('18/11/2026 17:39:11', 'pruebaxx', -15), mov('18/11/2026 17:37:01', 'pruebaxx', 15)], [
+    fila(1, '18/11/2026 17:37:05', 'pruebaxx', 15, { tipo: 'CARGA', chunior_movimiento_id: '10183925' }),
+    fila(2, '18/11/2026 17:39:20', 'pruebaxx', 15, { tipo: 'RETIRO' })
+  ]);
+  const carga = r.pares.find(p => p.tipo === 'CARGA'), retiro = r.pares.find(p => p.tipo === 'RETIRO');
+  assert.equal(carga.fila.id, 1);
+  assert.equal(carga.caso, 'enlazada');
+  assert.equal(retiro.fila.id, 2);
+  assert.equal(retiro.caso, 'nodo_sin_chunior');
+});
+
+test('un retiro solo en Agentes queda como retiro sin NODO, y la carga igual de NODO no lo tapa', () => {
+  const r = emparejar([mov('18/11/2026 17:39:11', 'pruebaxx', -15)],
+    [fila(1, '18/11/2026 17:39:00', 'pruebaxx', 15, { tipo: 'CARGA', chunior_movimiento_id: '1' })]);
+  assert.equal(r.pares[0].tipo, 'RETIRO');
+  assert.equal(r.pares[0].caso, 'sin_nodo');
+});
+
+test('el módulo lee y avisa cargas y retiros, y a Chunior le pasa el signo', () => {
+  assert.match(fuente, /\.in\("tipo", \["CARGA", "RETIRO"\]\)/);
+  assert.match(fuente, /registrarRetiroEnChunior\(uid, monto, usuario\)/);
+  assert.match(fuente, /verificarMovimientoEnChunior\(usuario, monto, tMs, VENTANA_CHUNIOR_MS, _yaLigadosChunior\(filas\), _signo\(tipo\)\)/);
+  const chu = fs.readFileSync(path.join(ROOT, 'renderer', 'core', 'chunior-verificacion-y-registro.js'), 'utf8');
+  const neg = new Function('return ' + chu.match(/const _neg = (function\(r\)\{[^\n]*\});/)[1])();
+  assert.equal(neg({ montoTxt: '$ 12,00' }), false);
+  assert.equal(neg({ montoTxt: '$ -15,00' }), true);
+  assert.equal(neg({ montoTxt: '-$ 15,00' }), true);
+  assert.equal(neg({ montoTxt: '$ 1.500,00' }), false);
+  assert.match(chu, /if\(signo > 0 && _neg\(r\)\) continue;/);
 });
