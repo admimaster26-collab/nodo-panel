@@ -783,10 +783,18 @@ async function crearUsuario(alias, _password, options = {}) {
   const aliasInput = campos[0], passInput = campos[1];
   if (!aliasInput) throw new Error('No apareció el campo Alias.');
   if (!(await setFieldAndVerify(aliasInput, String(alias).trim(), 5))) throw new Error('No se pudo escribir el alias.');
-  // La contraseña viene autogenerada: se pone la que eligió el operador o, si no eligió, la estándar.
-  const clave = claveParaAgente(_password);
+  // A veces la página ya trae una contraseña al azar en el campo. Si el operador no eligió otra (vacía o la
+  // estándar que NODO pone de entrada), se usa ésa en vez de pisarla (Juan, 18/11). Si eligió una, se escribe.
+  const elegida = String(_password == null ? '' : _password).trim();
+  let propuesta = '';
+  if (passInput && (!elegida || elegida === CLAVE_ESTANDAR)) {
+    await _esperarQue(() => String(passInput.value || '').trim().length >= CLAVE_MINIMA, 1200);
+    const v = String(passInput.value || '').trim();
+    if (v.length >= CLAVE_MINIMA && /^[A-Za-z0-9]+$/.test(v)) propuesta = v;
+  }
+  const clave = propuesta || claveParaAgente(_password);
   if (clave.length < CLAVE_MINIMA) { if (findActiveModal()) await cerrarModalActual(); return { ok: false, alias, error: 'clave_corta', message: 'La clave tiene que tener al menos ' + CLAVE_MINIMA + ' letras o números.' }; }
-  if (passInput) await setFieldAndVerify(passInput, clave, 5);
+  if (passInput && !propuesta) await setFieldAndVerify(passInput, clave, 5);
 
   const guardar = botonConfirmar(modal);
   if (!guardar) throw new Error('No se encontró el botón "Crear jugador".');
@@ -797,17 +805,38 @@ async function crearUsuario(alias, _password, options = {}) {
   // página no da por notivue/sonner y después se buscaba al jugador (hasta 14 s más): con el cartel
   // "Usuario creado" ya a la vista, NODO seguía en "Creando…" medio minuto (Juan, 18/11).
   const aliasMin = String(alias).trim().toLowerCase();
-  const cartelCreado = () => {
-    const d = findActiveModal();
-    const t = d ? normalizeText(d.innerText || d.textContent) : '';
-    return (/usuario creado/i.test(t) && t.toLowerCase().includes(aliasMin)) ? d : null;
-  };
-  let toast = null, creadoEn = null, avisoTexto = false;
-  const limite = now() + 12000;
+  // Con dos diálogos abiertos (el panel de creación y el de encima) findActiveModal devuelve el primero:
+  // se miran todos.
+  const textoDe = d => normalizeText(d.innerText || d.textContent);
+  const dialogos = () => visibleElements('[role="dialog"]');
+  const cartelCreado = () => dialogos().find(d => {
+    const t = textoDe(d);
+    return /usuario creado/i.test(t) && t.toLowerCase().includes(aliasMin);
+  }) || null;
+  // Paso del medio (18/11): "Creación de jugador · Verifique la información antes de finalizar", con el
+  // alias, la contraseña y Aceptar. NODO no lo apretaba y quedaba clavado en "Creando…" (Juan, 18/11).
+  // La contraseña que muestra es la que va a quedar: se toma de ahí.
+  const cartelVerificar = () => dialogos().find(d => /verifique la informaci[oó]n/i.test(textoDe(d)) && !/usuario creado/i.test(textoDe(d))) || null;
+  let toast = null, creadoEn = null, avisoTexto = false, aceptado = false, claveVerificada = '';
+  const limite = now() + 15000;
   while (now() < limite) {
+    // "Balance actualizado exitosamente" también es un aviso verde y aparece solo: no dice nada de la creación.
+    if (capt.resultado && capt.resultado.tipo === 'ok' && !/cread|usuario|jugador/i.test(capt.resultado.texto || '')) capt.resultado = null;
     if (capt.resultado) { toast = capt.resultado; break; }
     creadoEn = cartelCreado();
     if (creadoEn) break;
+    if (!aceptado) {
+      const v = cartelVerificar();
+      const aceptar = v && findByText(/^aceptar$/i, 'button', v);
+      if (aceptar) {
+        const m = textoDe(v).match(/contrase[ñn]a:?\s*([A-Za-z0-9]+)/i);
+        if (m) claveVerificada = m[1];
+        clickElement(aceptar);
+        aceptado = true;
+        await delay(250);
+        continue;
+      }
+    }
     if (/user_create_successfully/i.test((document.body && document.body.innerText) || '')) { avisoTexto = true; break; }
     await delay(150);
   }
@@ -815,26 +844,28 @@ async function crearUsuario(alias, _password, options = {}) {
 
   if (toast && toast.tipo === 'error') {
     if (findActiveModal()) await cerrarModalActual();
+    if (findActiveModal()) await cerrarModalActual();
     return toast.dup
       ? { ok: false, alias, error: 'duplicado', message: 'El alias ya existe en adminonline (' + toast.texto + ').' }
       : { ok: false, alias, error: 'rechazado', message: 'adminonline rechazó la creación: ' + toast.texto };
   }
   if (creadoEn) {
     // La clave que muestra el cartel es la que quedó de verdad.
-    const m = normalizeText(creadoEn.innerText || creadoEn.textContent).match(/contrase[ñn]a:?\s*(\S+)/i);
-    const claveReal = m && m[1] && !/^moneda/i.test(m[1]) ? m[1] : clave;
-    await cerrarModalActual();
-    if (findActiveModal()) await cerrarModalActual();
+    const m = textoDe(creadoEn).match(/contrase[ñn]a:?\s*([A-Za-z0-9]+)/i);
+    const claveReal = m && m[1] && !/^moneda/i.test(m[1]) ? m[1] : (claveVerificada || clave);
+    // "Usuario creado" se cierra con su propio Cerrar; después, lo que haya quedado abierto.
+    const cerrarlo = findByText(/^cerrar$/i, 'button', creadoEn);
+    if (cerrarlo) { clickElement(cerrarlo); await delay(300); } else await cerrarModalActual();
+    for (let i = 0; i < 2 && findActiveModal(); i++) await cerrarModalActual();
     return { ok: true, alias, password: claveReal, message: 'Jugador creado (cartel "Usuario creado").' };
   }
-  if (findActiveModal()) await cerrarModalActual();
-  if (findActiveModal()) await cerrarModalActual();
-  if ((toast && toast.tipo === 'ok') || avisoTexto) return { ok: true, alias, password: clave, message: 'Jugador creado correctamente.' };
+  for (let i = 0; i < 3 && findActiveModal(); i++) await cerrarModalActual();
+  if ((toast && toast.tipo === 'ok') || avisoTexto) return { ok: true, alias, password: claveVerificada || clave, message: 'Jugador creado correctamente.' };
   // Sin aviso concluyente: se VERIFICA buscando el alias (si figura, la creación fue correcta).
   try {
     await ejecutarBusqueda(String(alias).trim(), 8000);
     const fila = await waitFor(() => buscarFilaPorAlias(String(alias).trim()), 6000).catch(() => null);
-    if (fila) { _currentUser = aliasDeFila(fila); return { ok: true, alias, password: clave, message: 'Jugador creado (verificado por búsqueda).' }; }
+    if (fila) { _currentUser = aliasDeFila(fila); return { ok: true, alias, password: claveVerificada || clave, message: 'Jugador creado (verificado por búsqueda).' }; }
   } catch (_e) {}
   return { ok: false, alias, error: 'sin_confirmacion', message: 'No se pudo confirmar la creación. Verificá en adminonline antes de cargar.' };
 }
