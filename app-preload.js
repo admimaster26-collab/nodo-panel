@@ -27,6 +27,11 @@ contextBridge.exposeInMainWorld('ctrlElectron', {
   leerConsolaAgentes: () => ipcRenderer.invoke('drex:consola'),
   // NODO en Discord: el panel arma los dos renglones y main los publica.
   discordPresencia: (estado) => ipcRenderer.invoke('nodo:discord', estado),
+  // 18/11: la ventana de Agentes avisa apenas aparece "session is invalid" (ver main.js).
+  onSesionAgentesCaida: (cb) => {
+    if (typeof cb !== 'function') return;
+    ipcRenderer.on('drex:sesion-caida', (_e, datos) => { try { cb(datos || {}); } catch (_) {} });
+  },
   drexAutomation: (method, ...args) => {
     if (!ALLOWED_AUTOMATION_METHODS.has(method)) {
       return Promise.reject(new Error(`Método no permitido: ${method}`));

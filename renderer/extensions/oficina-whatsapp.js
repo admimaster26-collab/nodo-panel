@@ -291,7 +291,9 @@
     }else if(desacuerdo){
       color = "#f87171";
       titulo = "El número de la página no es el que tenés puesto en el backoffice.";
+      // Las dos direcciones: traer el del backoffice a la página, o llevar el de la página al backoffice.
       acciones = '<button class="mini-btn blue" onclick="nodoWspUsarBackoffice()" style="padding:9px">⬇️ Poner el del backoffice</button>'
+               + '<button class="mini-btn blue" onclick="nodoWspPaginaAlBackoffice(this)" style="padding:9px">⬆️ Poner el de la página en ' + _nombreBackoffice() + '</button>'
                + '<button class="mini-btn gray" onclick="nodoWspEscribirNumero()" style="padding:9px">✏️ Escribir otro</button>';
     }else if(pide === "CARGAR_NUMERO"){
       color = "#f87171";
@@ -487,37 +489,72 @@
       if(digitos.length < 7 || digitos.length > 10){
         _avisar("El número debe tener entre 7 y 10 dígitos, sin el código de país."); return;
       }
-      try{
-        var r = await _pedirEdicionBackoffice(digitos);
-        if(!r || r.ok !== true){
-          console.warn("[wsp] No se pudo guardar el WhatsApp de " + _nombreBackoffice(), r && r.motivo);
-          if(r && r.needsLogin) _avisar("La sesión de " + _nombreBackoffice() + " venció. Iniciá sesión y probá de nuevo.");
-          else if(r && r.motivo === "NUMERO_INVALIDO") _avisar("El número debe tener entre 7 y 10 dígitos.");
-          else if(r && r.motivo === "SIN_CONFIRMACION") _avisar("No pude confirmar el guardado. Revisá " + _nombreBackoffice() + " antes de volver a intentarlo.");
-          else _avisar("No pude guardar el número en " + _nombreBackoffice() + ". Revisá esa pantalla antes de volver a intentarlo.");
-          return;
-        }
-        BACKOFFICE = {
-          numero: String(r.numero || "").trim(),
-          pais: String(r.pais || (BACKOFFICE && BACKOFFICE.pais) || ""),
-          habilitado: r.habilitado,
-          numeroValido: r.numeroValido !== false,
-          puedeEditar: true
-        };
-        BACKOFFICE_AT = Date.now();
-        BACKOFFICE_VERIFICADO = true;
-        BACKOFFICE_ERROR = "";
-        try{ pintar(); }catch(_e){}           // si hay una revision de fondo en curso, revisar() no repinta
-        _avisar((r.sinCambio ? "Ese número ya estaba guardado en " + _nombreBackoffice() : "Listo: se guardó en " + _nombreBackoffice()) + ": " + _lindo(BACKOFFICE.numero) + ".");
-        if(_backendElegido() === "adminonline" && BACKOFFICE.numero){
-          try{ await _guardarPublicado(_numeroParaNodo(BACKOFFICE.numero), "cambiado en " + _nombreBackoffice()); }catch(_e){}
-        }
-        await revisar();
-        try{ pintar(); }catch(_e){}
-      }catch(e){
-        console.warn("[wsp] Falló el guardado del WhatsApp de " + _nombreBackoffice(), e && e.name);
-        _avisar("No pude guardar el número en " + _nombreBackoffice() + ". Revisá la pantalla antes de volver a intentarlo.");
+      await _guardarEnBackoffice(digitos);
+    });
+    return tarea.finally(function(){ if(boton) boton.disabled = false; });
+  };
+
+  // Escribe el número en el backoffice (navega, espera que se dibuje, escribe y guarda) y deja todo al
+  // día. Si la página no dio aviso de éxito, se vuelve a leer la pantalla para estar seguros. true = quedó.
+  async function _guardarEnBackoffice(digitos){
+    try{
+      var r = await _pedirEdicionBackoffice(digitos);
+      if(!r || r.ok !== true){
+        console.warn("[wsp] No se pudo guardar el WhatsApp de " + _nombreBackoffice(), r && r.motivo);
+        if(r && r.needsLogin) _avisar("La sesión de " + _nombreBackoffice() + " venció. Iniciá sesión y probá de nuevo.");
+        else if(r && r.motivo === "NUMERO_INVALIDO") _avisar("El número debe tener entre 7 y 10 dígitos.");
+        else if(r && r.motivo === "SIN_CONFIRMACION") _avisar("No pude confirmar el guardado. Revisá " + _nombreBackoffice() + " antes de volver a intentarlo.");
+        else if(r && r.message && r.motivo === "RECHAZADO") _avisar(_nombreBackoffice() + " no aceptó el número. Revisá esa pantalla.");
+        else _avisar("No pude guardar el número en " + _nombreBackoffice() + ". Revisá esa pantalla antes de volver a intentarlo.");
+        return false;
       }
+      if(r.confirmarLeyendo){
+        var leido = null;
+        try{ leido = await _pedirLectura(true); }catch(_e){}
+        var visto = String((leido && leido.numero) || "").replace(/[^0-9]/g, "").slice(-10);
+        if(!(leido && leido.ok) || visto !== String(digitos).slice(-10)){
+          _avisar("Escribí el número en " + _nombreBackoffice() + ", pero al volver a mirar no aparece guardado. Revisalo en esa pantalla.");
+          return false;
+        }
+        r.numero = leido.numero;
+        if(leido.habilitado != null) r.habilitado = leido.habilitado;
+      }
+      BACKOFFICE = {
+        numero: String(r.numero || "").trim(),
+        pais: String(r.pais || (BACKOFFICE && BACKOFFICE.pais) || ""),
+        habilitado: r.habilitado,
+        numeroValido: r.numeroValido !== false,
+        puedeEditar: true
+      };
+      BACKOFFICE_AT = Date.now();
+      BACKOFFICE_VERIFICADO = true;
+      BACKOFFICE_ERROR = "";
+      try{ pintar(); }catch(_e){}           // si hay una revision de fondo en curso, revisar() no repinta
+      _avisar((r.sinCambio ? "Ese número ya estaba guardado en " + _nombreBackoffice() : "Listo: se guardó en " + _nombreBackoffice()) + ": " + _lindo(BACKOFFICE.numero) + ".");
+      if(_backendElegido() === "adminonline" && BACKOFFICE.numero){
+        try{ await _guardarPublicado(_numeroParaNodo(BACKOFFICE.numero), "cambiado en " + _nombreBackoffice()); }catch(_e){}
+      }
+      await revisar();
+      try{ pintar(); }catch(_e){}
+      return true;
+    }catch(e){
+      console.warn("[wsp] Falló el guardado del WhatsApp de " + _nombreBackoffice(), e && e.name);
+      _avisar("No pude guardar el número en " + _nombreBackoffice() + ". Revisá la pantalla antes de volver a intentarlo.");
+      return false;
+    }
+  }
+  function _nacional(numero){ return String(numero || "").replace(/[^0-9]/g, "").slice(-10); }
+
+  // El número que ve el jugador va también al backoffice (Juan, 18/11: "NODO no hizo un carajo de cambio
+  // de número en Drex"). Lo que ve el jugador y lo que tiene el backoffice tienen que ser el mismo.
+  window.nodoWspPaginaAlBackoffice = function(boton){
+    if(TRABAJANDO) return;
+    if(boton) boton.disabled = true;
+    var tarea = _unaSola(async function(){
+      if(!window.ctrlElectron || !window.ctrlElectron.drexAutomation){ _avisar("No puedo abrir " + _nombreBackoffice() + " desde esta pantalla."); return; }
+      var digitos = _nacional(ESTADO && ESTADO.numero_pagina);
+      if(digitos.length < 7){ _avisar("No hay un número publicado para poner en " + _nombreBackoffice() + "."); return; }
+      await _guardarEnBackoffice(digitos);
     });
     return tarea.finally(function(){ if(boton) boton.disabled = false; });
   };
@@ -532,6 +569,12 @@
       });
       if(v == null) return;
       await _guardarPublicado(v, "cargado a mano");
+      // Y el mismo número en el backoffice, si se puede: si no, el jugador y el backoffice quedan distintos.
+      var digitos = _nacional(v);
+      if(digitos.length >= 7 && window.ctrlElectron && window.ctrlElectron.drexAutomation
+         && _nacional(BACKOFFICE && BACKOFFICE.numero) !== digitos){
+        await _guardarEnBackoffice(digitos);
+      }
     });
   };
 

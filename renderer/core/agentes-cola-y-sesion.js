@@ -70,6 +70,16 @@ const _DREX_NOMBRE = { buscarUsuario:'buscar usuario', cargarSaldo:'carga', reti
 // rechazan AL INSTANTE, sin tocar el agente. Se baja sola al reponer la sesión.
 window._drexSinSesion = false;
 window._drexCanceladas = [];      // qué quedó sin ejecutar, para poder decirlo al reponer
+// La ventana de Agentes avisa en el momento que vio "session is invalid" (18/11): se marca la caída ya,
+// con su cartel y el pedido de ingreso. Antes NODO se enteraba recién en la próxima operación.
+try{
+  if(window.ctrlElectron && typeof window.ctrlElectron.onSesionAgentesCaida === 'function' && !window._drexEscuchaCaida){
+    window._drexEscuchaCaida = true;
+    window.ctrlElectron.onSesionAgentesCaida(function(){
+      try{ if(typeof window._drexMarcarSinSesion === 'function') window._drexMarcarSinSesion('cartel de la ventana'); }catch(_e){}
+    });
+  }
+}catch(_e){}
 window._drexMarcarSinSesion = function(motivo){
   // NO se sale de entrada si ya estaba marcado. Antes sí, y eso dejaba al panel encerrado: si el
   // operador cerraba el modal, la bandera quedaba en true, nadie se lo volvía a pedir, y encima la

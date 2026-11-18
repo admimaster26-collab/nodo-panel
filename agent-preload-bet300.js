@@ -405,20 +405,43 @@ async function ensureReady() {
 // ── Búsqueda ─────────────────────────────────────────────────────────────────
 function findSearchInput() { return firstVisible('input[placeholder="Buscar usuario"]'); }
 
-// Filas de jugador: .v-row con columna alias (.v-col-5) y acción de carga (mdi-cash-plus).
+// Filas de jugador. agentesbet.io tiene dos diseños:
+//  · el de antes: .v-row con columna alias (.v-col-5) y acción de carga (mdi-cash-plus);
+//  · el de ahora (18/11): una tabla, una <tr> por cuenta, con la celda de operaciones td.ac-td--ops y el
+//    botón "Acciones <alias>" (aria-label), de donde se saca el alias. Con el diseño nuevo el preload no
+//    veía ninguna fila: la búsqueda "no terminaba" y el cambio de clave no encontraba al jugador (Juan, 18/11).
 function filasJugador() {
-  return Array.from(document.querySelectorAll('.v-row'))
+  const viejas = Array.from(document.querySelectorAll('.v-row'))
     .filter(r => isVisible(r) && r.querySelector('.v-col-5') && r.querySelector('.mdi-cash-plus'));
+  if (viejas.length) return viejas;
+  return Array.from(document.querySelectorAll('tr'))
+    .filter(tr => isVisible(tr) && tr.querySelector('td.ac-td--ops, .ac-ops') && tr.querySelector('.mdi-cash-plus'));
 }
 function aliasDeFila(row) {
+  if (row && row.tagName === 'TR') {
+    const acciones = row.querySelector('button[aria-label^="Acciones "]');
+    if (acciones) return normalizeText(acciones.getAttribute('aria-label').replace(/^Acciones\s+/i, ''));
+    const td = row.querySelector('td');
+    return normalizeText(td ? td.textContent : '');
+  }
   const col = row.querySelector('.v-col-5');
   return normalizeText(col ? col.textContent : '');
+}
+// La lupa del buscador: es el botón #ac-search-menu-btn. Buscándola por el ícono se agarraba otra lupa
+// (la del propio campo) y la búsqueda no se disparaba nunca (Juan, 18/11: "no aprieta la lupa").
+function _lupaBusqueda() {
+  return document.getElementById('ac-search-menu-btn') || iconBtn('mdi-magnify');
 }
 function buscarFilaPorAlias(alias) {
   const want = normAlias(alias);
   return filasJugador().find(r => normAlias(aliasDeFila(r)) === want) || null;
 }
 function saldoDeFila(row) {
+  if (row && row.tagName === 'TR') {
+    const celda = Array.from(row.querySelectorAll('td')).filter(td => !td.classList.contains('ac-td--ops'))
+      .map(td => normalizeText(td.textContent)).find(t => /^\$?\s*-?[\d.,]+(\s*ARS)?$/i.test(t));
+    return celda ? { raw: celda, value: parseMoney(celda) } : null;
+  }
   const col = row.querySelector('.v-col-4');
   if (!col) return null;
   const raw = normalizeText(col.textContent);
@@ -467,7 +490,7 @@ async function elegirTodosLosJugadores(timeout = 6000) {
       await delay(300);
       if (!buscarOpt()) return true; // el menú se cerró → quedó seleccionado
     } else if (++vueltas % 10 === 0) {
-      const lupa = iconBtn('mdi-magnify'); // menú cerrado → reabrir
+      const lupa = _lupaBusqueda(); // menú cerrado → reabrir
       if (lupa) clickElement(lupa);
     }
     await delay(150);
@@ -632,7 +655,7 @@ async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
   // se leía igual que «no hay resultados» (Juan, 26/9).
   let vistaOk = filasJugador().length > 0;
   if (firmaFilas() === firmaAntes) {
-    const lupa = iconBtn('mdi-magnify');
+    const lupa = _lupaBusqueda();
     if (lupa) clickElement(lupa);
     await delay(250);
     input = (await _asegurarTextoBusqueda(wanted, 2)) || input;  // el menú pudo limpiar el campo
@@ -659,7 +682,7 @@ async function ejecutarBusqueda(alias, timeout = DEFAULT_TIMEOUT) {
     if (!reintentado && now() - inicio > 5000) {
       reintentado = true;
       input = (await _asegurarTextoBusqueda(wanted, 2)) || input;
-      const l2 = iconBtn('mdi-magnify');
+      const l2 = _lupaBusqueda();
       if (l2) clickElement(l2);
       await delay(250);
       if (await elegirTodosLosJugadores(4000)) vistaOk = true;
@@ -1011,7 +1034,10 @@ async function cambiarClave(password, options = {}) {
   let fila = _currentUser ? buscarFilaPorAlias(_currentUser) : null;
   if (!fila) throw new Error('No encuentro la fila del jugador para cambiar la clave.');
 
-  const btn = iconBtn('mdi-key', fila);
+  // En el diseño nuevo la llave está en un div "d-none d-sm-block": con la ventana angosta queda oculta y
+  // firstVisible no la ve. Se toma igual (el clic llega aunque esté oculta).
+  const llave = fila.querySelector('i.mdi-key');
+  const btn = iconBtn('mdi-key', fila) || (llave && llave.closest('button, .v-btn, [role="button"]'));
   if (!btn) throw new Error('No apareció el botón de cambiar clave en la fila.');
   clickElement(btn);
 

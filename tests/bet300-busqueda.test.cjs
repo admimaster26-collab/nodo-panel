@@ -82,3 +82,14 @@ test('el preload ya no busca el texto exacto viejo', () => {
     'si vuelve el texto exacto, vuelve el bug en cuanto le cambien el nombre');
   assert.match(src, /_esOpcionJugadores\(normalizeText/, 'la elección tiene que pasar por la función');
 });
+
+// 18/11: agentesbet.io pasó la lista de jugadores a una tabla y el preload no veía ninguna fila
+// ("no aprieta la lupa", "no cambia la clave").
+test('el diseño nuevo de agentesbet.io: tabla, la lupa por su id y la llave aunque esté oculta', () => {
+  assert.match(src, /document\.getElementById\('ac-search-menu-btn'\)/, 'la lupa es el botón #ac-search-menu-btn');
+  assert.doesNotMatch(src.replace(/function _lupaBusqueda\(\) \{[\s\S]*?\n\}/, ''), /iconBtn\('mdi-magnify'\)/,
+    'nadie más busca la lupa por el ícono: agarraba la del campo');
+  assert.match(src, /td\.ac-td--ops/, 'las filas nuevas son <tr> con la celda de operaciones');
+  assert.match(src, /aria-label\^="Acciones "/, 'el alias sale del botón "Acciones <alias>"');
+  assert.match(src, /fila\.querySelector\('i\.mdi-key'\)/, 'la llave vive en un div d-none: se toma igual');
+});

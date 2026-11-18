@@ -90,6 +90,14 @@ ipcMain.handle('nodo:discord', (_e, estado) => {
   return { ok: true, habilitado: discord.habilitado, conectado: discord.conectado };
 });
 chunior.registerIpc(ipcMain);
+// La ventana de Agentes avisa en el momento que vio "session is invalid" (18/11): se le pasa al panel, que
+// pone el cartel y pide el ingreso. Antes NODO se enteraba recién en la próxima operación.
+ipcMain.on('drex:sesion-caida', (_e, datos) => {
+  try {
+    const w = panel.current;
+    if (w && !w.isDestroyed()) w.webContents.send('drex:sesion-caida', datos || {});
+  } catch (_) {}
+});
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 // El panel ES NODO. Las ventanas de Agentes y de verificacion estan ocultas: cerrando el panel con la

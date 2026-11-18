@@ -545,6 +545,8 @@ function _marcarSesionMuerta() {
     _yaFuiAlLogin = false;      // caída NUEVA: se permite una salida
     _intentosLogin = 0;         // y se reinicia el tope de salidas
     console.warn('[agent] sesión de Agentes caída: lo dijo un cartel "Invalid session"');
+    // Aviso al panel en el momento (18/11): sin esto NODO se enteraba recien en la proxima operacion.
+    try { ipcRenderer.send('drex:sesion-caida', { motivo: 'cartel' }); } catch (_) {}
   }
   _vioLoginTrasMuerte = false;
 }
@@ -1439,8 +1441,79 @@ async function leerWhatsappOficina() {
   }
 }
 
+// Guarda el WhatsApp en Funcionalidades y permisos (Juan, 18/11: "NODO no hizo un carajo de cambio de
+// numero en Drex"). No existia: el panel pedia guardarWhatsappOficina y este preload no lo tenia, asi que
+// la orden moria en "Metodo no permitido". Pasos, como lo haria una persona: main ya navego a la pantalla
+// (navegar:true) -> se espera a que el campo se dibuje y quede QUIETO (React lo completa despues) -> se
+// escribe el numero -> Guardar -> se confirma (aviso de exito, o el campo sigue con el numero y sin error).
+// El campo de Drex va en formato E.164 con el pais: "+541100000000". NODO manda el numero nacional.
+async function guardarWhatsappOficina(args) {
+  args = args || {};
+  if (_loginEnCurso) return { ok: false, ocupado: true, message: 'La ventana de Agentes esta entrando a la sesion.' };
+  if (pageNeedsLogin()) return { ok: false, needsLogin: true, message: 'Hay que entrar a Agentes antes de cambiar el WhatsApp.' };
+  if (String(window.location.href || '').indexOf('/agents/features') < 0) {
+    return { ok: false, motivo: 'OTRA_PANTALLA', message: 'La ventana de Agentes no esta en Funcionalidades y permisos.' };
+  }
+  var digitos = String(args.numero || '').replace(/[^0-9]/g, '');
+  if (digitos.length > 10 && digitos.indexOf('54') === 0) digitos = digitos.slice(2);
+  if (digitos.length === 11 && (digitos.charAt(0) === '9' || digitos.charAt(0) === '0')) digitos = digitos.slice(1);
+  if (digitos.length < 7 || digitos.length > 10) return { ok: false, motivo: 'NUMERO_INVALIDO', message: 'El numero debe tener entre 7 y 10 digitos.' };
+  try {
+    // 1) Que se dibuje y quede quieto.
+    var t0 = now(), el = null, ultimo = null, desde = 0;
+    while (now() - t0 < 15000) {
+      if (pageNeedsLogin()) return { ok: false, needsLogin: true, message: 'Agentes pidio ingresar de nuevo.' };
+      el = _wsInput(document);
+      if (el) {
+        var v = String(el.value || '');
+        if (v !== ultimo) { ultimo = v; desde = now(); }
+        if (now() - desde >= 800 && (v !== '' || now() - t0 >= 5000)) break;
+      }
+      await delay(200);
+    }
+    if (!el) return { ok: false, motivo: 'NO_APARECIO', message: 'La pantalla no mostro el campo de WhatsApp.' };
+    // 2) El pais que ya tiene la oficina: todo lo que esta antes de los ultimos 10 digitos (si no hay, +54).
+    var actual = String(el.value || '').replace(/[^0-9+]/g, '');
+    var pais = (/^\+\d{11,13}$/.test(actual)) ? actual.slice(0, actual.length - 10) : '+54';
+    if (!/^\+\d{1,3}$/.test(pais)) pais = '+54';
+    var nuevo = pais + digitos;
+    if (actual === nuevo) return { ok: true, sinCambio: true, numero: nuevo, pais: pais, habilitado: _wsHabilitado(document), numeroValido: true };
+    // 3) Escribir.
+    if (!(await setReactInputAndVerify(el, nuevo, 5))) return { ok: false, motivo: 'NO_SE_ACTUALIZO', message: 'Agentes no tomo el numero escrito.' };
+    // 4) Guardar: el boton de la misma seccion, debajo del formulario.
+    var form = el.closest('#Form_WhatsappContact');
+    var seccion = (form && form.parentElement) || document;
+    var guardar = Array.prototype.slice.call(seccion.querySelectorAll('button')).filter(function (b) { return /^guardar$/i.test((b.textContent || '').trim()); })[0];
+    if (!guardar) return { ok: false, motivo: 'NO_APARECIO', message: 'No encontre Guardar en la seccion de WhatsApp.' };
+    var antes = leerCartelesVisibles().join(' | ');
+    clickElement(guardar);
+    // 5) Confirmar: un aviso nuevo (de exito o de error), o el error del propio campo (formato).
+    var t1 = now(), aviso = '';
+    while (now() - t1 < 8000) {
+      await delay(250);
+      var cart = leerCartelesVisibles().join(' | ');
+      if (cart && cart !== antes) { aviso = cart; break; }
+      var errCampo = document.querySelector('.parsley-errors-list li, .Mui-error .MuiFormHelperText-root');
+      if (errCampo && (errCampo.textContent || '').trim()) {
+        return { ok: false, motivo: 'RECHAZADO', message: 'Agentes no acepto el numero: ' + (errCampo.textContent || '').trim().slice(0, 120) };
+      }
+    }
+    if (aviso && /error|no se pudo|invalid|incorrect|fall/i.test(aviso)) {
+      return { ok: false, motivo: 'RECHAZADO', message: 'Agentes no guardo el numero: ' + aviso.slice(0, 120) };
+    }
+    var quedo = String((_wsInput(document) || {}).value || '').replace(/[^0-9+]/g, '');
+    if (quedo !== nuevo) return { ok: false, motivo: 'VERIFICACION', message: 'Despues de guardar, Agentes muestra otro numero. Revisalo.' };
+    // Sin aviso de exito no hay certeza: el panel vuelve a leer la pantalla recargada para confirmarlo.
+    return { ok: true, numero: nuevo, pais: pais, habilitado: _wsHabilitado(document), numeroValido: true,
+             confirmado: !!aviso, confirmarLeyendo: !aviso, mensaje: aviso || 'Guardado (sin aviso de la pagina).' };
+  } catch (e) {
+    return { ok: false, motivo: 'ERROR', message: (e && e.message) ? e.message : String(e) };
+  }
+}
+
 const api = {
   leerWhatsappOficina,
+  guardarWhatsappOficina,
   buscarUsuario,
   cargarSaldo,
   retirarSaldo,

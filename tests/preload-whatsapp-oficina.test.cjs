@@ -169,11 +169,36 @@ test('los tres backoffices contestan al mismo metodo', () => {
     assert.match(api, /leerWhatsappOficina,/, nombre + ' no lo agregó al api, así que el puente lo rechaza');
   }
   // 18/11: los tres leen y guardan la pantalla de verdad; ninguno contesta "otro backoffice".
-  for (const fuente of [PRELOAD_BET300, PRELOAD_ADMINONLINE]) {
+  // Casinodrex no lo tenía: el panel pedía guardar y moría en "Método no permitido" (Juan, 18/11).
+  for (const fuente of [PRELOAD, PRELOAD_BET300, PRELOAD_ADMINONLINE]) {
     assert.doesNotMatch(fuente, /OTRO_BACKOFFICE/);
     const api = fuente.slice(fuente.indexOf('const api = {'), fuente.indexOf('const api = {') + 700);
     assert.match(api, /guardarWhatsappOficina,/);
   }
+});
+
+test('casinodrex guarda como una persona: espera que el campo se dibuje, escribe, Guardar y confirma', () => {
+  const f = PRELOAD.slice(PRELOAD.indexOf('async function guardarWhatsappOficina'));
+  const cuerpo = f.slice(0, f.indexOf('\nconst api = {'));
+  const orden = ['/agents/features', '_wsInput(document)', 'setReactInputAndVerify(el, nuevo', "#Form_WhatsappContact", 'clickElement(guardar)', 'leerCartelesVisibles()'];
+  let desde = 0;
+  for (const paso of orden) {
+    const i = cuerpo.indexOf(paso, desde);
+    assert.ok(i >= 0, 'falta o está fuera de orden: ' + paso);
+    desde = i;
+  }
+  assert.match(cuerpo, /now\(\) - desde >= 800/, 'espera a que el campo quede quieto antes de escribir');
+  assert.match(cuerpo, /confirmarLeyendo: !aviso/, 'sin aviso de la página, el panel vuelve a leer para confirmar');
+});
+
+test('el cartel "session is invalid" de Drex avisa al panel en el momento', () => {
+  const main = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+  const puente = fs.readFileSync(path.join(ROOT, 'app-preload.js'), 'utf8');
+  const cola = fs.readFileSync(path.join(ROOT, 'renderer', 'core', 'agentes-cola-y-sesion.js'), 'utf8');
+  assert.match(PRELOAD, /ipcRenderer\.send\('drex:sesion-caida'/);
+  assert.match(main, /ipcMain\.on\('drex:sesion-caida'[\s\S]*webContents\.send\('drex:sesion-caida'/);
+  assert.match(puente, /onSesionAgentesCaida[\s\S]*ipcRenderer\.on\('drex:sesion-caida'/);
+  assert.match(cola, /onSesionAgentesCaida\([\s\S]*_drexMarcarSinSesion/);
 });
 
 // 15/11: el módulo nunca leyó el backoffice ni una vez y mostraba "no lo puedo revisar solo".
