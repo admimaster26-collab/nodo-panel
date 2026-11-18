@@ -166,6 +166,17 @@ transferimos $X… restan $Y" o "✅ Completamos tu retiro".
 
 ---
 
+**Cuenta de cobro nueva con el DNI apagado (18/11).** Con `pide_dni` apagado no se le pide DNI al jugador,
+pero la cuenta nueva igual se confirma una vez: antes de pagar, NODO abre "Cuenta de cobro nueva · una sola
+vez" y el cajero mira en Mercado Pago o el banco a nombre de quién está. "Está a nombre del jugador · seguir"
+la deja validada (y el Portal deja de decir "verificando"); "es de otra persona" rechaza sin descontar fichas
+y le avisa al jugador. Antes el servidor la daba por "sin declarar", NODO pagaba sin preguntar y el jugador
+veía "verificando" para siempre. Servidor: `servidor/retiro-cuenta-nueva-sin-dni.sql`.
+
+**Mensajes delicados (18/11).** Si el jugador escribe algo de angustia o de no poder parar de jugar, el
+servidor marca ese mensaje (cualquier mensaje, no sólo el primero) y NODO lo muestra con un recuadro rojo
+"Mensaje delicado". El asistente no los contesta: lo atiende una persona. `servidor/mensaje-delicado.sql`.
+
 ## Lugares donde NODO trató un retiro como carga
 
 Encontrados el 9/11. Están corregidos salvo los que dicen "abierto".

@@ -105,8 +105,14 @@ function atarVentanasAlPanel() {
   let cargas = 0;
   win.webContents.on('did-finish-load', async () => {
     if (++cargas === 1) return;   // la primera carga es el arranque
-    const tope = Date.now() + 120000;
-    while ((automationRequests.pending.size || verificationRequests.pending.size) && Date.now() < tope) {
+    // Sin tope: cerrar la ventana de Agentes con una carga o un retiro a la mitad podía dejarlo hecho en el
+    // casino y sin anotar (revisión del 18/11). Si tarda, se avisa una vez y se sigue esperando.
+    const desde = Date.now(); let avisado = false;
+    while (automationRequests.pending.size || verificationRequests.pending.size) {
+      if (!avisado && Date.now() - desde > 120000) {
+        avisado = true;
+        console.warn('[main] panel recargado: sigue una operación en Agentes; las ventanas se recrean cuando termine');
+      }
       await new Promise(r => setTimeout(r, 500));
     }
     try { verification.close(); } catch (_e) {}

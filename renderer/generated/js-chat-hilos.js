@@ -983,7 +983,11 @@
       const retryBtn=fresh._beta && m.request_id && !m.persisted ?
         `<button type="button" data-beta-request-id="${E(m.request_id)}" onclick="nodoReintentarMensajeBeta(this.dataset.betaRequestId)">Confirmación pendiente · Reintentar</button>`:'';
       const receipt=fresh._beta && m.id?` data-beta-message-id="${E(m.id)}" data-beta-role="${E(NodoChatMessage.role(m))}"`:'';
-      html+=`<div${receipt} class="wq2-row ${NodoChatMessage.className(m)}"><div class="wq2-bubble"><div class="wq2-author">${E(NodoChatMessage.author(m,fresh.usuario))}</div>${E(NodoChatMessage.visibleText(m)).replace(/\n/g,"<br>")}${imgHtml}<div class="wq2-time" title="${E(m.fecha)}">${hora(m.fecha)}${editedTag}${editBtn}${retryBtn}</div></div></div>`;
+      // 18/11: el servidor marca los mensajes que hablan de angustia o de no poder parar de jugar. El
+      // asistente no los contesta: lo tiene que ver una persona, y acá se le dice al operador en palabras.
+      const delicado=NodoChatMessage.role(m)==="USUARIO"&&String(m.auto_caso||"").toUpperCase()==="DERIVAR_HUMANO"
+        ?`<div class="wq2-delicado" style="margin-top:6px;padding:6px 8px;border-radius:8px;background:rgba(248,113,113,.14);border:1px solid rgba(248,113,113,.45);color:#fecaca;font-size:11.5px;line-height:1.35">⚠️ <b>Mensaje delicado.</b> Habla de angustia o de no poder parar de jugar. El asistente no contesta estos mensajes: respondé vos, con calma.</div>`:"";
+      html+=`<div${receipt} class="wq2-row ${NodoChatMessage.className(m)}"><div class="wq2-bubble"><div class="wq2-author">${E(NodoChatMessage.author(m,fresh.usuario))}</div>${E(NodoChatMessage.visibleText(m)).replace(/\n/g,"<br>")}${delicado}${imgHtml}<div class="wq2-time" title="${E(m.fecha)}">${hora(m.fecha)}${editedTag}${editBtn}${retryBtn}</div></div></div>`;
     });
     html+=`</div>`;
     bodies.forEach((box,i)=>{

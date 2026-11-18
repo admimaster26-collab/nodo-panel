@@ -164,6 +164,30 @@
         + '</div>';
     }
 
+    // Cuenta nueva con el DNI apagado (18/11): no hay DNI que comparar. El cajero abre la cuenta en Mercado
+    // Pago o el banco, mira a nombre de quién está y confirma. Antes el servidor la daba por "sin declarar",
+    // NODO pagaba sin preguntar y el Portal le decía al jugador "verificando" para siempre.
+    function overlaySinDni(dest, tit, info){
+      return '<h2 id="nodoCuentaTitulo" style="font-size:17px;margin:0 0 6px">Cuenta de cobro nueva · una sola vez</h2>'
+        + '<p>Es la primera vez que este jugador cobra en esta cuenta. Buscala en Mercado Pago o en el banco (como para transferirle) '
+        + 'y fijate <b>a nombre de quién está</b>. Si es del jugador, confirmalo y el retiro sigue. No hace falta pedirle el DNI.</p>'
+        + '<div style="background:#161b22;border:1px solid #30363d;border-radius:9px;padding:10px;margin:12px 0">'
+        + '<div>Solicitud <b>#' + esc(info.id || '') + '</b> · Jugador <b>' + esc(info.usuario || '') + '</b></div>'
+        + '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">Cuenta: <b style="font-family:monospace;user-select:all">' + esc(dest || 'sin dato') + '</b>'
+        + (dest ? '<button id="nodoCuentaCopiar" type="button" title="Copiar la cuenta para pegarla en Mercado Pago" style="border:1px solid #3b4654;border-radius:6px;padding:2px 8px;background:#0d1117;color:#7cc4ff;font-size:12px;font-weight:700;cursor:pointer">Copiar</button>' : '')
+        + '</div>'
+        + '<div>A nombre de (lo que escribió el jugador): <b>' + esc(tit || 'sin dato') + '</b></div>'
+        + '</div>'
+        + '<div id="nodoCuentaMsg" role="status" aria-live="polite" style="min-height:22px;margin:8px 0;font-size:13px"></div>'
+        + '<div style="display:flex;gap:8px;margin-top:8px">'
+        + '<button id="nodoCuentaValidar" type="button" style="flex:1;border:0;border-radius:8px;padding:10px;background:#16803c;color:#fff;font-weight:800;cursor:pointer">Está a nombre del jugador · seguir</button>'
+        + '<button id="nodoCuentaCancelar" type="button" style="border:1px solid #3b4654;border-radius:8px;padding:10px;background:transparent;color:#e6edf3;cursor:pointer">Ahora no</button>'
+        + '</div>'
+        + '<div style="margin-top:12px;text-align:center">'
+        + '<button id="nodoCuentaRechazar" type="button" style="background:transparent;border:0;color:#ffaaaa;font-size:12px;cursor:pointer;text-decoration:underline">Rechazar: la cuenta es de otra persona</button>'
+        + '</div>';
+    }
+
     async function ejecutarRechazo(solicitudId, usuario, motivo, etapa, mensajeChat){
       const actualizar = deps.actualizarSolicitudPortal || deps.window?.actualizarSolicitudPortal || root.actualizarSolicitudPortal;
       if(typeof actualizar === 'function'){
@@ -206,9 +230,10 @@
 
       const destino = data.destino || info.destino || '';
       const titular = data.titular || info.titular || '';
+      const sinDni = estado === 'PENDIENTE_SIN_DNI';
 
       return await new Promise(function(resolve){
-        openOverlay(validationOverlay(destino, titular, info, data));
+        openOverlay(sinDni ? overlaySinDni(destino, titular, info) : validationOverlay(destino, titular, info, data));
         record(h, 'RENDER', 'OK', 'RETIRO_VALIDACION_MODAL_VISIBLE', 0);
 
         const $ = function(id){ return deps.document.getElementById(id); };
@@ -273,6 +298,26 @@
         if(btnValidar){
           btnValidar.onclick = async function(){
             if(busy) return;
+            if(sinDni){
+              busy = true;
+              this.disabled = true;
+              message('Guardando la confirmación…', '#aab4c0');
+              const cRes = await rpc('panel_retiro_instrumento_confirmar_titular', {
+                p_secret: secret, p_solicitud_id: Number(solicitudId), p_operador: operator()
+              });
+              busy = false;
+              this.disabled = false;
+              const cData = (cRes && cRes.data) || {};
+              if(!(cRes && cRes.error) && cData.ok === true && cData.estado === 'VALIDADO'){
+                toast('Cuenta de cobro confirmada. El retiro puede continuar.', 'green');
+                done({ seguir: true, estado: 'VALIDADO' });
+                return;
+              }
+              message(cData.motivo === 'RECHAZADO'
+                ? 'Esta cuenta ya estaba rechazada. No se movió saldo.'
+                : 'No se pudo guardar la confirmación en el servidor. No se movió saldo: probá de nuevo.', '#ff8b8b');
+              return;
+            }
             if(edadOk && !edadOk.checked){
               message('Primero tildá "Lo revisé: es mayor de 18 años" (arriba, en el recuadro).', '#fbbf24');
               try{ edadOk.focus(); }catch(_e){}

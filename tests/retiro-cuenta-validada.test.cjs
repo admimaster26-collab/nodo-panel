@@ -206,3 +206,41 @@ test('botón Copiar: copia la cuenta para pegarla en Mercado Pago', async () => 
   assert.deepEqual(copiadas, ['alias.demo.mp']);
   assert.match(h.elementos.get('nodoCuentaMsg').textContent, /Cuenta copiada/);
 });
+
+// Revisión del 18/11: con el DNI apagado la cuenta nueva quedaba PENDIENTE, el servidor la devolvía como
+// "sin declarar", NODO pagaba sin preguntar y el jugador veía "verificando" para siempre. Ahora el servidor
+// dice PENDIENTE_SIN_DNI y el cajero confirma a nombre de quién está, sin DNI.
+test('cuenta nueva sin DNI: el cajero confirma a nombre de quién está y recién ahí sigue', async () => {
+  const h = armar([estado('PENDIENTE_SIN_DNI'), { data: { ok: true, estado: 'VALIDADO' } }]);
+  const espera = h.gate(10, { usuario: 'pruebaxx' });
+  await tick();
+  assert.ok(!h.elementos.get('nodoCuentaDni'), 'no se pide DNI');
+  assert.match(h.overlay()._html, /a nombre de quién está/);
+  assert.match(h.overlay()._html, /Fulano Demo/, 'muestra lo que escribió el jugador para comparar');
+  await h.elementos.get('nodoCuentaValidar').onclick.call(h.elementos.get('nodoCuentaValidar'));
+  assert.deepEqual(await espera, { seguir: true, estado: 'VALIDADO' });
+  assert.equal(h.llamadas[1].fn, 'panel_retiro_instrumento_confirmar_titular');
+  assert.equal(h.llamadas[1].params.p_solicitud_id, 10);
+});
+
+test('cuenta nueva sin DNI: "es de otra persona" rechaza sin descontar y le avisa al jugador', async () => {
+  const h = armar([estado('PENDIENTE_SIN_DNI'), { data: { ok: true, estado: 'RECHAZADO' } }]);
+  const espera = h.gate(11, { usuario: 'pruebaxx' });
+  await tick();
+  await h.elementos.get('nodoCuentaRechazar').onclick.call(h.elementos.get('nodoCuentaRechazar'));
+  const r = await espera;
+  assert.equal(r.seguir, false);
+  assert.equal(h.llamadas[1].fn, 'panel_retiro_instrumento_rechazar');
+  assert.equal(h.rechazos[0].estado, 'RECHAZADA');
+  assert.match(h.avisos[0].t, /No se descontó nada/);
+});
+
+test('cuenta nueva sin DNI: si el servidor no guarda la confirmación, no se paga', async () => {
+  const h = armar([estado('PENDIENTE_SIN_DNI'), { error: { code: 'NETWORK', message: 'x' } }]);
+  const espera = h.gate(12, { usuario: 'pruebaxx' });
+  await tick();
+  await h.elementos.get('nodoCuentaValidar').onclick.call(h.elementos.get('nodoCuentaValidar'));
+  assert.match(h.elementos.get('nodoCuentaMsg').textContent, /No se movió saldo/);
+  await h.elementos.get('nodoCuentaCancelar').onclick();
+  assert.deepEqual(await espera, { seguir: false, estado: 'PENDIENTE' });
+});

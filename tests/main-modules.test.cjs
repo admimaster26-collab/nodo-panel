@@ -776,6 +776,7 @@ test('cerrar el panel cierra NODO y recargarlo recrea las ventanas ocultas sin c
   const f = src.slice(src.indexOf('function atarVentanasAlPanel'), src.indexOf('app.whenReady()'));
   assert.match(f, /on\('closed', \(\) => \{ app\.quit\(\); \}\)/, 'el panel cerrado no puede dejar NODO corriendo de fondo');
   assert.match(f, /automationRequests\.pending\.size/, 'espera a que termine la operacion en curso');
+  assert.doesNotMatch(f, /Date\.now\(\) < tope/, '18/11: sin tope; cortar a los 2 minutos podía dejar una carga hecha en el casino y sin anotar');
   assert.match(f, /agents\.close\(\)/);
   assert.match(f, /verification\.close\(\)/);
   assert.doesNotMatch(f, /chunior/i.test(f.replace(/\/\/.*$/gm, '')) ? /chunior\./ : /^$/, 'Chunior no se recrea: perderia la sesion');
