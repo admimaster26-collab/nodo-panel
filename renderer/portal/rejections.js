@@ -98,60 +98,107 @@ const api = {};
   // Esto la cierra como ACREDITADA —que es lo que pasó— y le avisa en consecuencia.
   // ── Cotejo de una carga cerrada como "ya cargada" (Juan, 18/11) ─────────────────────────────────
   // Cerrar así no cargaba nada ni dejaba rastro: 9 de 12 de los últimos días no tenían ninguna fila en el
-  // historial de NODO y "desaparecían". Antes de cerrar se mira dónde quedó la carga:
-  //   · historial de NODO: una carga del mismo usuario y monto desde 2 h antes del pedido (hecha a mano, por
-  //     depósito reclamado…). Si no está atada a ningún pedido, se la ata a éste; si está atada a otro, éste
-  //     es un pedido repetido.
-  //   · AdminOnline, "Movimientos de crédito": un "Deposito de un jugador" por ese monto a ese alias.
-  // El operador ve las dos respuestas antes de cerrar. Chunior ya se coteja con el botón Cotejo.
+  // historial de NODO y "desaparecían". Criterio de Juan: simple — mismo usuario, mismo monto, mismo horario.
+  // Los movimientos no tienen id: la hora con segundos ES su identidad. Ante la duda no se ata nada: se dice
+  // "no se pudo extraer más información" y decide el operador.
+  //   · Historial de NODO: cargas OK del usuario por ese monto desde 2 h antes del pedido.
+  //   · AdminOnline "Movimientos de crédito": "Deposito de un jugador" DONE por ese monto a ese alias.
+  //   · Se enganchan por horario: una fila de NODO y un movimiento de AdminOnline a menos de 3 minutos
+  //     son la misma carga. La plata (Chunior / Mercado Pago) se muestra si la fila de NODO la tiene atada.
+  const YA_CARGADA_VENTANA_MS = 180000;
   api._yaCargadaCotejo = async function(s, id){
     const usuario = String((s&&(s.USUARIO||s.USUARIO_JUGADOR))||'').trim();
     const monto = Math.round(Number((s&&(s.MONTO_REAL||s.MONTO_DECLARADO||s.MONTO))||0));
     const pedidoMs = Date.parse((s&&(s.FECHA_CREACION||s.CREATED_AT||s.created_at))||'') || (Date.now() - 24*3600000);
     const desdeMs = pedidoMs - 2*3600000;
-    const out = { usuario, monto, historial:null, repetidoDe:null, historialError:false, agentes:null, agentesEstado:'sin_revisar' };
+    const out = { usuario, monto, decision:'sin_informacion', motivo:'', nodo:null, agentes:null, repetidoDe:null,
+      candidatos:[], historialError:false, agentesEstado:'sin_revisar', yaUsados:[] };
+    let filasNodo = [], usadas = [];
     try{
       const pat = usuario.replace(/[\\%_]/g, function(c){ return '\\'+c; });
       const r = await deps.supabaseClient.from('historial_ops')
-        .select('id,created_at,monto,origen,solicitud_id').ilike('usuario', pat).eq('tipo','CARGA').eq('estado','OK')
-        .gte('created_at', new Date(desdeMs).toISOString()).order('created_at',{ascending:true}).limit(30);
+        .select('id,created_at,monto,origen,estado,solicitud_id,notas,chunior_movimiento_id,mp_movimiento_id').ilike('usuario', pat).eq('tipo','CARGA')
+        .gte('created_at', new Date(desdeMs).toISOString()).order('created_at',{ascending:true}).limit(60);
       if(r.error || !Array.isArray(r.data)) out.historialError = true;
       else{
-        const mismas = r.data.filter(function(h){ return Math.round(Number(h.monto)||0) === monto; });
-        out.historial = mismas.find(function(h){ return !h.solicitud_id || String(h.solicitud_id) === String(id); }) || null;
-        if(!out.historial){ const otra = mismas.find(function(h){ return h.solicitud_id; }); if(otra) out.repetidoDe = otra; }
+        filasNodo = r.data.filter(function(h){ return h.estado === 'OK' && Math.round(Number(h.monto)||0) === monto; });
+        // Movimientos de AdminOnline ya usados para cerrar otro pedido: su hora quedó escrita en las notas.
+        usadas = r.data.map(function(h){ const m = String(h.notas||'').match(/AdminOnline (\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}:\d{2})/); return m ? m[1] : null; }).filter(Boolean);
       }
     }catch(_e){ out.historialError = true; }
+    let movs = [];
     try{
       if(typeof deps.callDrex === 'function' && deps.window.ctrlElectron){
         const m = await deps.callDrex('leerMovimientosCredito', { desdeMs: desdeMs, alias: usuario });
         if(m && m.ok){
-          out.agentes = (m.filas||[]).find(function(f){ return /dep[oó]sito de un jugador/i.test(f.tipo) && /DONE/i.test(f.estado) && Math.round(f.cantidad) === monto; }) || null;
-          out.agentesEstado = out.agentes ? 'encontrada' : (m.completo ? 'no_esta' : 'incompleto');
+          movs = (m.filas||[]).filter(function(f){ return /dep[oó]sito de un jugador/i.test(f.tipo) && /DONE/i.test(f.estado)
+            && Math.round(f.cantidad) === monto && String(f.alias||'').toLowerCase() === usuario.toLowerCase(); });
+          out.agentesEstado = m.completo ? 'leido' : 'incompleto';
         }else out.agentesEstado = (m && m.needsLogin) ? 'sin_sesion' : 'no_se_pudo';
       }
     }catch(e){ out.agentesEstado = /no permitido|not a function|desconocid/i.test(String(e&&e.message||'')) ? 'no_disponible' : 'no_se_pudo'; }
+    const leidoAg = out.agentesEstado === 'leido' || out.agentesEstado === 'incompleto';
+    const cerca = function(ms1, ms2){ return Number.isFinite(ms1) && Number.isFinite(ms2) && Math.abs(ms1 - ms2) <= YA_CARGADA_VENTANA_MS; };
+    const msNodo = function(h){ return Date.parse(h.created_at); };
+    const movDe = function(h){ return movs.filter(function(f){ return cerca(f.ms, msNodo(h)); }); };
+    if(out.historialError){ out.motivo = 'no se pudo leer el historial de NODO'; return out; }
+    const libres = filasNodo.filter(function(h){ return !h.solicitud_id || String(h.solicitud_id) === String(id); });
+    const atadas = filasNodo.filter(function(h){ return h.solicitud_id && String(h.solicitud_id) !== String(id); });
+    if(libres.length > 1){
+      out.decision = 'ambiguo'; out.candidatos = libres;
+      out.motivo = 'hay '+libres.length+' cargas iguales en NODO sin pedido; no se puede saber cuál es';
+      return out;
+    }
+    if(libres.length === 1){
+      out.nodo = libres[0];
+      const ag = movDe(libres[0]);
+      if(ag.length === 1) out.agentes = ag[0];
+      out.decision = ag.length === 1 ? 'nodo_y_agentes' : 'solo_nodo';
+      if(ag.length > 1) out.motivo = 'en AdminOnline hay '+ag.length+' movimientos a esa hora';
+      return out;
+    }
+    // Ninguna libre en NODO: lo que esté en AdminOnline y no se explique por otra fila de NODO ni por otro cierre.
+    const libresAg = movs.filter(function(f){
+      return !atadas.some(function(h){ return cerca(f.ms, msNodo(h)); }) && usadas.indexOf(f.fecha) < 0;
+    });
+    out.yaUsados = movs.filter(function(f){ return usadas.indexOf(f.fecha) >= 0; });
+    if(libresAg.length === 1){ out.agentes = libresAg[0]; out.decision = 'solo_agentes'; return out; }
+    if(libresAg.length > 1){
+      out.decision = 'ambiguo'; out.candidatos = libresAg;
+      out.motivo = 'hay '+libresAg.length+' cargas iguales en AdminOnline; no se puede saber cuál es';
+      return out;
+    }
+    if(atadas.length){ out.repetidoDe = atadas[atadas.length-1]; out.decision = 'repetido'; return out; }
+    if(!leidoAg){ out.decision = 'sin_informacion'; out.motivo = 'no está en NODO y no se pudo revisar AdminOnline'; return out; }
+    out.decision = out.agentesEstado === 'incompleto' ? 'sin_informacion' : 'sin_rastro';
+    if(out.agentesEstado === 'incompleto') out.motivo = 'no está en NODO y en AdminOnline hay más movimientos de los que se pudieron revisar';
     return out;
   };
   api._yaCargadaCotejoHtml = function(c){
-    const E = deps.escapeHtml, plata = function(n){ return '$' + Number(n||0).toLocaleString('es-AR'); };
-    const hora = function(v){ try{ return new Date(v).toLocaleString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}); }catch(_e){ return String(v||''); } };
+    const E = deps.escapeHtml, plata = function(n){ return '$' + Math.abs(Number(n||0)).toLocaleString('es-AR'); };
+    const hora = function(v){ try{ return new Date(v).toLocaleString('es-AR',{timeZone:'America/Argentina/Buenos_Aires',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'}); }catch(_e){ return String(v||''); } };
     const linea = function(ok, txt){ return '<div style="margin:3px 0;color:'+(ok===true?'#86efac':ok===false?'#fca5a5':'#fde68a')+'">'+(ok===true?'✔ ':ok===false?'✖ ':'⚠ ')+txt+'</div>'; };
+    const agTxt = { no_disponible:'esta versión o este casino no tiene ese informe', sin_sesion:'la sesión de AdminOnline está cerrada',
+      no_se_pudo:'no se pudo leer Movimientos de crédito', sin_revisar:'sólo se revisa desde la aplicación de escritorio',
+      incompleto:'hay más movimientos de los que se pudieron revisar', leido:'' };
     let h = '';
-    if(c.historial) h += linea(true, 'Historial de NODO: cargada '+E(plata(c.historial.monto))+' el '+E(hora(c.historial.created_at))+(c.historial.solicitud_id?'':' (sin pedido: se ata a éste)'));
-    else if(c.repetidoDe) h += linea(null, 'Pedido repetido: esa carga ya se hizo con el pedido #'+E(String(c.repetidoDe.solicitud_id))+' el '+E(hora(c.repetidoDe.created_at))+'. Al cerrar no se suma otra.');
-    else if(c.historialError) h += linea(null, 'No se pudo leer el historial de NODO.');
-    else h += linea(false, 'Historial de NODO: no hay ninguna carga de '+E(plata(c.monto))+' a '+E(c.usuario)+' desde 2 h antes del pedido.');
-    const ag = { encontrada: c.agentes ? linea(true, 'AdminOnline: '+E(plata(c.agentes.cantidad))+' a '+E(c.agentes.alias)+' el '+E(c.agentes.fecha)) : '',
-      no_esta: linea(false, 'AdminOnline: no aparece ninguna carga de '+E(plata(c.monto))+' a '+E(c.usuario)+' desde 2 h antes del pedido.'),
-      incompleto: linea(null, 'AdminOnline: no la encontré en las páginas que revisé (hay muchos movimientos). Mirala a mano en Movimientos de crédito.'),
-      sin_sesion: linea(null, 'AdminOnline: la sesión está cerrada, no se pudo revisar.'),
-      no_disponible: linea(null, 'AdminOnline: esta versión o este casino no tiene ese informe; revisalo a mano.'),
-      no_se_pudo: linea(null, 'AdminOnline: no se pudo revisar Movimientos de crédito.'),
-      sin_revisar: linea(null, 'AdminOnline: sólo se revisa desde la aplicación de escritorio.') };
-    h += ag[c.agentesEstado] || '';
-    if(!c.historial && !c.repetidoDe && c.agentesEstado !== 'encontrada')
-      h += '<div style="margin-top:6px;color:#fca5a5;font-weight:700">No encontré la carga en ningún lado. Si igual la cerrás, queda en el historial como "sin comprobar".</div>';
+    if(c.nodo) h += linea(true, 'NODO: cargada '+E(plata(c.nodo.monto))+' el '+E(hora(c.nodo.created_at))+(c.nodo.solicitud_id?'':' · sin pedido: se ata a éste'));
+    if(c.agentes) h += linea(true, 'AdminOnline: '+E(plata(c.agentes.cantidad))+' a '+E(c.agentes.alias)+' el '+E(c.agentes.fecha)+(c.nodo?' · misma hora que en NODO':''));
+    if(c.nodo && !c.agentes) h += linea(null, 'AdminOnline: no se pudo extraer más información'+(c.motivo?' ('+E(c.motivo)+')':agTxt[c.agentesEstado]?' ('+E(agTxt[c.agentesEstado])+')':' (no aparece a esa hora)')+'.');
+    if(c.nodo){
+      const plataTxt = c.nodo.chunior_movimiento_id ? 'movimiento de Chunior #'+c.nodo.chunior_movimiento_id
+        : c.nodo.mp_movimiento_id ? 'movimiento de Mercado Pago #'+c.nodo.mp_movimiento_id : '';
+      h += plataTxt ? linea(true, 'La plata: '+E(plataTxt)+'.') : linea(null, 'La plata: no se pudo extraer más información (cotejala con el botón Cotejo).');
+    }
+    if(c.decision === 'repetido') h += linea(null, 'Pedido repetido: esa carga ya se hizo con el pedido #'+E(String(c.repetidoDe.solicitud_id))+' el '+E(hora(c.repetidoDe.created_at))+'. Al cerrar no se suma otra.');
+    if(c.decision === 'ambiguo'){
+      h += linea(null, 'No se pudo extraer más información: '+E(c.motivo)+'.');
+      h += '<div style="margin:2px 0 4px 18px;color:#c9d1d9">'+c.candidatos.map(function(x){ return E(x.fecha || hora(x.created_at)); }).join(' · ')+'</div>';
+      h += '<div style="color:#fde68a">No se ata ninguna: si la cerrás, queda "sin comprobar" con estas horas anotadas.</div>';
+    }
+    if(c.decision === 'sin_rastro') h += linea(false, 'No está en NODO ni en AdminOnline desde 2 h antes del pedido. Si la cerrás, queda "sin comprobar".');
+    if(c.decision === 'sin_informacion') h += linea(null, 'No se pudo extraer más información: '+E(c.motivo || agTxt[c.agentesEstado] || 'sin datos')+'. Si la cerrás, queda "sin comprobar".');
+    if(c.yaUsados && c.yaUsados.length) h += '<div style="color:#8b949e;font-size:11px">Ya usadas para cerrar otro pedido: '+c.yaUsados.map(function(x){ return E(x.fecha); }).join(' · ')+'</div>';
     return h;
   };
 
@@ -186,18 +233,24 @@ const api = {};
             cerrada_como: "YA_CARGADA",
             obs: obs || null,
             operador: (deps.window.operador && (deps.window.operador.usuario||deps.window.operador.nombre)) || 'panel',
-            cotejo_ya_cargada: c ? { historial_id: c.historial ? c.historial.id : null, repetido_de: c.repetidoDe ? c.repetidoDe.solicitud_id : null,
-              adminonline: c.agentesEstado, adminonline_fecha: c.agentes ? c.agentes.fecha : null } : null
+            cotejo_ya_cargada: c ? { decision: c.decision, motivo: c.motivo || null, historial_id: c.nodo ? c.nodo.id : null,
+              repetido_de: c.repetidoDe ? c.repetidoDe.solicitud_id : null, adminonline_fecha: c.agentes ? c.agentes.fecha : null } : { decision:'sin_informacion' }
           });
-          // Que no desaparezca del historial: se ata la carga encontrada o se anota una fila nueva.
+          // Que no desaparezca del historial: se ata la carga encontrada o se anota una fila. Nada se suma dos veces:
+          // un pedido repetido no anota nada, y lo dudoso queda "sin comprobar" (se ve, no suma).
           try{
-            if(c && c.historial && !c.historial.solicitud_id){
-              await deps.supabaseClient.from('historial_ops').update({ solicitud_id: Number(id) }).eq('id', c.historial.id);
-            }else if(c && !c.historial && !c.repetidoDe && typeof deps.registrarEnHistorial === 'function'){
-              await deps.registrarEnHistorial({ usuario, tipo:'CARGA', monto, origen:'YA_CARGADA', solicitud_id:Number(id),
-                estado: c.agentesEstado === 'encontrada' ? 'OK' : 'SIN_COMPROBAR',
-                notas: (c.agentesEstado === 'encontrada' ? 'Cargada por fuera de NODO · AdminOnline '+c.agentes.fecha : 'Cerrada como ya cargada sin encontrarla en NODO ni en AdminOnline')
-                  + ' · pedido #'+id + (obs ? ' · '+obs : '') });
+            const d = c ? c.decision : 'sin_informacion';
+            if((d === 'nodo_y_agentes' || d === 'solo_nodo') && !c.nodo.solicitud_id){
+              await deps.supabaseClient.from('historial_ops').update({ solicitud_id: Number(id) }).eq('id', c.nodo.id);
+            }else if(d === 'solo_agentes' && typeof deps.registrarEnHistorial === 'function'){
+              await deps.registrarEnHistorial({ usuario, tipo:'CARGA', monto, origen:'YA_CARGADA', solicitud_id:Number(id), estado:'OK',
+                notas:'Cargada por fuera de NODO · AdminOnline '+c.agentes.fecha+' · pedido #'+id+(obs ? ' · '+obs : '') });
+            }else if((d === 'ambiguo' || d === 'sin_rastro' || d === 'sin_informacion') && typeof deps.registrarEnHistorial === 'function'){
+              const det = d === 'ambiguo' ? ('No se pudo extraer más información: '+c.motivo+' ('+c.candidatos.map(function(x){ return x.fecha || x.created_at; }).join(', ')+')')
+                : d === 'sin_rastro' ? 'Cerrada como ya cargada sin encontrarla en NODO ni en AdminOnline'
+                : 'No se pudo extraer más información'+(c && c.motivo ? ': '+c.motivo : '');
+              await deps.registrarEnHistorial({ usuario, tipo:'CARGA', monto, origen:'YA_CARGADA', solicitud_id:Number(id), estado:'SIN_COMPROBAR',
+                notas: det+' · pedido #'+id+(obs ? ' · '+obs : '') });
             }
           }catch(e){ deps.toast("#"+id+" se cerró, pero no se pudo anotar en el historial: "+(e.message||e), "yellow"); }
           // El aviso iba por notificarUsuarioEnChat, que escribe en chat_sesiones / chat_mensajes —

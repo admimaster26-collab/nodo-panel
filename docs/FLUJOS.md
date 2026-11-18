@@ -222,12 +222,20 @@ Encontrados el 9/11. Están corregidos salvo los que dicen "abierto".
 
 "Marcar como ya cargada" es para un pedido de carga cuyas fichas se cargaron por otro lado (a mano, por
 depósito reclamado, o porque el jugador lo mandó dos veces). Antes cerraba el pedido sin dejar nada en el
-historial de NODO: de los últimos 12, 9 no tenían ninguna fila y "desaparecían". Ahora, al abrir el cartel,
-NODO busca la carga y lo dice antes de cerrar:
-- **Historial de NODO**: una carga del mismo usuario y monto desde 2 h antes del pedido. Si no estaba atada a
-  ningún pedido, se ata a éste. Si ya era de otro pedido, es un **pedido repetido** y no se suma nada.
-- **AdminOnline, "Movimientos de crédito"** (`/agents/tokens-report`): un "Deposito de un jugador" por ese
-  monto a ese alias. Si está y NODO no la tenía, se anota en el historial como `YA CARGADA` (cuenta como hecha).
-- **Si no está en ningún lado**, se avisa en rojo; si igual se cierra, queda en el historial "⚠ sin comprobar"
-  (se ve, pero no suma).
-- Chunior (que la plata entró) se sigue cotejando con el botón Cotejo.
+historial de NODO: de los últimos 12, 9 no tenían ninguna fila y "desaparecían".
+
+Criterio (Juan): simple — **mismo usuario, mismo monto, mismo horario**. Los movimientos no tienen id: la hora
+con segundos es su identidad. Al abrir el cartel NODO busca, desde 2 h antes del pedido:
+- **Historial de NODO**: cargas OK de ese usuario por ese monto.
+- **AdminOnline, "Movimientos de crédito"** (`/agents/tokens-report`): "Deposito de un jugador" DONE por ese monto
+  a ese alias. Una fila de NODO y un movimiento de AdminOnline a menos de 3 minutos son la misma carga.
+- **La plata**: si la fila de NODO tiene atado el movimiento de Chunior o de Mercado Pago, se muestra; si no,
+  "no se pudo extraer más información" (se coteja con el botón Cotejo).
+
+Qué hace al cerrar:
+- Una sola carga libre en NODO → se ata al pedido (y se marca si AdminOnline la confirma a la misma hora).
+- Ya atada a otro pedido → **pedido repetido**: no se suma nada.
+- Sólo en AdminOnline, y ese movimiento no se usó para cerrar otro pedido → se anota como `YA CARGADA` (suma),
+  con la hora de AdminOnline en las notas para no volver a usarla.
+- **Ante la duda** (dos cargas iguales, un error, no se pudo leer, sin rastro) **no se ata nada**: se dice "no se
+  pudo extraer más información" y, si se cierra, queda "⚠ sin comprobar" (se ve en el historial, no suma).
