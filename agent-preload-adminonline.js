@@ -792,7 +792,26 @@ async function crearUsuario(alias, _password, options = {}) {
   if (!guardar) throw new Error('No se encontró el botón "Crear jugador".');
   const capt = observarToast();
   clickElement(guardar);
-  const toast = await esperarToastCapturado(capt, 7000);
+  // Lo primero que aparezca: el cartel "Usuario creado" (con el alias y la clave), el aviso
+  // "user_create_successfully" o un aviso de error. Antes se esperaban 7 s fijos a un aviso que esta
+  // página no da por notivue/sonner y después se buscaba al jugador (hasta 14 s más): con el cartel
+  // "Usuario creado" ya a la vista, NODO seguía en "Creando…" medio minuto (Juan, 18/11).
+  const aliasMin = String(alias).trim().toLowerCase();
+  const cartelCreado = () => {
+    const d = findActiveModal();
+    const t = d ? normalizeText(d.innerText || d.textContent) : '';
+    return (/usuario creado/i.test(t) && t.toLowerCase().includes(aliasMin)) ? d : null;
+  };
+  let toast = null, creadoEn = null, avisoTexto = false;
+  const limite = now() + 12000;
+  while (now() < limite) {
+    if (capt.resultado) { toast = capt.resultado; break; }
+    creadoEn = cartelCreado();
+    if (creadoEn) break;
+    if (/user_create_successfully/i.test((document.body && document.body.innerText) || '')) { avisoTexto = true; break; }
+    await delay(150);
+  }
+  try { capt.obs && capt.obs.disconnect(); } catch (_e) {}
 
   if (toast && toast.tipo === 'error') {
     if (findActiveModal()) await cerrarModalActual();
@@ -800,8 +819,17 @@ async function crearUsuario(alias, _password, options = {}) {
       ? { ok: false, alias, error: 'duplicado', message: 'El alias ya existe en adminonline (' + toast.texto + ').' }
       : { ok: false, alias, error: 'rechazado', message: 'adminonline rechazó la creación: ' + toast.texto };
   }
+  if (creadoEn) {
+    // La clave que muestra el cartel es la que quedó de verdad.
+    const m = normalizeText(creadoEn.innerText || creadoEn.textContent).match(/contrase[ñn]a:?\s*(\S+)/i);
+    const claveReal = m && m[1] && !/^moneda/i.test(m[1]) ? m[1] : clave;
+    await cerrarModalActual();
+    if (findActiveModal()) await cerrarModalActual();
+    return { ok: true, alias, password: claveReal, message: 'Jugador creado (cartel "Usuario creado").' };
+  }
   if (findActiveModal()) await cerrarModalActual();
-  if (toast && toast.tipo === 'ok') return { ok: true, alias, password: clave, message: 'Jugador creado correctamente.' };
+  if (findActiveModal()) await cerrarModalActual();
+  if ((toast && toast.tipo === 'ok') || avisoTexto) return { ok: true, alias, password: clave, message: 'Jugador creado correctamente.' };
   // Sin aviso concluyente: se VERIFICA buscando el alias (si figura, la creación fue correcta).
   try {
     await ejecutarBusqueda(String(alias).trim(), 8000);

@@ -388,6 +388,8 @@ async function ensureReady() {
   }
   await recuperarFlujoPendiente();
   if (pageNeedsLogin() || pageIsBlocked()) return status();
+  // Carteles que puso la página al abrir (uno, tres o varios): se sacan antes de tocar nada (18/11).
+  if (_cartelesAbiertos().length) { try { await limpiarCartelesInicio(); } catch (_e) {} }
   // Si otro flujo ya está navegando al inicio, ESPERAMOS a que termine (una carga forzada no se
   // borra ni falla a mitad de la navegación, queda encolada).
   if (_navegandoAInicio) await waitFor(() => !_navegandoAInicio, 25000, 200, 'esperar-nav-inicio').catch(() => {});
@@ -1297,15 +1299,161 @@ async function _iniciarSesionInterno(usuario, clave) {
   return { ok: false, message: 'No se pudo iniciar sesión en BET300. Verificá usuario y contraseña.' };
 }
 
-// ── API expuesta (mismo shape que el preload de casinodrex) ──────────────────
-// BET300 (agentesbet.io) no tiene todavía una pantalla equivalente a "Contacto por Whatsapp"
-// de casinodrex, así que el número no se puede leer solo. Se contesta con un motivo claro en
-// vez de dejar que el puente devuelva "Método no permitido": NODO lo muestra como "cargalo a
-// mano" y el operador lo escribe en Ajustes, que es el mismo camino que usa una oficina sin WTK.
-async function leerWhatsappOficina() {
-  return { ok: false, motivo: 'OTRO_BACKOFFICE',
-           message: 'Este backoffice no tiene la pantalla de WhatsApp: hay que cargar el número a mano.' };
+// ── Carteles que aparecen al abrir la página (Juan, 18/11) ─────────────────────
+// agentesbet.io a veces abre uno, tres o más avisos apenas carga (v-overlay con .v-overlay__scrim):
+// tapan la página y el preload no puede tocar nada. No importa cuántos son ni dónde están: se cierran
+// como lo haría una persona (la X, "Cerrar", Escape, tocar afuera) y, si alguno no se deja, se lo saca
+// de en medio (oculto y sin atajar clics) para que la página quede usable. Se llama al empezar una
+// operación y al abrir la página, nunca en el medio de una (ahí los diálogos son nuestros).
+function _cartelesAbiertos() {
+  return Array.from(document.querySelectorAll('.v-overlay.v-overlay--active')).filter(o => {
+    if (o.dataset && o.dataset.nodoOculto) return false;
+    if (/v-snackbar|v-menu|v-tooltip/.test(o.className || '')) return false;     // avisos y menús no tapan
+    const content = o.querySelector('.v-overlay__content');
+    return !!o.querySelector('.v-overlay__scrim') && !!content && isVisible(content);
+  });
 }
+async function limpiarCartelesInicio(maxMs = 7000) {
+  const inicio = now();
+  let cerrados = 0, ocultos = 0, vueltas = 0;
+  while (_cartelesAbiertos().length && now() - inicio < maxMs && vueltas < 25) {
+    vueltas++;
+    const lista = _cartelesAbiertos();
+    const cartel = lista[lista.length - 1];          // el de arriba de todo
+    const content = cartel.querySelector('.v-overlay__content') || cartel;
+    const cerrar = iconBtn('mdi-close', content) || iconBtn('mdi-window-close', content)
+      || findByText(/^(cerrar|close|x|×|entendido|ok|omitir|ahora no|m[aá]s tarde)$/i, 'button, .v-btn', content);
+    if (cerrar) { try { clickElement(cerrar); } catch (_e) {} }
+    else {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true, cancelable: true }));
+      await delay(250);
+      const scrim = _cartelesAbiertos().includes(cartel) ? cartel.querySelector('.v-overlay__scrim') : null;
+      if (scrim) { try { clickElement(scrim); } catch (_e) {} }
+    }
+    await delay(350);
+    if (_cartelesAbiertos().includes(cartel)) {
+      // No se dejó cerrar (cartel "persistente"): se lo saca de en medio sin romper la página.
+      cartel.dataset.nodoOculto = '1';
+      cartel.style.setProperty('display', 'none', 'important');
+      cartel.style.setProperty('pointer-events', 'none', 'important');
+      ocultos++;
+    } else cerrados++;
+  }
+  // Vuetify traba el scroll mientras hay un cartel: si ya no queda ninguno, se libera.
+  if (!_cartelesAbiertos().length) {
+    try { document.documentElement.classList.remove('v-overlay-scroll-blocked'); } catch (_e) {}
+  }
+  if (cerrados || ocultos) console.log('[bet300] carteles al abrir: cerrados', cerrados, '· sacados de en medio', ocultos);
+  return { cerrados, ocultos, quedan: _cartelesAbiertos().length };
+}
+// Al abrir la página, con nada nuestro en curso, se limpian los carteles que haya puesto la página.
+try {
+  window.addEventListener('load', () => {
+    for (const ms of [1500, 4000, 8000]) setTimeout(() => {
+      if (!_opsEnCurso && !_loginEnCurso) limpiarCartelesInicio().catch(() => {});
+    }, ms);
+  });
+} catch (_e) {}
+
+// ── WhatsApp de la oficina (Configuración › Redes: /config/socials) ────────────
+// Tarjeta "Funcionalidad de contacto por WhatsApp": casilla "Permitir que los jugadores te contacten
+// por WhatsApp", país ("Argentina +54", sólo lectura), campo "WhatsApp" con el número nacional y
+// "Guardar" (deshabilitado hasta que algo cambia). Mismo contrato que casinodrex y AdminOnline.
+const BET300_SOCIALS_PATH = '/config/socials';
+function _rutaBet300() { return String(location.pathname || '/').replace(/[/]+$/, '') || '/'; }
+function _wspTarjeta() {
+  return visibleElements('.v-card').find(c => /Funcionalidad de contacto por WhatsApp/i.test(normalizeText(c.textContent))) || null;
+}
+function _wspCampo(card) {
+  if (!card) return null;
+  const porClase = firstVisible('.phone-number-input input', card);
+  if (porClase) return porClase;
+  return visibleElements('input', card).find(i => {
+    const l = i.id ? card.querySelector('label[for="' + i.id + '"]') : null;
+    return l && /^whatsapp$/i.test(normalizeText(l.textContent));
+  }) || null;
+}
+function _wspPrefijo(card) {
+  const pais = card && firstVisible('.country-code-select input', card);
+  const m = String(pais && pais.value || '').match(/\+\s?\d{1,4}/);
+  return m ? m[0].replace(/\s/g, '') : '';
+}
+function _wspHabilitado(card) {
+  const cb = card && card.querySelector('input[type="checkbox"]');
+  return cb ? !!cb.checked : null;
+}
+async function _wspEnPantalla() {
+  if (_loginEnCurso) return { error: { ok: false, ocupado: true, message: 'La ventana de Agentes está entrando a la sesión.' } };
+  if (pageNeedsLogin()) return { error: { ok: false, needsLogin: true, message: 'Hay que entrar a Agentes antes de usar el WhatsApp.' } };
+  if (_rutaBet300() !== BET300_SOCIALS_PATH) return { error: { ok: false, motivo: 'OTRA_PANTALLA', message: 'Agentes no está en Configuración › Redes.' } };
+  await limpiarCartelesInicio();
+  const inicio = now();
+  let card = _wspTarjeta(), campo = _wspCampo(card);
+  while ((!card || !campo) && now() - inicio < 12000) {
+    await delay(250);
+    if (pageNeedsLogin()) return { error: { ok: false, needsLogin: true, message: 'Agentes pidió ingresar de nuevo.' } };
+    if (_cartelesAbiertos().length) await limpiarCartelesInicio(3000);
+    card = _wspTarjeta(); campo = _wspCampo(card);
+  }
+  if (!card || !campo) return { error: { ok: false, motivo: 'NO_APARECIO', message: 'La pantalla no mostró el WhatsApp de la oficina.' } };
+  // Vue completa el valor después de pedirlo al servidor: se espera a que quede quieto.
+  let ultimo = null, desde = now();
+  while (now() - inicio < 15000) {
+    const v = String(campo.value || '');
+    if (v !== ultimo) { ultimo = v; desde = now(); }
+    if (now() - desde >= 700) break;
+    await delay(150);
+  }
+  return { card, campo };
+}
+async function leerWhatsappOficina() {
+  try {
+    const p = await _wspEnPantalla();
+    if (p.error) return p.error;
+    const digits = String(p.campo.value || '').replace(/\D/g, '');
+    const prefix = _wspPrefijo(p.card);
+    if (digits && !prefix) return { ok: false, motivo: 'NO_APARECIO', message: 'No pude leer el código de país del WhatsApp.' };
+    return { ok: true, numero: digits ? prefix + digits : '', pais: prefix, habilitado: _wspHabilitado(p.card),
+             numeroValido: !digits || (digits.length >= 7 && digits.length <= 10), puedeEditar: true, desde: 'pantalla' };
+  } catch (e) { return { ok: false, motivo: 'ERROR', message: (e && e.message) ? e.message : String(e) }; }
+}
+async function guardarWhatsappOficina(args = {}) {
+  // El campo lleva SOLO el número nacional (1100000000): el país va aparte. NODO lo tiene completo.
+  let digits = String(args && args.numero || '').replace(/[^0-9]/g, '');
+  if (digits.length > 10 && digits.startsWith('54')) digits = digits.slice(2);
+  if (digits.length === 11 && (digits.startsWith('9') || digits.startsWith('0'))) digits = digits.slice(1);
+  if (digits.length < 7 || digits.length > 10) return { ok: false, motivo: 'NUMERO_INVALIDO', message: 'El número debe tener entre 7 y 10 dígitos.' };
+  try {
+    const p = await _wspEnPantalla();
+    if (p.error) return p.error;
+    const prefix = _wspPrefijo(p.card);
+    if (!prefix) return { ok: false, motivo: 'NO_APARECIO', message: 'No pude leer el código de país seleccionado.' };
+    const habilitadoAntes = _wspHabilitado(p.card);
+    if (String(p.campo.value || '').replace(/\D/g, '') === digits) {
+      return { ok: true, sinCambio: true, numero: prefix + digits, pais: prefix, habilitado: habilitadoAntes, numeroValido: true };
+    }
+    const guardar = findByText(/^guardar$/i, 'button, .v-btn', p.card);
+    if (!guardar) return { ok: false, motivo: 'NO_APARECIO', message: 'No encontré Guardar en la tarjeta de WhatsApp.' };
+    if (!(await setFieldAndVerify(p.campo, digits, 5))) return { ok: false, motivo: 'NO_SE_ACTUALIZO', message: 'Agentes no tomó el número escrito.' };
+    await delay(200);
+    if (botonDeshabilitado(guardar)) return { ok: false, motivo: 'NO_HAY_CAMBIOS', message: 'Agentes no habilitó Guardar para este número.' };
+    const capt = observarSnackbar();
+    clickElement(guardar);
+    const snack = await esperarSnackbarCapturado(capt, 10000);
+    if (snack && snack.tipo === 'error') return { ok: false, motivo: 'RECHAZADO', message: 'Agentes no guardó el número: ' + snack.texto };
+    // Confirmación: aviso de éxito, o Guardar vuelve a quedar deshabilitado con el número nuevo en el campo.
+    await delay(600);
+    const card2 = _wspTarjeta(), campo2 = _wspCampo(card2), guardar2 = card2 && findByText(/^guardar$/i, 'button, .v-btn', card2);
+    const quedo = String(campo2 && campo2.value || '').replace(/\D/g, '') === digits;
+    if (!quedo) return { ok: false, motivo: 'VERIFICACION', message: 'Agentes muestra otro número después de guardar. Revisalo antes de seguir.' };
+    if (!(snack && snack.tipo === 'ok') && !(guardar2 && botonDeshabilitado(guardar2))) {
+      return { ok: false, motivo: 'SIN_CONFIRMACION', message: 'No pude confirmar el guardado. Revisá el número en Agentes antes de volver a intentarlo.' };
+    }
+    return { ok: true, numero: prefix + digits, pais: prefix, habilitado: _wspHabilitado(card2), numeroValido: true, mensaje: snack ? snack.texto : 'Guardado.' };
+  } catch (e) { return { ok: false, motivo: 'ERROR', message: (e && e.message) ? e.message : String(e) }; }
+}
+
+// ── API expuesta (mismo shape que el preload de casinodrex) ──────────────────
 
 const api = {
   buscarUsuario,
@@ -1316,13 +1464,15 @@ const api = {
   crearUsuario,
   obtenerSaldoAgente,
   leerWhatsappOficina,
+  guardarWhatsappOficina,
+  limpiarCartelesInicio,
   irABusquedaUsuarios,
   iniciarSesion,
   estadoPagina: status,
   recuperarFlujo: async () => { await recuperarFlujoPendiente(); return status(); },
   abortarOperacion: () => { _abortOperacion = true; return { ok: true, message: 'Freno solicitado.' }; }
 };
-const METODOS_OPERACION = new Set(['buscarUsuario', 'cargarSaldo', 'retirarSaldo', 'crearUsuario', 'cambiarClave']);
+const METODOS_OPERACION = new Set(['buscarUsuario', 'cargarSaldo', 'retirarSaldo', 'crearUsuario', 'cambiarClave', 'guardarWhatsappOficina']);
 
 contextBridge.exposeInMainWorld('drexAutomation', api);
 

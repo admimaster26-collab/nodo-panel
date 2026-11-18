@@ -93,7 +93,8 @@ test('main lleva la ventana a la pantalla del WhatsApp, y solo cuando se lo pide
 
   const backends = fs.readFileSync(path.join(ROOT, 'main', 'agent-backends.js'), 'utf8');
   assert.match(backends, /whatsappUrl:\s*'https:\/\/bo\.casinodrex\.com\/agents\/features'/);
-  assert.match(backends, /whatsappUrl:\s*null/, 'bet300 no tiene esa pantalla y hay que decirlo');
+  // 18/11: agentesbet.io ya tiene la pantalla (Configuración › Redes).
+  assert.match(backends, /whatsappUrl:\s*'https:\/\/agentesbet\.io\/config\/socials'/);
 });
 
 test('el preload se corre del paso si la ventana esta sin sesion', () => {
@@ -167,9 +168,12 @@ test('los tres backoffices contestan al mismo metodo', () => {
     const api = fuente.slice(fuente.indexOf('const api = {'), fuente.indexOf('const api = {') + 700);
     assert.match(api, /leerWhatsappOficina,/, nombre + ' no lo agregó al api, así que el puente lo rechaza');
   }
-  // bet300 no tiene esa pantalla: tiene que decirlo con un motivo, no tirar un error.
-  assert.match(PRELOAD_BET300, /OTRO_BACKOFFICE/);
-  assert.doesNotMatch(PRELOAD_ADMINONLINE, /OTRO_BACKOFFICE/);
+  // 18/11: los tres leen y guardan la pantalla de verdad; ninguno contesta "otro backoffice".
+  for (const fuente of [PRELOAD_BET300, PRELOAD_ADMINONLINE]) {
+    assert.doesNotMatch(fuente, /OTRO_BACKOFFICE/);
+    const api = fuente.slice(fuente.indexOf('const api = {'), fuente.indexOf('const api = {') + 700);
+    assert.match(api, /guardarWhatsappOficina,/);
+  }
 });
 
 // 15/11: el módulo nunca leyó el backoffice ni una vez y mostraba "no lo puedo revisar solo".
