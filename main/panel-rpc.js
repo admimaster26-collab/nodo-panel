@@ -26,7 +26,10 @@ function registerPanelIpc({ ipcMain, env = process.env, fetch = globalThis.fetch
     ['nodo_beta_prevalidar_v1', new Set(['p_pc_codigo', 'p_telefono', 'p_usuario'])],
     ['nodo_beta_retiro_validar_v1', new Set(['p_pc_codigo', 'p_solicitud_id', 'p_dni_banco', 'p_operador'])],
     ['nodo_beta_retiro_rechazar_v1', new Set(['p_pc_codigo', 'p_solicitud_id', 'p_operador'])],
-    ['nodo_beta_retiro_pagar_v1', new Set(['p_pc_codigo', 'p_solicitud_id', 'p_operador'])]
+    ['nodo_beta_retiro_pagar_v1', new Set(['p_pc_codigo', 'p_solicitud_id', 'p_operador'])],
+    // 18/11: la Blacklist 24h es la única regla del retiro diario (servidor/retiro-blacklist-unica.sql).
+    ['nodo_beta_retiro_blacklist_v1', new Set(['p_pc_codigo', 'p_usuario'])],
+    ['nodo_beta_retiro_blacklist_excluir_v1', new Set(['p_pc_codigo', 'p_historial_id', 'p_operador'])]
   ]);
   const betaError = (message, status) => ({ data: null, error: { code: message, message, ...(status ? { status } : {}) } });
   function sanitizeBetaData(value, currentConfig = resolveBetaConfig()) {

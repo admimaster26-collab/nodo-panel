@@ -50,3 +50,32 @@ test('respuestas nulas sin error no se interpretan como consulta vacía confirma
   assert.equal(h.eventos.at(-1).state,'DEGRADED');
   assert.equal(h.eventos.at(-1).code,'RETIRO_24H_SIN_COMPROBAR');
 });
+
+// Juan, 18/11: "la blacklist era la idea de unificación: si está en la blacklist no debería poder pedir
+// retiro, y si el operador lo saca de la blacklist debería blanquearse el usuario". Con NODO beta la regla
+// la da el servidor (canal nodo_beta_retiro_blacklist_v1) y seguir = sacarlo de la blacklist.
+function conCanal(respuesta){
+  const h=cargar({landing_solicitudes:{data:[],error:null},historial_ops:{data:[],error:null}});
+  const llamadas=[];
+  h.root.pcOperativa='P1';
+  h.root.panelAPI={rpc:async(fn,args)=>{llamadas.push({fn,args});return respuesta(fn,args);}};
+  return {...h,llamadas};
+}
+test('con NODO beta la regla es la blacklist del servidor, no las tres fuentes de antes',async()=>{
+  const hace2h=new Date(Date.now()-2*3600000).toISOString(),en22h=new Date(Date.now()+22*3600000).toISOString();
+  const h=conCanal(fn=>fn==='nodo_beta_retiro_blacklist_v1'?{data:{ok:true,contract:'nodo.beta.v1',bloqueado:true,historial_id:91,retiro_at:hace2h,hasta:en22h,monto:7000}}:{data:null});
+  const r=await h.root.verificarRetiro24h('demo');
+  assert.equal(r.bloqueado,true);assert.equal(r.origen,'BLACKLIST');assert.equal(r.historial_id,91);
+  assert.match(r.mensaje,/está en la blacklist/);
+  assert.equal(JSON.stringify(h.llamadas[0]),JSON.stringify({fn:'nodo_beta_retiro_blacklist_v1',args:{p_pc_codigo:'P1',p_usuario:'demo'}}));
+  const libre=conCanal(()=>({data:{ok:true,contract:'nodo.beta.v1',bloqueado:false}}));
+  assert.equal((await libre.root.verificarRetiro24h('demo')).bloqueado,false);
+});
+test('sin el canal (versión anterior u oficina sin beta) sigue el chequeo de siempre',async()=>{
+  const haceUnaHora=new Date(Date.now()-3600000).toISOString();
+  const h=cargar({landing_solicitudes:{data:[],error:null},historial_ops:{data:[{id:1,created_at:haceUnaHora,monto:5000,notas:''}],error:null}});
+  h.root.pcOperativa='P1';
+  h.root.panelAPI={rpc:async()=>({data:null,error:{message:'RPC_NO_PERMITIDA'}})};
+  const r=await h.root.verificarRetiro24h('demo');
+  assert.equal(r.bloqueado,true);assert.notEqual(r.origen,'BLACKLIST');
+});

@@ -716,7 +716,7 @@ test('ficha de retiro: trae los datos del último, valida y sale por la función
 test('un retiro por día: si ya pidió, se lo dice sin mostrar la ficha',async()=>{
   const h=abierto({cooldown:3*3600*1000});
   await h.tocar('Un retiro');await h.tocar('Quiero retirar');
-  assert.ok(h.dijo('Ya pediste un retiro hoy'));assert.ok(!h.elements.get('guiaMonto'));
+  assert.ok(h.dijo('Ya hiciste un retiro en las últimas 24 horas'));assert.ok(!h.elements.get('guiaMonto'));
 });
 test('clave: sale por la función de la pantalla y no promete una clave que todavía no existe',async()=>{
   const h=abierto();
@@ -1083,4 +1083,11 @@ test('el teléfono tiene que tener 10 números con el código de área, en todas
     assert.match(source(entrada),/telefonoDiezDigitos\(telefono\)/,entrada+' usa la misma regla');
     assert.ok(!/length<6/.test(source(entrada)),entrada+': ya no alcanza con 6 números');
   }
+});
+test('si el servidor frena el retiro por la blacklist 24h, se le dice desde cuándo puede pedir otro',()=>{
+  const ctx={};vm.createContext(ctx);vm.runInContext(source('retiroFrenado24h'),ctx);
+  const r=ctx.retiroFrenado24h('RETIRO_24H:19/11 14:05');
+  assert.equal(r.ok,false);assert.equal(r.motivo,'retiro_24h');
+  assert.match(r.mensaje,/desde el 19\/11 a las 14:05/);
+  assert.match(ctx.retiroFrenado24h('RETIRO_24H').mensaje,/Probá de nuevo más tarde/);
 });

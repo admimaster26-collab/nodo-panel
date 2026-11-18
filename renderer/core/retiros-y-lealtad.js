@@ -6,8 +6,37 @@ function _blIsoDay(offset){ const d=new Date(); d.setDate(d.getDate()-(offset||0
 // var sigue resolviendo por window en vez de quedar muerto en TDZ.
 var _BL_H24 = 24*60*60*1000;
 
+// La regla del retiro diario es UNA: la Blacklist 24h, en el servidor (Juan, 18/11: "la blacklist era la
+// idea de unificación"). NODO beta la lee por su canal; la misma regla frena el pedido en el Portal, y sacar
+// a alguien de la blacklist lo destraba en todos lados. Las versiones sin ese canal siguen con el chequeo
+// de abajo (por eso se puede volver a la versión anterior sin romper nada).
+async function _blacklistDelServidor(usuario){
+  try{
+    if(!window.panelAPI || typeof window.panelAPI.rpc !== 'function') return null;
+    const pc = (typeof pcOperativa !== 'undefined' && pcOperativa) || window.pcOperativa || '';
+    if(!pc) return null;
+    const r = await window.panelAPI.rpc('nodo_beta_retiro_blacklist_v1', { p_pc_codigo: pc, p_usuario: String(usuario||'') });
+    let d = r && r.data;
+    if(typeof d === 'string'){ try{ d = JSON.parse(d); }catch(_e){ d = null; } }
+    if(!r || r.error || !d || d.ok !== true || d.contract !== 'nodo.beta.v1') return null;
+    return d;
+  }catch(_e){ return null; }
+}
 async function verificarRetiro24h(usuario) {
   const health = window.NodoSalud?.begin('RETIROS');
+  const bl = await _blacklistDelServidor(usuario);
+  if(bl){
+    health?.record('DATA', 'OK', bl.bloqueado ? 'RETIRO_24H_MATCH' : 'RETIRO_24H_CLEAR');
+    if(!bl.bloqueado) return { bloqueado: false };
+    const fecha = new Date(bl.retiro_at), proximo = new Date(bl.hasta), pasado = Date.now() - fecha.getTime();
+    return {
+      bloqueado: true, advertencia: true, usuario,
+      horasRestantes: Math.max(0, Math.ceil((proximo.getTime() - Date.now()) / 3600000)),
+      monto: bl.monto, fecha: bl.retiro_at, proximoRetiro: proximo.toISOString(),
+      billetera_nombre: bl.billetera_nombre || null, origen: 'BLACKLIST', historial_id: bl.historial_id,
+      mensaje: `${usuario} está en la blacklist: cobró un retiro hace ${Math.floor(pasado/3600000)}h ${Math.floor((pasado%3600000)/60000)}min · puede volver a las ${formatFecha(proximo.toISOString())}`
+    };
+  }
   const hace24h = new Date(Date.now() - 24 * 60 * 60 * 1000).getTime();
   const ahora   = Date.now();
   const usuarioNorm = normalizar(usuario);
@@ -114,9 +143,12 @@ function confirmarRetiroDuplicado(check) {
         '🕐 Habilitado nuevamente: <b>' + horaOk + '</b><br>' +
         '💰 Monto anterior: <b>' + money(check.monto) + '</b>' + bilInfo +
       '</div>' +
-      '<p style="color:#c0cad8;font-size:13px">Podés proceder si verificaste el caso del usuario.</p>';
+      (check.origen === 'BLACKLIST'
+        ? '<p style="color:#c0cad8;font-size:13px">Está en la <b>blacklist</b>: hasta esa hora no puede pedir otro retiro. '
+          + 'Si revisaste el caso y corresponde pagarle, sacalo de la blacklist: queda destrabado también en el Portal.</p>'
+        : '<p style="color:#c0cad8;font-size:13px">Podés proceder si verificaste el caso del usuario.</p>');
 
-    abrirModal('⚠️ Retiro en 24hs', body, null, 'Proceder igualmente');
+    abrirModal('⚠️ Retiro en 24hs', body, null, check.origen === 'BLACKLIST' ? 'Sacarlo de la blacklist y seguir' : 'Proceder igualmente');
 
     var saveBtn   = document.getElementById('modalSaveBtn');
     var cancelBtn = document.querySelector('#modalOverlay .btn-gray');
@@ -127,7 +159,26 @@ function confirmarRetiroDuplicado(check) {
       if(cancelBtn) cancelBtn.onclick = function(){ cerrarModal(); };
     }
 
-    if(saveBtn) saveBtn.onclick = function(){
+    if(saveBtn) saveBtn.onclick = async function(){
+      // Con la blacklist del servidor, seguir = sacarlo de la blacklist (lo mismo que el botón del cuadro).
+      // Si no se puede guardar, no se sigue: quedaría pagado pero todavía bloqueado en el Portal.
+      if(check.origen === 'BLACKLIST' && check.historial_id){
+        if(saveBtn.disabled) return;
+        saveBtn.disabled = true;
+        let ok = false;
+        try{
+          const pc = (typeof pcOperativa !== 'undefined' && pcOperativa) || window.pcOperativa || '';
+          const r = await window.panelAPI.rpc('nodo_beta_retiro_blacklist_excluir_v1', {
+            p_pc_codigo: pc, p_historial_id: Number(check.historial_id),
+            p_operador: (window.operador && (window.operador.usuario || window.operador.nombre)) || ''
+          });
+          let d = r && r.data; if(typeof d === 'string'){ try{ d = JSON.parse(d); }catch(_e){ d = null; } }
+          ok = !!(r && !r.error && d && d.ok === true);
+        }catch(_e){ ok = false; }
+        saveBtn.disabled = false;
+        if(!ok){ try{ toast('No se pudo sacar de la blacklist. No se siguió con el retiro: probá de nuevo.', 'red'); }catch(_e){} return; }
+        try{ toast('Sacado de la blacklist: ya puede retirar.', 'green'); }catch(_e){}
+      }
       limpiarHandlers();
       cerrarModal();
       resolve(true);
