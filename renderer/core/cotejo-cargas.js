@@ -323,9 +323,11 @@
       }
       // La casilla va a la IZQUIERDA: a la derecha quedaba cortada cuando el historial es más ancho que la
       // pantalla ("el cartel que avisa está roto", Juan 18/11).
+      // La casilla lleva ancho, relleno y márgenes propios: la regla general "input{width:100%;padding:11px…}" la
+      // estiraba y el "Lo vi" quedaba encima del título ("L6aitos" = "Lo vi" sobre "Gastos", 20/11).
       var estilo = deChunior ? "background:#2a2416;color:#f0d99b;border-left:3px solid #c9a227" : "background:#2a1717;color:#fecaca;border-left:3px solid #ef4444";
       return '<div class="alert-box" style="' + estilo + ';margin:6px 0;display:flex;gap:12px;align-items:flex-start;max-width:100%;box-sizing:border-box">'
-        + '<label style="flex:none;white-space:nowrap;cursor:pointer;font-weight:700"><input type="checkbox" style="vertical-align:middle;margin:0 4px 0 0" onchange="nodoCotejoReconocer(\'' + _esc(h.id) + '\', this)">Lo vi</label>'
+        + '<label style="flex:none;white-space:nowrap;cursor:pointer;font-weight:700"><input type="checkbox" style="width:auto;height:auto;padding:0;margin:0 4px 0 0;vertical-align:middle;flex:none" onchange="nodoCotejoReconocer(\'' + _esc(h.id) + '\', this)">Lo vi</label>'
         + '<div style="min-width:0;overflow-wrap:anywhere"><b>' + _esc(titulo) + '</b><br><span class="small">' + _esc(detalle) + '</span></div>'
         + '</div>';
     }).join("");
