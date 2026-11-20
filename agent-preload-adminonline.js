@@ -1214,6 +1214,11 @@ async function leerMovimientosCredito(args = {}) {
       const firma = pagina.map(f => f.fecha + f.alias + f.cantidad).join('|');
       if (firma === firmaAnterior) break;            // la página no cambió: no hay más
       firmaAnterior = firma; paginas++;
+      // Una fecha del futuro es imposible: la hora del informe no es la de Argentina (otra zona del navegador o de la
+      // cuenta). Se corta en vez de cotejar con horas corridas (verificado el 19/11: AdminOnline muestra hora argentina).
+      if (paginas === 1 && pagina[0].ms > now() + 10 * 60000) {
+        return { ok: false, motivo: 'HORA_DESFASADA', message: 'La hora del informe de AdminOnline no coincide con la de Argentina (la fila más nueva figura en el futuro). No se puede cotejar.' };
+      }
       for (const f of pagina) if (f.ms >= desde && (!alias || f.alias.toLowerCase() === alias)) filas.push(f);
       if (pagina[pagina.length - 1].ms < desde) { completo = true; break; }
       const sig = Array.from(document.querySelectorAll('button')).filter(isVisible)

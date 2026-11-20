@@ -48,3 +48,8 @@ test('las lecturas que navegan suben el contador (el watchdog no recarga a mitad
   assert.match(l[1], /'leerWhatsappOficina'/);
   assert.match(src, /else if \(LECTURAS_QUE_NAVEGAN\.has\(method\)\) _opsEnCurso\+\+/);
 });
+
+test('el informe de movimientos corta si la fila más nueva figura en el futuro (hora desfasada)', () => {
+  assert.match(src, /paginas === 1 && pagina\[0\]\.ms > now\(\) \+ 10 \* 60000/);
+  assert.match(src, /motivo: 'HORA_DESFASADA'/);
+});
