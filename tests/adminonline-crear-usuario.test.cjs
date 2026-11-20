@@ -33,3 +33,18 @@ test('"Balance actualizado exitosamente" no cuenta como jugador creado', () => {
 test('"Usuario creado" se cierra con su propio Cerrar', () => {
   assert.match(f, /findByText\(\/\^cerrar\$\/i, 'button', creadoEn\)/);
 });
+
+test('la verificación por búsqueda sólo vale si se apretó Aceptar (no dar por creado un alias que ya existía)', () => {
+  assert.match(f, /if \(!aceptado\) throw new Error\('sin paso de verificación'\)/);
+});
+
+test('las lecturas que navegan suben el contador (el watchdog no recarga a mitad) pero no son operaciones', () => {
+  const ops = src.match(/const METODOS_OPERACION = new Set\(\[([^\]]*)\]\)/);
+  assert.ok(ops, 'no se encontró METODOS_OPERACION');
+  assert.doesNotMatch(ops[1], /leerWhatsappOficina|leerMovimientosCredito/, 'entrar ahí limpiaría un freno anterior');
+  const l = src.match(/const LECTURAS_QUE_NAVEGAN = new Set\(\[([^\]]*)\]\)/);
+  assert.ok(l, 'no se encontró LECTURAS_QUE_NAVEGAN');
+  assert.match(l[1], /'leerMovimientosCredito'/);
+  assert.match(l[1], /'leerWhatsappOficina'/);
+  assert.match(src, /else if \(LECTURAS_QUE_NAVEGAN\.has\(method\)\) _opsEnCurso\+\+/);
+});

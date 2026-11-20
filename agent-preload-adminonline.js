@@ -862,7 +862,10 @@ async function crearUsuario(alias, _password, options = {}) {
   for (let i = 0; i < 3 && findActiveModal(); i++) await cerrarModalActual();
   if ((toast && toast.tipo === 'ok') || avisoTexto) return { ok: true, alias, password: claveVerificada || clave, message: 'Jugador creado correctamente.' };
   // Sin aviso concluyente: se VERIFICA buscando el alias (si figura, la creación fue correcta).
+  // Sólo vale si NODO llegó a apretar Aceptar en "Verifique la información": si no, el alias pudo existir de antes
+  // y se daría por creado un jugador con una clave que nunca se le puso (19/11).
   try {
+    if (!aceptado) throw new Error('sin paso de verificación');
     await ejecutarBusqueda(String(alias).trim(), 8000);
     const fila = await waitFor(() => buscarFilaPorAlias(String(alias).trim()), 6000).catch(() => null);
     if (fila) { _currentUser = aliasDeFila(fila); return { ok: true, alias, password: claveVerificada || clave, message: 'Jugador creado (verificado por búsqueda).' }; }
@@ -1198,7 +1201,7 @@ async function leerMovimientosCredito(args = {}) {
   const antes = _rutaActual();
   const meMovi = antes !== TOKENS_REPORT_PATH;
   if (meMovi && !(await _irARuta(TOKENS_REPORT_PATH))) {
-    return { ok: false, motivo: 'OTRA_PANTALLA', message: 'No pude abrir "Movimientos de crédito" desde el menú de AdminOnline.' };
+    return { ok: false, motivo: 'OTRA_PANTALLA', message: 'No pude abrir "Movimientos de crédito": no encontré su link en el menú de AdminOnline (revisá la ruta ' + TOKENS_REPORT_PATH + ').' };
   }
   try {
     const filas = [];
@@ -1246,6 +1249,9 @@ const api = {
   abortarOperacion: () => { _abortOperacion = true; return { ok: true, message: 'Freno solicitado.' }; }
 };
 const METODOS_OPERACION = new Set(['buscarUsuario', 'cargarSaldo', 'retirarSaldo', 'crearUsuario', 'cambiarClave', 'guardarWhatsappOficina']);
+// Lecturas que mueven la ventana de pantalla: suben el contador (así el watchdog no recarga a mitad) pero NO
+// son operaciones: no limpian un freno anterior (el test de preload-whatsapp-oficina lo exige). 19/11.
+const LECTURAS_QUE_NAVEGAN = new Set(['leerWhatsappOficina', 'leerMovimientosCredito']);
 
 // ---- ELECTRON-BEGIN
 contextBridge.exposeInMainWorld('drexAutomation', api);
@@ -1255,6 +1261,7 @@ ipcRenderer.on('drex:automation:run', async (event, request = {}) => {
   try {
     if (!Object.prototype.hasOwnProperty.call(api, method)) throw new Error(`Método no permitido: ${method}`);
     if (METODOS_OPERACION.has(method)) { _abortOperacion = false; _opsEnCurso++; }
+    else if (LECTURAS_QUE_NAVEGAN.has(method)) _opsEnCurso++;
     const _fn = api[method];
     const result = METODOS_OPERACION.has(method) ? await _perfWrap(method, _fn)(...args) : await _fn(...args);
     ipcRenderer.send('drex:automation:result', { requestId, ok: true, result });
@@ -1263,7 +1270,7 @@ ipcRenderer.on('drex:automation:run', async (event, request = {}) => {
     try { _donde = ' · pantalla: ' + _resumenPantalla(); } catch (_e) {}
     ipcRenderer.send('drex:automation:result', { requestId, ok: false, error: (error.message || String(error)) + _donde });
   } finally {
-    if (METODOS_OPERACION.has(method)) _opsEnCurso = Math.max(0, _opsEnCurso - 1);
+    if (METODOS_OPERACION.has(method) || LECTURAS_QUE_NAVEGAN.has(method)) _opsEnCurso = Math.max(0, _opsEnCurso - 1);
   }
 });
 ipcRenderer.on('drex:verify:run', async (event, request = {}) => {

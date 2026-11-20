@@ -639,9 +639,9 @@ sueltos de la query— y después `telefono_canon like '%'||v_qd||'%'`. Buscar `
 | Búsqueda | Antes | Ahora |
 |---|---:|---:|
 | `redpoint1` | **124.843** | 0 |
-| `1166489726` | 2 | 2 |
-| `5491166489726` | **0** | 2 |
-| `+54 9 11 6648-9726` | **0** | 2 |
+| `1100000001` | 2 | 2 |
+| `5491100000001` | **0** | 2 |
+| `+54 9 11 0000-0001` | **0** | 2 |
 
 La RPC cortaba a 100 candidatos, así que devolvía basura arbitraria y el usuario buscado nunca
 llegaba a entrar en el corte.
@@ -1235,7 +1235,7 @@ Probado contra P1:
 |---|---|
 | `pruebaxx` | `pruebaxx [exacto]` |
 | `prueba` | `pruebaxx [usuario]` · `vaporprueba [usuario]` |
-| `1134970581` | `pruebaxx [telefono]` |
+| `1100000002` | `pruebaxx [telefono]` |
 | `Pepe` | cinco usuarios `[usuario]` |
 
 Además la lista dice de entrada **qué está mostrando**: con búsqueda, «Coinciden con «x» ·
