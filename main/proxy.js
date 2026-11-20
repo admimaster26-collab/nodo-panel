@@ -30,12 +30,11 @@ function createProxyService({ app, session, env = process.env }) {
     return buildProxyRules(env.PROXY_HOST, env.PROXY_PORT, env.PROXY_PROTOCOL || "http");
   }
 
-  // El proxy está aislado de Supabase y de la sesión default. La config estática sigue siendo
-  // exclusiva de Agentes; la config de oficina en runtime se aplica también a Chunior.
+  // El proxy va SOLO en la ventana de Agentes: la config del .env y la de la oficina (Admi). Chunior, Supabase y la
+  // sesión default salen directo, como hasta la 2.1.5. La 2.1.6 lo había extendido a Chunior (15/11) y no hace
+  // falta: Chunior anda sin proxy y por el proxy se pone más lento (Noelia, 20/11).
   const AGENT_PARTITION = 'persist:nodo-agentes';
   function agentSes() { return session.fromPartition(AGENT_PARTITION); }
-  const CHUNIOR_PARTITION = 'nodo-chunior';
-  function chuniorSes() { return session.fromPartition(CHUNIOR_PARTITION); }
 
   async function configurarProxyElectronV15() {
     const enabled = envBoolV15(env.PROXY_ENABLED, false);
@@ -73,27 +72,25 @@ function createProxyService({ app, session, env = process.env }) {
       const rules = cfg.enabled ? buildProxyRules(cfg.host, cfg.port, cfg.protocol || "http") : "";
       if (!rules) {
         _runtimeProxyAuth = null;
-        // Sin proxy: limpiamos ambas sesiones sólo si antes había uno activo.
+        // Sin proxy: limpiamos la sesión de Agentes sólo si antes había uno activo.
         if (_proxyApplied) {
-          const sessions = [agentSes(), chuniorSes()];
-          await Promise.all(sessions.map(ses => ses.setProxy({ mode: "direct" })));
-          await Promise.all(sessions.map(ses => ses.closeAllConnections().catch(() => {})));
+          await agentSes().setProxy({ mode: "direct" });
+          try { await agentSes().closeAllConnections(); } catch (_e) {}
           _proxyApplied = false;
           console.log("[proxy] runtime: limpiado (salida directa)");
         }
         return { ok: true, enabled: false };
       }
-      // La config de oficina se comparte entre Agentes y Chunior, nunca con la sesión default.
-      const sessions = [agentSes(), chuniorSes()];
-      await Promise.all(sessions.map(ses => ses.setProxy({
+      // La config de oficina va sólo a Agentes: nunca a Chunior ni a la sesión default.
+      await agentSes().setProxy({
         mode: "fixed_servers",
         proxyRules: rules,
         proxyBypassRules: cfg.bypass || "<local>"
-      })));
-      await Promise.all(sessions.map(ses => ses.closeAllConnections().catch(() => {})));
+      });
+      try { await agentSes().closeAllConnections(); } catch (_e) {}
       _proxyApplied = true;
       _runtimeProxyAuth = cfg.username ? { username: String(cfg.username), password: String(cfg.password || "") } : null;
-      console.log("[proxy] runtime ACTIVADO (Agentes y Chunior):", rules);
+      console.log("[proxy] runtime ACTIVADO (sólo Agentes):", rules);
       return { ok: true, enabled: true, proxyRules: rules };
     } catch (e) {
       console.warn("[proxy] runtime error:", e.message);

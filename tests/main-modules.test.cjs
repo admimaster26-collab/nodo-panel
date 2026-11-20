@@ -156,7 +156,7 @@ test('startup and runtime proxy only change the dedicated partition, including d
     app, env: { PROXY_ENABLED: '1', PROXY_HOST: 'office', PROXY_PORT: '8000' },
     session: {
       fromPartition(partition) {
-        assert.ok(['persist:nodo-agentes', 'nodo-chunior'].includes(partition));
+        assert.equal(partition, 'persist:nodo-agentes', 'el proxy va sólo a la ventana de Agentes, nunca a Chunior');
         if (!sessions.has(partition)) sessions.set(partition, makeSession(partition));
         return sessions.get(partition);
       },
@@ -168,16 +168,15 @@ test('startup and runtime proxy only change the dedicated partition, including d
   assert.deepEqual(calls, [
     ['persist:nodo-agentes', { mode: 'fixed_servers', proxyRules: 'http=office:8000;https=office:8000', proxyBypassRules: '<local>' }],
     ['persist:nodo-agentes', 'close'],
-    ['persist:nodo-agentes', { mode: 'direct' }], ['nodo-chunior', { mode: 'direct' }],
-    ['persist:nodo-agentes', 'close'], ['nodo-chunior', 'close']
+    ['persist:nodo-agentes', { mode: 'direct' }],
+    ['persist:nodo-agentes', 'close']
   ]);
   await proxy.apply(null);
-  assert.equal(calls.length, 6, 'already direct does not close healthy connections');
+  assert.equal(calls.length, 4, 'already direct does not close healthy connections');
   await proxy.apply({ enabled: true, host: 'runtime', port: 1080, protocol: 'socks5', username: 'u', password: 'p' });
-  assert.deepEqual(calls.slice(6), [
+  assert.deepEqual(calls.slice(4), [
     ['persist:nodo-agentes', { mode: 'fixed_servers', proxyRules: 'socks=runtime:1080', proxyBypassRules: '<local>' }],
-    ['nodo-chunior', { mode: 'fixed_servers', proxyRules: 'socks=runtime:1080', proxyBypassRules: '<local>' }],
-    ['persist:nodo-agentes', 'close'], ['nodo-chunior', 'close']
+    ['persist:nodo-agentes', 'close']
   ]);
   let prevented = 0;
   let auth;
@@ -212,9 +211,7 @@ test('proxy strips protocol scheme and path from host on startup and runtime con
   assert.deepEqual(calls, [
     ['persist:nodo-agentes', { mode: 'fixed_servers', proxyRules: 'http=office.proxy.local:8000;https=office.proxy.local:8000', proxyBypassRules: '<local>' }],
     ['persist:nodo-agentes', { mode: 'fixed_servers', proxyRules: 'http=ar86.proxy.nordvpn.com:89;https=ar86.proxy.nordvpn.com:89', proxyBypassRules: '<local>' }],
-    ['nodo-chunior', { mode: 'fixed_servers', proxyRules: 'http=ar86.proxy.nordvpn.com:89;https=ar86.proxy.nordvpn.com:89', proxyBypassRules: '<local>' }],
-    ['persist:nodo-agentes', { mode: 'direct' }],
-    ['nodo-chunior', { mode: 'direct' }]
+    ['persist:nodo-agentes', { mode: 'direct' }]
   ]);
   assert.deepEqual(bad, { ok: true, enabled: false });
 });

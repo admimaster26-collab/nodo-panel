@@ -165,17 +165,18 @@ app.whenReady().then(async () => {
   panel.create();
   atarVentanasAlPanel();
   const pcCodigoInicial = String(process.env.PC_CODIGO || '').trim();
-  const proxyConfigurableAntesDeChunior = pcCodigoInicial &&
+  // El proxy de la oficina va sólo a Agentes: se resuelve en paralelo y NO frena la apertura de Chunior
+  // (la 2.1.6 lo esperaba hasta 8 s antes de abrir Chunior porque también lo usaba ahí; 20/11).
+  const proxyOficinaConfigurable = pcCodigoInicial &&
     process.env.PANEL_DATA_SECRET &&
     process.env.SUPABASE_URL &&
     (process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_KEY);
-  if (proxyConfigurableAntesDeChunior) {
-    const resultado = await officeCredentials.applyProxyForOffice(pcCodigoInicial, { resetOnMissing: false, timeoutMs: 8000 });
-    if (!resultado.ok) console.warn('[proxy] no se pudo resolver el proxy inicial de Chunior:', resultado.reason || 'ERROR');
-    else if (resultado.enabled) console.log('[proxy] proxy de oficina listo antes de abrir Chunior');
-    else console.log('[proxy] sin proxy de oficina configurado; Chunior abrirá con salida directa');
-  } else {
-    console.warn('[proxy] sin código de oficina o credenciales del servidor; Chunior abrirá con salida directa');
+  if (proxyOficinaConfigurable) {
+    officeCredentials.applyProxyForOffice(pcCodigoInicial, { resetOnMissing: false, timeoutMs: 8000 }).then(function (resultado) {
+      if (!resultado.ok) console.warn('[proxy] no se pudo resolver el proxy de oficina para Agentes:', resultado.reason || 'ERROR');
+      else if (resultado.enabled) console.log('[proxy] proxy de oficina listo (sólo Agentes)');
+      else console.log('[proxy] sin proxy de oficina configurado; Agentes queda con el del .env o directo');
+    }).catch(function (e) { console.warn('[proxy] proxy de oficina:', (e && e.message) || e); });
   }
   try {
     await chunior.limpiarDatosLegados();
