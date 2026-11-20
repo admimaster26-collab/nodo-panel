@@ -1833,7 +1833,13 @@
     // jugador a Google, así que si la PC no tiene la clave puesta a propósito, no se manda nada.
     if(!GEMINI_API_KEY){
       console.warn("[comprobante] lectura con IA apagada: falta nodo_gemini_api_key en esta PC");
-      return { error: "sin_clave" };
+      // Se guarda el resultado: renderBannerSolicitud vuelve a pintar al terminar este análisis y, si acá no
+      // quedaba nada en ocrCache, llamaba otra vez a esta función, que volvía a devolver sin esperar nada:
+      // un bucle de microtareas que no deja respirar a la pantalla (el panel entero congelado al abrir un
+      // chat con una carga con comprobante, 19/11).
+      const sinClave = { error: "sin_clave" };
+      if(urlOBase64) ocrCache.set(urlOBase64, sinClave);
+      return sinClave;
     }
     if(!urlOBase64) return null;
     if(ocrCache.has(urlOBase64)) return ocrCache.get(urlOBase64);
