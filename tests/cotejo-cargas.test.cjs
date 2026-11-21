@@ -81,6 +81,29 @@ test('sin saber hasta dónde se leyó Agentes, no se acusa a nadie', () => {
   assert.equal(r.sobrantes.length, 0);
 });
 
+test('lectura vieja o cortada: lo más nuevo que lo leído en Agentes no se acusa (P4, 21/11)', () => {
+  const filas = [
+    fila(1, '21/11/2026 07:10:00', 'cliente1', 5000, { chunior_movimiento_id: '1' }),   // dentro de lo leído y sin par: se avisa
+    fila(2, '21/11/2026 07:28:00', 'cliente2', 9000, { chunior_movimiento_id: '2' }),   // posterior a lo leído: no
+    fila(3, '21/11/2026 07:42:00', 'cliente3', 20000, { chunior_movimiento_id: '3' })   // posterior a lo leído: no
+  ];
+  const leidos = [mov('21/11/2026 07:20:00', 'otro', 1000), mov('21/11/2026 06:00:00', 'otro2', 2000)];
+  const r = emparejar(leidos, filas, { desdeLeidoMs: ms('21/11/2026 05:00:00'), hastaLeidoMs: ms('21/11/2026 07:20:00'),
+    ahora: ms('21/11/2026 08:30:00') });
+  assert.deepEqual(r.sobrantes.map(h => h.id), [1]);
+});
+
+test('si se pide techo y la lectura no trajo nada, no se acusa a nadie', () => {
+  const r = emparejar([], [fila(1, '21/11/2026 07:10:00', 'cliente1', 5000)],
+    { desdeLeidoMs: ms('21/11/2026 05:00:00'), hastaLeidoMs: NaN, ahora: ms('21/11/2026 08:30:00') });
+  assert.equal(r.sobrantes.length, 0);
+});
+
+test('revisar() pasa el techo (lo más nuevo leído) y deja afuera los bonos', () => {
+  assert.match(fuente, /hastaLeidoMs: Number\.isFinite\(masNuevo\) \? masNuevo : NaN/);
+  assert.match(fuente, /o !== "COTEJO" && o !== "PROMO_BONO"/);
+});
+
 // ── Lectores de los reportes ─────────────────────────────────────────────────────────────
 test('Drex: el monto viene en formato inglés con el signo adelante', () => {
   const src = fs.readFileSync(path.join(ROOT, 'agent-preload.js'), 'latin1');

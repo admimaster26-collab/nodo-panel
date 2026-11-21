@@ -16326,7 +16326,7 @@ window._retiroSaldoCheck = window._retiroSaldoCheck || {};
   var VENTANA_NODO_MS    = 3 * 60000;      // Agentes ↔ NODO: la misma carga, a menos de 3 minutos
   var VENTANA_CHUNIOR_MS = 15 * 60000;     // Chunior se anota a mano y puede ir unos minutos después
   var MIRAR_ATRAS_MS     = 6 * 3600000;    // se revisan las últimas 6 horas
-  var GRACIA_SIN_AGENTES = 10 * 60000;     // una fila de NODO más nueva que esto todavía no se juzga
+  var GRACIA_SIN_AGENTES = 15 * 60000;     // una fila de NODO más nueva que esto todavía no se juzga (era 10; 21/11)
   var DUDA_MS            = 60 * 60000;     // una fila igual suelta a menos de una hora: no se decide
   var CADA_CUANTO_MS     = 10 * 60000;
   var MARCA_FUERA        = "fuera de NODO";
@@ -16395,10 +16395,17 @@ window._retiroSaldoCheck = window._retiroSaldoCheck || {};
       delete m._fila; delete m._ambiguo;
     });
     // 3) Filas de NODO sin carga en Agentes: sólo si la lectura cubre su horario y ya pasó la gracia.
+    // "Cubre" es por los dos lados: desde lo más viejo leído HASTA lo más nuevo leído. Antes se daba por hecho que
+    // el reporte llegaba hasta ahora: si venía desactualizado o cortado, toda carga posterior a lo leído salía
+    // como "en Agentes no aparece" (P4 21/11: ocho cargas reales seguidas entre 07:28 y 07:42).
     var desdeLeido = Number(opts.desdeLeidoMs);
-    var sobrantes = Number.isFinite(desdeLeido) ? libres.filter(function(h){
+    var conTecho = Object.prototype.hasOwnProperty.call(opts, "hastaLeidoMs");
+    var hastaLeido = Number(opts.hastaLeidoMs);
+    var cubre = Number.isFinite(desdeLeido) && (!conTecho || Number.isFinite(hastaLeido));
+    var sobrantes = cubre ? libres.filter(function(h){
       var t = _ms(h);
       return !usadas[h.id] && !h._enDuda && Number.isFinite(t) && t >= desdeLeido && (ahora - t) >= GRACIA_SIN_AGENTES
+        && (!conTecho || t <= hastaLeido)
         && String(h.notas || "").indexOf(MARCA_SIN_AGENTES) < 0
         && (opts.esNuestra ? opts.esNuestra(h) : true);
     }) : [];
@@ -16543,9 +16550,12 @@ window._retiroSaldoCheck = window._retiroSaldoCheck || {};
       // NODO desde un poco antes: la fila puede ir unos segundos antes que el movimiento.
       var filas = await _leerNodo(desde - VENTANA_NODO_MS);
       var masViejo = movs.reduce(function(a, m){ return Math.min(a, m.ms); }, Infinity);
+      var masNuevo = movs.reduce(function(a, m){ return Number.isFinite(m.ms) ? Math.max(a, m.ms) : a; }, -Infinity);
       var cubreDesde = lectura.completo ? desde : (Number.isFinite(masViejo) ? masViejo : NaN);
-      var r = emparejar(movs, filas, { desdeLeidoMs: cubreDesde,
-        esNuestra: function(h){ return String(h.origen || "") !== "COTEJO"; } });
+      // Hasta dónde llegó de verdad la lectura: lo más nuevo que mostró el reporte. Sin movimientos leídos no se juzga
+      // a nadie. Los bonos (PROMO_BONO) no figuran como "Depósito de un jugador" en Agentes: no se cotejan.
+      var r = emparejar(movs, filas, { desdeLeidoMs: cubreDesde, hastaLeidoMs: Number.isFinite(masNuevo) ? masNuevo : NaN,
+        esNuestra: function(h){ var o = String(h.origen || ""); return o !== "COTEJO" && o !== "PROMO_BONO"; } });
       for(var i = 0; i < r.pares.length; i++){
         if(_ocupado()) break;                                           // el operador arrancó algo: se sigue después
         var p = r.pares[i];
