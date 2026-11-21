@@ -3209,6 +3209,31 @@ function renderCarga(){
     _titularPieGuardado();
     _titularPrevioRevisar(_elT);
   }
+  // Y si NODO ya tiene un titular confirmado (el de sus cargas acreditadas), ese manda (Noelia, 21/11).
+  if(_elT) _titularConfirmadoRellenar(_elT);
+}
+// 21/11: el cuadro se rellenaba sólo con lo que este teléfono escribió la vez pasada; lo que NODO ya había revisado
+// no llegaba nunca. Ahora se pregunta al servidor por el titular confirmado (el de la última carga acreditada, sólo
+// con usuario + teléfono verificados). Queda editable: "Cambiar" lo vacía si transfirió desde otra cuenta. Si el
+// jugador ya empezó a escribir, no se pisa. Sin la función en el servidor, queda como antes.
+async function _titularConfirmadoRellenar(el){
+  if(!state.usuario||!state.publicCode)return;
+  const antes=String(el.value||"");
+  let titular="";
+  try{
+    const r=await rpc("landing_portal_titular_confirmado_v1",{p_public_code:state.publicCode,p_usuario:state.usuario,
+      p_telefono:state.telefono||"",p_host:location.host||""});
+    if(r&&r.error)return;
+    const d=normalize(r&&r.data)||(r&&r.data)||{};
+    titular=String(d&&d.titular||"").trim();
+  }catch(_e){return;}
+  if(!titular||!el.isConnected||String(el.value||"")!==antes)return;
+  el.value=titular; el.classList.add("prellenado"); el.classList.remove("falta"); el.dataset.previo=titular;
+  _guardarTitularPrevio(titular);
+  const b=$("titularCambiar"); if(b) b.style.display="";
+  _titularAviso(el,"");
+  const pie=$("titularPie");
+  if(pie) pie.innerHTML='✓ Titular confirmado en tus cargas anteriores. Si transferiste desde otra cuenta, tocá <b>Cambiar</b>.';
 }
 function setMonto(v){const i=$("cargaMonto");if(i){i.value=v;haptic(6);syncChips();}}
 function syncChips(){
@@ -4881,6 +4906,7 @@ async function guiaFichaCarga(sinAviso){
     +'<div id="guiaError" class="guia-error" role="alert"></div>'
     +'<button type="submit" id="guiaEnviar" class="action-btn">Ya transferí · Pedir la carga</button></form>'));
   if(typeof _titularPrevioRevisar==="function")_titularPrevioRevisar($("guiaTitular"));
+  if(typeof _titularConfirmadoRellenar==="function"&&$("guiaTitular"))_titularConfirmadoRellenar($("guiaTitular"));   // también en la ficha del chat (21/11)
 }
 async function guiaEnviarCarga(){
   if(!_tomarEnvio("guiaEnviar","Enviando..."))return;
